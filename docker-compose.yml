@@ -23,10 +23,9 @@ services:
       - S3LM_REFERENCE_ROOT=/app/intelligence
     volumes:
       - s3lm-data:/root/.local/share/s3-live-monitor
-      # case references + evidence output (parent dir: repo root on dev, /opt/s3lm on the VM)
+      # case evidence output + audit log (data comes live from GCS/S3, not from shipped
+      # reference files; reference masters are optional and ignored when absent)
       - ../intelligence:/app/intelligence
-      # crypto-wallet master lives outside intelligence/ in the repo
-      - ../LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv:/app/LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv:ro
     restart: unless-stopped
     # budget VM: keep memory in check
     deploy:

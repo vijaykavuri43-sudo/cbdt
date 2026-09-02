@@ -17,6 +17,32 @@ Local investigation dashboard for **read-only monitoring of the publicly exposed
 | **UPI / Mules** | VPAs decoded from payment QRs, cross-checked against the case mule master list; NEW VPAs highlighted |
 | **Evidence & Downloads** | Bulk download jobs → files land in `intelligence/analysis/CASE-2026-CBTF/live-monitor/<UTC-date>/` with `_MANIFEST.json`, sha256 chain-of-custody appended to `intelligence/audit/collection-log.jsonl` |
 
+## Deploy (GitHub-based — no tarballs)
+
+The VM server runs the app from a **git clone** of this repo. A read-only GitHub
+deploy key lets the VM pull changes; every fix ships as a tiny git delta, and
+Docker reuses the build cache, so deploys are fast.
+
+```bash
+# 1) Bootstrap VM (first time only — registers the deploy key + clones the repo)
+GITHUB_TOKEN=... ./deploy/gcp-deploy.sh        # VM: s3lm-budget (GCP)
+
+# 2) Deploy any change (from anywhere with gcloud)
+./deploy/deploy.sh                             # git pull + cached rebuild + health check
+```
+
+Notes:
+
+- Reference data (master UPI lists, crypto wallets, UTR joins) is **not** shipped
+  anymore — the app reads evidence directly from the S3/GCS buckets (see
+  `MONITORING-IMPROVEMENT-PLAN.md`). The optional reference files are ignored
+  cleanly when absent.
+- The `GITHUB_TOKEN` is used once to register the VM's deploy key; subsequent
+  deploys need no token. Keep `~/.ssh/s3lm_github_deploy` on the machine running
+  this script so the key is reused.
+- No build artifacts are transferred — the VM builds the image itself with its
+  own layer cache (`npm ci`, `pip install`, `apt` layers stay cached across deploys).
+
 ## Run
 
 ```bash
