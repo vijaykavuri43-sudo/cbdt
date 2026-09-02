@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# One-command ship: commit → push → GitHub-based deploy (git pull + cached rebuild).
+#
+#   ./deploy/ship.sh                      # deploy as-is (pushes unpushed commits)
+#   ./deploy/ship.sh "fix: explorer nav"  # commit all changes with a message, then deploy
+#   ./deploy/ship.sh --vm <name> "msg"    # deploy to a specific VM (default: s3lm-budget)
+#
+# Env: DEPLOY_BRANCH=main  GCP_PROJECT  GCP_ZONE  (passed through to deploy.sh)
+set -e
+VM=""
+MSG=""
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --vm) VM="$2"; shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+[ "${#ARGS[@]}" -gt 0 ] && MSG="${ARGS[-1]}"
+
+cd "$(dirname "$0")/.."
+
+echo "→ [1/3] commit"
+if [ -n "$(git status --porcelain)" ]; then
+  if [ -z "$MSG" ]; then
+    echo "  ✗ working tree has changes — provide a commit message:" >&2
+    echo "      ./deploy/ship.sh \"what changed\"" >&2
+    exit 2
+  fi
+  git add -A
+  git commit -m "$MSG"
+else
+  echo "  nothing to commit"
+fi
+
+echo "→ [2/3] push"
+AHEAD=$(git rev-list --count "origin/${DEPLOY_BRANCH:-main}..HEAD" 2>/dev/null || echo "?")
+if [ "$AHEAD" = "0" ]; then
+  echo "  already up to date"
+else
+  git push origin HEAD
+fi
+
+echo "→ [3/3] deploy (${VM:-s3lm-budget})"
+exec "$(dirname "$0")/deploy.sh" ${VM:+"$VM"}
