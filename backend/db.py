@@ -1188,51 +1188,60 @@ def refresh_payment_summaries() -> dict:
     """Materialize common dashboard aggregates; live rows refresh every minute."""
     refreshed = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     filters = ("", "upi", "bank_account", "crypto_wallet", "unknown")
+    # Aggregation is read-heavy. In WAL mode it can run alongside live writes,
+    # so do not hold the process-wide writer lock while scanning. Only the final
+    # atomic replacement below needs serialization.
+    c = connect()
+    total_rows: list[tuple] = []
+    for direction in ("deposit", "withdrawal"):
+        for rail_filter in filters:
+            where = "direction=?" + (" AND rail_type=?" if rail_filter else "")
+            args = [direction] + ([rail_filter] if rail_filter else [])
+            tx = c.execute(
+                f"SELECT COUNT(*) transactions,COALESCE(SUM(amount_inr),0) amount FROM ("
+                f"SELECT source_key,MAX(amount_inr) amount_inr FROM payment_transactions WHERE {where} GROUP BY source_key)",
+                args,
+            ).fetchone()
+            coverage = c.execute(
+                f"SELECT COUNT(DISTINCT CASE WHEN gambler!='' THEN source_key END) linked_transactions,"
+                f"COUNT(DISTINCT CASE WHEN rail_id!='' THEN rail_type||':'||rail_id END) distinct_rails,"
+                f"COUNT(DISTINCT NULLIF(gambler,'')) distinct_gamblers,COUNT(*) rows_total "
+                f"FROM payment_transactions WHERE {where}",
+                args,
+            ).fetchone()
+            total_rows.append(
+                (
+                    direction,
+                    rail_filter,
+                    tx["transactions"] or 0,
+                    tx["amount"] or 0,
+                    coverage["distinct_rails"] or 0,
+                    coverage["distinct_gamblers"] or 0,
+                    coverage["linked_transactions"] or 0,
+                    coverage["rows_total"] or 0,
+                    refreshed,
+                )
+            )
+    summary_rows = c.execute(
+        "SELECT direction,rail_type,rail_id,account_holder,ifsc,network,COUNT(DISTINCT source_key),"
+        "COALESCE(SUM(amount_inr),0),COUNT(DISTINCT NULLIF(gambler,'')),? "
+        "FROM payment_transactions WHERE rail_id!='' "
+        "GROUP BY direction,rail_type,rail_id,account_holder,ifsc,network",
+        (refreshed,),
+    ).fetchall()
     with _writer_lock:
         c = connect()
         c.execute("DELETE FROM payment_flow_totals")
-        for direction in ("deposit", "withdrawal"):
-            for rail_filter in filters:
-                where = "direction=?" + (" AND rail_type=?" if rail_filter else "")
-                args = [direction] + ([rail_filter] if rail_filter else [])
-                tx = c.execute(
-                    f"SELECT COUNT(*) transactions,COALESCE(SUM(amount_inr),0) amount FROM ("
-                    f"SELECT source_key,MAX(amount_inr) amount_inr FROM payment_transactions WHERE {where} GROUP BY source_key)",
-                    args,
-                ).fetchone()
-                coverage = c.execute(
-                    f"SELECT COUNT(DISTINCT CASE WHEN gambler!='' THEN source_key END) linked_transactions,"
-                    f"COUNT(DISTINCT CASE WHEN rail_id!='' THEN rail_type||':'||rail_id END) distinct_rails,"
-                    f"COUNT(DISTINCT NULLIF(gambler,'')) distinct_gamblers,COUNT(*) rows_total "
-                    f"FROM payment_transactions WHERE {where}",
-                    args,
-                ).fetchone()
-                c.execute(
-                    "INSERT INTO payment_flow_totals VALUES(?,?,?,?,?,?,?,?,?)",
-                    (
-                        direction,
-                        rail_filter,
-                        tx["transactions"] or 0,
-                        tx["amount"] or 0,
-                        coverage["distinct_rails"] or 0,
-                        coverage["distinct_gamblers"] or 0,
-                        coverage["linked_transactions"] or 0,
-                        coverage["rows_total"] or 0,
-                        refreshed,
-                    ),
-                )
-        c.execute("DELETE FROM payment_rail_summary")
-        c.execute(
-            "INSERT INTO payment_rail_summary "
-            "SELECT direction,rail_type,rail_id,account_holder,ifsc,network,COUNT(DISTINCT source_key),"
-            "COALESCE(SUM(amount_inr),0),COUNT(DISTINCT NULLIF(gambler,'')),? "
-            "FROM payment_transactions WHERE rail_id!='' "
-            "GROUP BY direction,rail_type,rail_id,account_holder,ifsc,network",
-            (refreshed,),
+        c.executemany(
+            "INSERT INTO payment_flow_totals VALUES(?,?,?,?,?,?,?,?,?)", total_rows
         )
-        rows = c.execute("SELECT COUNT(*) n FROM payment_rail_summary").fetchone()["n"]
+        c.execute("DELETE FROM payment_rail_summary")
+        c.executemany(
+            "INSERT INTO payment_rail_summary VALUES(?,?,?,?,?,?,?,?,?,?)",
+            [tuple(row) for row in summary_rows],
+        )
         c.commit()
-    return {"summary_rails": rows, "summary_refreshed_utc": refreshed}
+    return {"summary_rails": len(summary_rows), "summary_refreshed_utc": refreshed}
 
 
 def money_flows(
