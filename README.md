@@ -27,8 +27,8 @@ Docker reuses the build cache, so deploys are fast.
 # 1) Bootstrap VM (first time only — registers the deploy key + clones the repo)
 GITHUB_TOKEN=... ./deploy/gcp-deploy.sh        # VM: s3lm-budget (GCP)
 
-# 2) Deploy any change (from anywhere with gcloud)
-./deploy/deploy.sh                             # git pull + cached rebuild + health check
+# 2) Ship any change (commit → push → git-pull deploy, one command)
+./deploy/ship.sh "fix: explorer nav"           # or ./deploy/ship.sh to deploy as-is
 ```
 
 Notes:
