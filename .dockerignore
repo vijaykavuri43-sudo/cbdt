@@ -1,0 +1,9 @@
+# build context = s3-live-monitor/ — keep images small and fast to build
+frontend/node_modules
+node_modules
+**/__pycache__
+**/*.pyc
+.git
+.env
+*.log
+data/

@@ -1,0 +1,87 @@
+services:
+  s3lm:
+    build: .
+    image: s3lm:latest
+    container_name: s3lm
+    ports:
+      - "80:8787"
+    environment:
+      # gate: set S3LM_TOKEN to lock dashboard, or S3LM_NO_GATE=1 to keep it open on a private VM
+      - S3LM_TOKEN=${S3LM_TOKEN:-}
+      - S3LM_NO_GATE=${S3LM_NO_GATE:-}
+      - S3LM_HOST=0.0.0.0
+      - S3LM_PORT=8787
+      - S3LM_OBJECT_SOURCE=gcs
+      - S3LM_GCS_BUCKET=cbtf-case-evidence-991096649643
+      - S3LM_GCS_PREFIX=s3-mirror/
+      - S3LM_ENRICH_MAX_AGE_HOURS=0
+      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-4}
+      - S3LM_ENRICH_BATCH=${S3LM_ENRICH_BATCH:-16}
+      - S3LM_COLD_SEC=${S3LM_COLD_SEC:-600}
+      - S3LM_CRAWL_CAP=${S3LM_CRAWL_CAP:-5000}
+      - S3LM_INTELLIGENCE_ROOT=/app/intelligence
+      - S3LM_REFERENCE_ROOT=/app/intelligence
+    volumes:
+      - s3lm-data:/root/.local/share/s3-live-monitor
+      # case references + evidence output (parent dir: repo root on dev, /opt/s3lm on the VM)
+      - ../intelligence:/app/intelligence
+      # crypto-wallet master lives outside intelligence/ in the repo
+      - ../LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv:/app/LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv:ro
+    restart: unless-stopped
+    # budget VM: keep memory in check
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # Continuous S3 -> GCS evidence mirror sync (Defect A fix, staleness review
+  # 2026-09-02): the s3lm dashboard reads gs://cbtf…/s3-mirror/, which was
+  # frozen when the preservation VMs were decommissioned. This daemon keeps it
+  # continuously in sync with the live S3 bucket (read-only LIST+GET from S3;
+  # uploads carry chain-of-custody metadata with ISO-8601 timestamps). Reads
+  # GCP credentials via the VM's attached service-account scopes (default
+  # compute SA has objectAdmin on the evidence bucket) or GOOGLE_APPLICATION_CREDENTIALS.
+  s3sync:
+    image: s3lm:latest
+    container_name: s3sync
+    # reuse the app image: it already has httpx + google-cloud-storage
+    entrypoint: ["python3", "/app/sync/s3-gcs-sync.py"]
+    depends_on:
+      s3lm:
+        condition: service_healthy
+    environment:
+      - S3SYNC_BUCKET_URL=${S3SYNC_BUCKET_URL:-https://bx-s3-dev-001.s3.ap-southeast-1.amazonaws.com}
+      - S3SYNC_GCS_BUCKET=${S3SYNC_GCS_BUCKET:-cbtf-case-evidence-991096649643}
+      - S3SYNC_GCS_PREFIX=${S3SYNC_GCS_PREFIX:-s3-mirror/}
+      - S3SYNC_STATE_DB=/root/.local/share/s3-sync/state.db
+      - S3SYNC_RATE_PER_SEC=${S3SYNC_RATE_PER_SEC:-4}
+      - S3SYNC_WORKERS=${S3SYNC_WORKERS:-4}
+      - S3SYNC_CYCLE_SEC=${S3SYNC_CYCLE_SEC:-60}
+      - S3SYNC_CATCHUP_CYCLE_SEC=${S3SYNC_CATCHUP_CYCLE_SEC:-5}
+      - S3SYNC_MAX_BYTES=${S3SYNC_MAX_BYTES:-536870912}
+      - S3SYNC_MONITOR_URL=http://s3lm:8787
+      - S3SYNC_MONITOR_TOKEN_FILE=/root/.local/share/s3-live-monitor/access-token.txt
+      - S3SYNC_AUDIT_LOG=/app/intelligence/audit/collection-log.jsonl
+      - S3LM_CASE=CASE-2026-CBTF
+      - S3LM_AUTH=STANDING-JUDICIAL-AUTH-ILLEGAL-BETTING
+    volumes:
+      - s3lm-data:/root/.local/share/s3-live-monitor
+      - s3sync-state:/root/.local/share/s3-sync
+      - ../intelligence:/app/intelligence
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 600M
+    healthcheck:
+      # s3sync doesn't serve HTTP and python:3.12-slim ships no pgrep/ps —
+      # check the python process via /proc instead (PGREP_MISSING false-negative
+      # flagged the daemon unhealthy for its entire life, review 2026-09-02)
+      test: ["CMD-SHELL", "grep -qs 's3-gcs-sync' /proc/1/cmdline"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  s3lm-data:
+  s3sync-state:
