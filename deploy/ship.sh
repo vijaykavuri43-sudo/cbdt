@@ -5,15 +5,18 @@ set -euo pipefail
 #   ./deploy/ship.sh                      # deploy as-is (pushes unpushed commits)
 #   ./deploy/ship.sh "fix: explorer nav"  # commit all changes with a message, then deploy
 #   ./deploy/ship.sh --vm <name> "msg"    # deploy to a specific VM (default: s3lm-budget)
+#   ./deploy/ship.sh --help               # this help
 #
 # Env: DEPLOY_BRANCH=main  GCP_PROJECT  GCP_ZONE  (passed through to deploy.sh)
 set -e
+usage() { grep '^#' "$0" | sed 's/^# \{0,1\}//' | grep -v '^!'; exit 0; }
 VM=""
 MSG=""
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --vm) VM="$2"; shift 2 ;;
+    --help|-h) usage ;;
     *) ARGS+=("$1"); shift ;;
   esac
 done

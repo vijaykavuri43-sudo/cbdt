@@ -45,8 +45,16 @@ MASTER_UPI_LIST = (
     / "extracted"
     / "unique-upi-list-full.txt"
 )
-# Known operator/hawala wallets (LE submission master, CASE-2026-102)
-MASTER_WALLET_CSV = REPO_ROOT / "LE-SUBMISSION-MASTER" / "17-CRYPTO-WALLETS.csv"
+# Known operator/hawala wallets (LE submission master, CASE-2026-102).
+# Optional: absence is harmless — known_operator badging simply degrades to off.
+# Production (git-deployed VM) intentionally ships no reference data; point
+# S3LM_MASTER_WALLET_CSV at a mounted copy if officer workflow requires badging.
+MASTER_WALLET_CSV = Path(
+    os.environ.get(
+        "S3LM_MASTER_WALLET_CSV",
+        str(REPO_ROOT / "LE-SUBMISSION-MASTER" / "17-CRYPTO-WALLETS.csv"),
+    )
+)
 
 # chat_file images whose filename hints at crypto/wallet content get OCR'd for
 # wallet addresses without dragging the whole ~700K chat backlog in.
