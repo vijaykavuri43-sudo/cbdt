@@ -991,13 +991,31 @@ def _replace_payment_rows(c: sqlite3.Connection, key: str, payload: dict):
         )
 
 
-def import_reference_flows() -> dict:
+def import_reference_flows(force: bool = False) -> dict:
     """Import the verified five-day UTR↔gambler↔VPA join when available."""
     imported = 0
+    gambler_path = Path(config.REFERENCE_UTR_GAMBLER)
+    vpa_path = Path(config.REFERENCE_UTR_VPA)
+    signature_parts = []
+    for path in (gambler_path, vpa_path):
+        try:
+            stat = path.stat()
+            signature_parts.append(f"{path}:{stat.st_size}:{stat.st_mtime_ns}")
+        except OSError:
+            signature_parts.append(f"{path}:missing")
+    signature = "|".join(signature_parts)
+    c = connect()
+    existing = c.execute("SELECT COUNT(*) n FROM utr_identity").fetchone()["n"]
+    prior_signature = get_meta("reference_flows_signature")
+    # Existing deployments predate the signature marker but already imported
+    # the same mounted case references. Adopt the marker once instead of
+    # blocking live ingestion with another full idempotent upsert pass.
+    if not force and existing and (not prior_signature or prior_signature == signature):
+        if not prior_signature:
+            set_meta("reference_flows_signature", signature)
+        return {"reference_rows": existing, "reused": True}
     with _writer_lock:
         c = connect()
-        gambler_path = Path(config.REFERENCE_UTR_GAMBLER)
-        vpa_path = Path(config.REFERENCE_UTR_VPA)
         if gambler_path.exists():
             with gambler_path.open(
                 encoding="utf-8", errors="replace", newline=""
@@ -1065,6 +1083,11 @@ def import_reference_flows() -> dict:
             "UPDATE payment_transactions SET gambler=(SELECT gambler FROM utr_identity u WHERE u.utr=payment_transactions.utr)"
             " WHERE gambler='' AND utr IN (SELECT utr FROM utr_identity WHERE gambler!='')"
         )
+        c.execute(
+            "INSERT INTO meta(k,v) VALUES('reference_flows_signature',?) "
+            "ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+            (signature,),
+        )
         c.commit()
     return {"reference_rows": imported}
 
@@ -1092,7 +1115,7 @@ def rebuild_payment_index(force: bool = False) -> dict:
         "SELECT key,extract_json FROM objects WHERE extract_json IS NOT NULL"
         " AND json_extract(extract_json,'$.kind') IN ('deposit','withdrawal')"
     ).fetchall()
-    batch_size = 500
+    batch_size = 100
     for start in range(0, len(rows), batch_size):
         with _writer_lock:
             c = connect()
