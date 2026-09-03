@@ -100,7 +100,7 @@ TOKEN_FILE = DATA_DIR / "access-token.txt"
 
 FULL_SWEEP_CONCURRENCY = int(os.environ.get("S3LM_SWEEP_WORKERS", "6"))
 POLL_INTERVAL_SEC = float(os.environ.get("S3LM_POLL_SEC", "10"))
-COLD_RECHECK_SEC = float(os.environ.get("S3LM_COLD_SEC", "900"))
+COLD_RECHECK_SEC = float(os.environ.get("S3LM_COLD_SEC", "1800"))
 # Objects re-checked per prefix per cold cycle by the wrapping key-order crawl
 # (collector.crawl_once). Full coverage of a 290K-key prefix at 2000/cycle takes
 # ~36h; raise S3LM_CRAWL_CAP for faster catch-up at the cost of list requests.
@@ -112,7 +112,8 @@ MAX_GET_RATE_PER_SEC = 5
 # multi-week tesseract backlog (951K+ historical images) from starving the API.
 # 0 disables the cutoff (old behaviour — full-bucket wallet hunt uses 0).
 ENRICH_MAX_AGE_HOURS = float(os.environ.get("S3LM_ENRICH_MAX_AGE_HOURS", "0"))
-ENRICH_WORKERS = max(1, int(os.environ.get("S3LM_ENRICH_WORKERS", "6")))
+_DEFAULT_WORKERS = max(2, min(6, (os.cpu_count() or 4)))
+ENRICH_WORKERS = max(1, int(os.environ.get("S3LM_ENRICH_WORKERS", str(_DEFAULT_WORKERS))))
 ENRICH_BATCH = max(ENRICH_WORKERS, int(os.environ.get("S3LM_ENRICH_BATCH", "24")))
 # Full-bucket wallet scan: when set, the pending queue also includes every chat_file image
 # (not just hint-named). Keep live default False for latency; POST /api/wallets/full-scan enables it.

@@ -18,7 +18,7 @@ function FolderTree({
 }: {
   dirs: { seg: string; n: number; size: number }[]
   prefix: string
-  onNavigate: (p: string) => void
+  onNavigate: (seg: string) => void
   loading: boolean
 }) {
   return (
@@ -45,7 +45,7 @@ function FolderTree({
             <button
               key={d.seg}
               className={`ex-folder-item ${isActive ? 'ex-folder-item-active' : ''}`}
-              onClick={() => onNavigate(prefix + d.seg + '/')}
+              onClick={() => onNavigate(d.seg)}
             >
               <span className="ex-folder-icon" style={{ color: info.color }}>{info.icon}</span>
               <div className="ex-folder-info">
@@ -157,6 +157,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   const [autoSync, setAutoSync] = useState('')
   const [data, setData] = useState<{ total: number; items: ObjRow[] }>({ total: 0, items: [] })
   const [dirs, setDirs] = useState<{ seg: string; n: number; size: number }[]>([])
+  const [dirsPrefix, setDirsPrefix] = useState('')
   const [liveItems, setLiveItems] = useState<ObjRow[]>([])
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null])
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -186,6 +187,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
     setLoading(true)
     setErrMsg('')
     const rid = ++reqIdRef.current
+    const loadTimer = window.setTimeout(() => { if (rid === reqIdRef.current) setLoading(false) }, 20000)
     if (source === 'live') {
       api<any>('/api/live/list', { prefix, flat: flat ? 1 : '', q: debouncedQ, limit, cursor: liveCursor })
         .then((d) => {
@@ -200,6 +202,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
         })
         .finally(() => {
           if (rid !== reqIdRef.current) return
+          window.clearTimeout(loadTimer)
           setLoading(false); setInitialLoad(false)
         })
       return
@@ -211,13 +214,16 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
         console.error('[Explorer] list failed:', e)
         setErrMsg(String(e))
       })
-      .finally(() => { if (rid === reqIdRef.current) { setLoading(false); setInitialLoad(false) } })
+      .finally(() => { if (rid === reqIdRef.current) { window.clearTimeout(loadTimer); setLoading(false); setInitialLoad(false) } })
     if (source === 'manifest' && !debouncedQ && !flat) {
       api<any>('/api/tree', { prefix }).then((t) => {
-        if (rid === reqIdRef.current) setDirs(t.dirs ?? [])
+        if (rid !== reqIdRef.current) return
+        setDirs(t.dirs ?? [])
+        setDirsPrefix(t.prefix || prefix)
       }).catch((e) => { console.error('[Explorer] tree failed:', e); if (rid === reqIdRef.current) setErrMsg((prev) => prev || String(e)) })
     } else {
       setDirs([])
+      setDirsPrefix('')
     }
   }, [source, prefix, debouncedQ, order, limit, page, ext, since, flat, liveCursor])
 
@@ -240,6 +246,13 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
 
   function toggle(key: string) {
     setSel((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n })
+  }
+
+  function openDir(seg: string) {
+    const s = seg.replace(/^\/+|\/+$/g, '')
+    if (!s) return
+    setDirs([]); setDirsPrefix('')
+    setPrefix((prefix.endsWith('/') ? prefix : prefix + '/') + s + '/')
   }
 
   async function downloadSelected() {
@@ -319,7 +332,6 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   }, [page, pages, source, cursorStack, nextCursor])
 
   const dirTotalSize = dirs.reduce((a, d) => a + d.size, 0)
-  const dirTotalCount = dirs.reduce((a, d) => a + d.n, 0)
   const info = folderInfo(prefix)
 
   return (
@@ -329,7 +341,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
         <FolderTree
           dirs={dirs}
           prefix={prefix}
-          onNavigate={(p) => { setPrefix(p); setQ(''); setExt(''); setSinceDays(''); setFlat(false) }}
+          onNavigate={(seg) => { openDir(seg); setQ(''); setExt(''); setSinceDays(''); setFlat(false) }}
           loading={loading}
         />
       )}
@@ -460,14 +472,14 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
         )}
 
         {/* Directory stats bar */}
-        {source === 'manifest' && dirs.length > 0 && !flat && !debouncedQ && (
+        {source === 'manifest' && dirsPrefix === prefix && dirs.length > 0 && !flat && !debouncedQ && (
           <div className="ex-dir-stats">
             <span className="ex-dir-stats-icon" style={{ color: info.color }}>{info.icon}</span>
             <span className="ex-dir-stats-desc">{info.desc}</span>
             <span className="ex-dir-stats-sep">·</span>
             <span>{dirs.length} subfolders</span>
             <span className="ex-dir-stats-sep">·</span>
-            <span>{dirTotalCount.toLocaleString()} objects in subfolders</span>
+            <span>{data.total.toLocaleString()} objects in this folder</span>
             <span className="ex-dir-stats-sep">·</span>
             <span>{fmtBytes(dirTotalSize)}</span>
           </div>
@@ -516,13 +528,13 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
             /* ---- GALLERY VIEW ---- */
             <div className="ex-grid">
               {/* Folder cards first */}
-              {source === 'manifest' && !flat && !debouncedQ && dirs.map((d) => {
+              {source === 'manifest' && dirsPrefix === prefix && !flat && !debouncedQ && dirs.map((d) => {
                 const di = folderInfo(prefix + d.seg)
                 return (
                   <div
                     key={'dir-' + d.seg}
                     className="ex-file-card ex-folder-card"
-                    onClick={() => setPrefix(prefix + d.seg + '/')}
+                    onClick={() => openDir(d.seg)}
                   >
                     <div className="ex-folder-card-icon" style={{ background: `${di.color}18` }}>
                       <span style={{ fontSize: 28, color: di.color }}>{di.icon}</span>
@@ -576,10 +588,10 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
                 </thead>
                 <tbody>
                   {/* Folder rows first */}
-                  {source === 'manifest' && !flat && !debouncedQ && dirs.map((d) => {
+                  {source === 'manifest' && dirsPrefix === prefix && !flat && !debouncedQ && dirs.map((d) => {
                     const di = folderInfo(prefix + d.seg)
                     return (
-                      <tr key={'dir-' + d.seg} className="ex-table-folder" onClick={() => setPrefix(prefix + d.seg + '/')}>
+                      <tr key={'dir-' + d.seg} className="ex-table-folder" onClick={() => openDir(d.seg)}>
                         <td><span style={{ color: di.color }}>{di.icon}</span></td>
                         <td className="mono">
                           <span className="ex-table-folder-name" style={{ color: di.color }}>{d.seg}/</span>

@@ -198,10 +198,14 @@ AMOUNT_PATTERNS = [
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:₹|rs\.?|inr|[%₹])\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", re.IGNORECASE
+        r"(?:[₹%]|rs\.?|inr|=)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", re.IGNORECASE
     ),
     # Deposit slips: principal often shown as "~3,000" or bare "2,000" next to Paid-to name (no ₹ symbol due to OCR/thumbnail).
     re.compile(r"~\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)"),
+    # OCR frequently reads the ₹ glyph as '=' — "=2,500" is a verified PhonePe misread.
+    re.compile(r"=\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)"),
+    # Spaced thousands — "1 000" / "2 000" when OCR drops the comma.
+    re.compile(r"\b([0-9]{1,3}(?: [0-9]{3})+(?:\.[0-9]{1,2})?)\b"),
     # Bare comma amounts (2,000 / 12,345.00) — scored lower, boosted only near Paid-to / Payment context; UTRs have no commas so safe.
     re.compile(r"\b([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?)\b"),
 ]
@@ -350,11 +354,15 @@ def extract_amount(text: str) -> Optional[float]:
             weight = 6
         elif pi == 3:
             weight = 7  # tilde ~3,000 — principal on PhonePe/GooglePay slips
+        elif pi == 4:
+            weight = 6  # "=2,500" — tesseract reads ₹ as '=' (verified PhonePe misread)
+        elif pi == 5:
+            weight = 4  # spaced thousands "1 000" / "2 000"
         else:
             weight = 3  # bare 2,000 — fallback when ₹ missed by OCR
 
         for m in pattern.finditer(flat):
-            raw = m.group(1).replace(",", "")
+            raw = m.group(1).replace(",", "").replace(" ", "")
             try:
                 value = float(raw)
             except ValueError:
@@ -404,8 +412,8 @@ def extract_amount(text: str) -> Optional[float]:
                 continue
             if "up to" in ctx_before_low[-28:] and "%" in m.group(0):
                 continue
-            # Bare comma amounts (2,000) outside payment context are likely table/noise — penalize far distance
-            if pi == 4:  # bare comma pattern
+            # Bare comma / spaced amounts outside payment context are likely table/noise — penalize far distance
+            if pi in (5, 6):  # spaced thousands / bare comma — no rupee glyph
                 if pay_positions:
                     nearest = min(abs(s - p) for p in pay_positions)
                     if nearest > 250:
@@ -463,7 +471,7 @@ def extract_amount_candidates(text: str) -> list[dict]:
         else:
             weight = 3
         for m in pattern.finditer(flat):
-            raw = m.group(1).replace(",", "")
+            raw = m.group(1).replace(",", "").replace(" ", "")
             try:
                 value = float(raw)
             except ValueError:
@@ -1166,6 +1174,13 @@ class EnrichmentWorker:
             payload = _extract_payload_from_bytes(key, data, full_scan)
         except Exception as e:
             db.mark_enrichment_error(key, f"decode: {e}")
+            return
+        if payload is None:
+            # Object is not an enrichable kind (e.g. chat image without wallet hint
+            # outside full-scan). Mark finished so it never re-enters the queue —
+            # this was the source of the never-draining 1M backlog re-fetching
+            # the same keys every 2s cycle.
+            db.mark_enriched(key, {"kind": "none", "skipped": True})
             return
         self._persist_payload(key, payload)
 

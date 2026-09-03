@@ -2,6 +2,8 @@
 
 import json
 import csv
+import math
+import re
 import sqlite3
 import threading
 import time
@@ -20,14 +22,24 @@ def _sanitize_amount(value) -> float | None:
     UPI deposits realistically top out in the low lakhs; even a large single
     crypto deposit won't exceed ₹1 crore. Values beyond that (or NaN/strings)
     are OCR/QR mis-parses — keep the evidence row, exclude from money sums.
+    Accepts floats, ints, or string forms like "=1,000" / "1 000" / "Rs 500"
+    (OCR rupee-glyph artefacts).
     """
-    try:
-        v = float(value) if value is not None else None
-    except (TypeError, ValueError):
+    if value is None:
         return None
-    if v is None or not (0 < v <= MAX_AMOUNT_INR):
+    if isinstance(value, (int, float)):
+        num = float(value)
+    else:
+        s = re.sub(r"[^\d.]", "", str(value))
+        if not s or s.count(".") > 1:
+            return None
+        try:
+            num = float(s)
+        except ValueError:
+            return None
+    if math.isnan(num) or math.isinf(num) or not (0 < num <= MAX_AMOUNT_INR):
         return None
-    return v
+    return num
 
 
 _writer_lock = threading.Lock()
