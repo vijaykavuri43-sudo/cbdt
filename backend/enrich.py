@@ -700,8 +700,75 @@ def extract_participants(text: str) -> dict:
     return out
 
 
-def decode_qr_image(data: bytes) -> dict:
-    """Decode QR from image bytes; extract UPI VPA / amount / payee name / crypto wallets."""
+_SHORT_URL_RES = r"goo\.gl|qrstud\.io|bit\.ly|tinyurl\.com|t\.co|is\.gd|cutt\.ly|rebrand\.ly|shorturl\.at"
+
+
+def _expand_short_url(text: str) -> Optional[str]:
+    """Follow a bare short-URL QR to its landing URL (redirects only, no body
+    download). Returns the final URL or None. Pure function, child-safe."""
+    import re as _re
+
+    t = (text or "").strip()
+    if not _re.match(r"https?://", t, _re.I) or "upi:" in t.lower():
+        return None
+    if not _re.search(_SHORT_URL_RES, t, _re.I) and "upi" not in t.lower():
+        return None
+    try:
+        import httpx as _hx
+
+        with _hx.Client(timeout=10.0, follow_redirects=True) as c:
+            r = c.get(t)
+            final = str(r.url)
+            return final if final != t else None
+    except Exception:
+        return None
+
+
+def _qr_read_variants(img, zxingcpp):
+    """Yield candidate decoded texts across PIL-only variants (no cv2 on host
+    or VM image): raw, contrast, invert, upscales, rotations. Stops at the
+    first text containing a payment marker, else returns the first text found."""
+    from PIL import ImageOps as _Ops
+
+    base = img.convert("RGB")
+    variants = [("raw", base)]
+    try:
+        g = base.convert("L")
+        variants.append(("gray-contrast", _Ops.autocontrast(g, cutoff=1.0)))
+        variants.append(("gray-invert", _Ops.invert(g)))
+        w, h = g.size
+        if max(w, h) < 1200:
+            variants.append(("gray-2x", g.resize((w * 2, h * 2))))
+            variants.append(("gray-3x", g.resize((w * 3, h * 3))))
+        for ang, name in ((90, "rot90"), (180, "rot180"), (270, "rot270")):
+            variants.append((name, g.rotate(ang, expand=True)))
+    except Exception:
+        pass
+    first = None
+    for _name, v in variants[:9]:
+        try:
+            rs = zxingcpp.read_barcodes(v)
+        except Exception:
+            continue
+        if not rs:
+            continue
+        t = (rs[0].text or "").strip()
+        if not t:
+            continue
+        if first is None:
+            first = t
+        low = t.lower()
+        if "upi:" in low or "@" in t or low.startswith("bitcoin"):
+            return t  # payment-bearing payload wins immediately
+    return first
+
+
+def decode_qr_image(data: bytes, allow_gemini: bool = True) -> dict:
+    """Decode QR from image bytes; extract UPI VPA / amount / payee name / crypto wallets.
+
+    allow_gemini=False (spawned decode workers): on total decode failure flag
+    needs_qr_rescue so the parent Gemini batch can attempt a Vision read.
+    """
     out: dict = {
         "kind": "qr",
         "raw_text": None,
@@ -715,14 +782,16 @@ def decode_qr_image(data: bytes) -> dict:
         import io
 
         img = Image.open(io.BytesIO(data))
-        results = zxingcpp.read_barcodes(img)
-        if not results:
-            img = img.convert("L").resize((img.width * 2, img.height * 2))
-            results = zxingcpp.read_barcodes(img)
-        if not results:
+        text = _qr_read_variants(img, zxingcpp)
+        if not text:
+            if not allow_gemini:
+                out["needs_qr_rescue"] = True
             return out
-        text = results[0].text
         out["raw_text"] = text[:500]
+        expanded = _expand_short_url(text)
+        if expanded:
+            out["expanded_url"] = expanded[:500]
+            text = expanded
         vpas = extract_vpas(text)
         if vpas:
             out["vpa"] = vpas[0]
@@ -877,13 +946,18 @@ def _gemini_shrink(data: bytes) -> tuple[bytes, str]:
         return data, "image/jpeg"
 
 
-def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
+def _gemini_extract(
+    data: bytes, text_sample: str = "", mode: str = "slip"
+) -> Optional[dict]:
     """Call Gemini Vision if a key is configured; return parsed JSON or None.
 
-    Strict prompt: principal transaction amount ONLY, ignore Balance / promo.
-    Returns dict with keys amount_inr, utr, vpa, beneficiary_name, etc. or None on failure.
-    Budgeted: daily cap + 10-min breaker after 5 consecutive failures, 3 tries
-    with backoff on 429/5xx (400-class is fatal, no retry).
+    mode='slip' (default): strict prompt — principal transaction amount ONLY,
+    ignore Balance / promo. Returns amount_inr, utr, vpa, names, ifsc, account.
+    mode='qr': the QR was unreadable by zxing — transcribe ANY machine-readable
+    payment payload visible (QR URI, UPI id, wallet address) VERBATIM into
+    qr_text; the caller re-parses it through the normal QR field extractors.
+    Budgeted: daily cap + 10-min breaker after 5 consecutive failures, model
+    chain with backoff on 429/5xx (400-class is fatal, no retry).
     """
     blocked = _gemini_budget_claim()
     if blocked:
@@ -896,15 +970,28 @@ def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
         small, mime = _gemini_shrink(data)
         b64 = base64.b64encode(small).decode("ascii")
 
-        prompt = (
-            "You are a forensic payment-slip extractor for Indian UPI/bank screenshots. "
-            "Extract ONLY the principal transaction amount — the large centered amount under 'Payment successful' / 'Transaction Successful' (e.g. ₹200). "
-            "IGNORE: Balance (e.g. Balance: ₹355), promo 'You have spent ₹31,785 less than Aug', sponsored products, fees, or any other secondary amount. "
-            "Return JSON only with keys: amount_inr (number or null), utr (12-digit string or null), vpa (string or null), "
-            "beneficiary_name (string or null), sender_name (string or null), ifsc (string or null), bank_account (string or null). "
-            "If unsure, use null. Do not invent. Text sample for reference: "
-            + (text_sample[:300] if text_sample else "")
-        )
+        if mode == "qr":
+            prompt = (
+                "You are a forensic QR transcriber. This image contains a QR code "
+                "that automated decoders failed to read (rotated, stylized, low "
+                "contrast, or damaged). Transcribe the payment payload encoded in "
+                "the QR VERBATIM — typically a upi://pay?... URI, a VPA like "
+                "name@okbank, or a crypto wallet address. Copy character-for-character; "
+                "never guess missing characters. Return JSON only with keys: "
+                "qr_text (the full decoded string, or null if truly unreadable), "
+                "vpa (string or null), payee_name (string or null), amount_inr "
+                "(number from am= or null). If unsure, use null. Do not invent."
+            )
+        else:
+            prompt = (
+                "You are a forensic payment-slip extractor for Indian UPI/bank screenshots. "
+                "Extract ONLY the principal transaction amount — the large centered amount under 'Payment successful' / 'Transaction Successful' (e.g. ₹200). "
+                "IGNORE: Balance (e.g. Balance: ₹355), promo 'You have spent ₹31,785 less than Aug', sponsored products, fees, or any other secondary amount. "
+                "Return JSON only with keys: amount_inr (number or null), utr (12-digit string or null), vpa (string or null), "
+                "beneficiary_name (string or null), sender_name (string or null), ifsc (string or null), bank_account (string or null). "
+                "If unsure, use null. Do not invent. Text sample for reference: "
+                + (text_sample[:300] if text_sample else "")
+            )
         body = {
             "contents": [
                 {
@@ -1044,7 +1131,29 @@ def gemini_verify_payloads(items: list[tuple[str, dict, bytes]]) -> int:
     done = 0
     for key, payload, data in items[: config.GEMINI_PER_BATCH]:
         try:
-            if not isinstance(payload, dict) or not payload.pop("needs_gemini", False):
+            if not isinstance(payload, dict):
+                continue
+            if payload.pop("needs_qr_rescue", False):
+                # QR unreadable by zxing: Vision transcription attempt, then
+                # re-parse through the normal QR field extractors.
+                g = _gemini_extract(data, mode="qr")
+                if g and not g.get("_gemini_error") and g.get("qr_text"):
+                    text = g["qr_text"]
+                    payload["raw_text"] = text[:500]
+                    payload["qr_rescued_by"] = g.get("_model")
+                    vpas = extract_vpas(text)
+                    if vpas:
+                        payload["vpa"] = vpas[0]
+                        payload["vpas"] = vpas
+                    wallets = extract_wallets(text)
+                    if wallets:
+                        payload["wallets"] = wallets
+                    payload["engine"] = "qr+gemini"
+                    done += 1
+                elif g and g.get("_gemini_error"):
+                    payload["_gemini_error"] = g["_gemini_error"]
+                continue
+            if not payload.pop("needs_gemini", False):
                 continue
             g = _gemini_extract(data, payload.get("text_sample") or "")
             if g and not g.get("_gemini_error"):
@@ -1343,12 +1452,14 @@ def _extract_payload_from_bytes(
     """CPU-heavy, process-safe extraction with no DB/client dependencies."""
     kind = classify(key, full_chat_scan=full_scan)
     if kind == "qr":
-        return decode_qr_image(data)
+        return decode_qr_image(data, allow_gemini=allow_gemini)
     if kind not in ("deposit", "withdrawal"):
         return None
     payload = ocr_slip(data, allow_gemini=allow_gemini)
     payload["kind"] = kind
-    q = decode_qr_image(data)  # slips often embed payment QR too
+    q = decode_qr_image(
+        data, allow_gemini=allow_gemini
+    )  # slips often embed payment QR too
     if q.get("amount_inr") is not None or q.get("vpa"):
         payload.update({k: v for k, v in q.items() if v and not payload.get(k)})
     if q.get("vpas"):
