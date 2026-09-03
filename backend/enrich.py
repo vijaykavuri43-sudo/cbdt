@@ -1560,6 +1560,29 @@ class EnrichmentWorker:
             return
         try:
             keys = db.pending_enrichment(batch, full_scan=full_scan)
+            self._drain_keys(keys, workers, full_scan)
+        finally:
+            self._drain_lock.release()
+
+    def drain_specific(self, keys: list, workers: int = 1):
+        """Wallet-priority drain over caller-picked keys (wallet_loop).
+
+        Same lock/pool/verify/persist body as drain_pending — the two drains
+        alternate on _drain_lock and share _cpu_pool.
+        """
+        if not keys:
+            return
+        if not self._drain_lock.acquire(blocking=False):
+            return
+        try:
+            self._drain_keys(list(keys), workers, False)
+        finally:
+            self._drain_lock.release()
+
+    def _drain_keys(self, keys: list, workers: int, full_scan: bool):
+        if not keys:
+            return
+        try:
             if workers <= 1:
                 for k in keys:
                     if not self.enabled:
@@ -1608,7 +1631,7 @@ class EnrichmentWorker:
                     for key, payload, error in results
                     if not error
                     and isinstance(payload, dict)
-                    and payload.get("needs_gemini")
+                    and (payload.get("needs_gemini") or payload.get("needs_qr_rescue"))
                     and key in by_key
                 ]
                 if flagged:
@@ -1638,6 +1661,7 @@ class EnrichmentWorker:
                     else:
                         for _, p, _d in flagged:
                             p.pop("needs_gemini", None)
+                            p.pop("needs_qr_rescue", None)
             except Exception:
                 pass
             for key, payload, error in results:
@@ -1645,8 +1669,8 @@ class EnrichmentWorker:
                     db.mark_enrichment_error(key, error)
                 else:
                     self._persist_payload(key, payload)
-        finally:
-            self._drain_lock.release()
+        except Exception:
+            pass
 
     def close(self):
         self.enabled = False

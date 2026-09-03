@@ -677,6 +677,63 @@ def pending_wallet_candidates(limit: int = 200) -> list[str]:
     return pending_enrichment(limit, full_scan=True)
 
 
+# Mirror of enrich.crypto_filename_hint as SQL (chat wallet/USDT screenshots).
+_WALLET_HINT_LIKES = " OR ".join(
+    f"lower(key) LIKE '%{t}%'"
+    for t in (
+        "trustapp",
+        "trust_wallet",
+        "usdt",
+        "tron",
+        "wallet",
+        "tether",
+        "binance",
+        "crypto",
+    )
+)
+
+
+def pending_wallets(limit: int = 96) -> list[str]:
+    """Wallet-priority queue for the background wallet_loop drain.
+
+    Picks pending (a) ALL bankingqr/qrcode/paymentgateway images and
+    (b) hint-named chat_file images, newest first. Bounded to tens of
+    thousands of rows — never the full 287K chat backlog at once.
+    Two-phase like pending_enrichment: fresh head via idx_obj_seen range
+    scan (~ms), bulk fill unsorted (a full ORDER BY over the filtered set
+    cost ~5s on the 1.2M-row manifest).
+    """
+    where = (
+        "(enriched=0 AND extract_json IS NULL) "
+        "AND (enrich_retry_utc IS NULL "
+        "OR enrich_retry_utc <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+        f"AND {_IMG_CLAUSE} "
+        "AND (top_prefix IN ('bankingqr/','qrcode/','paymentgateway/') "
+        f"OR (top_prefix='chat_file/' AND ({_WALLET_HINT_LIKES}))) "
+    )
+    c = connect()
+    fresh_cut = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
+    head = [
+        r["key"]
+        for r in c.execute(
+            f"SELECT key FROM objects WHERE {where} AND seen_utc >= ? "
+            "ORDER BY seen_utc DESC LIMIT ?",
+            (fresh_cut, limit),
+        ).fetchall()
+    ]
+    if len(head) >= limit:
+        return head
+    fill = [
+        r["key"]
+        for r in c.execute(
+            f"SELECT key FROM objects WHERE {where} LIMIT ?",
+            (limit,),
+        ).fetchall()
+    ]
+    seen = set(head)
+    return head + [k for k in fill if k not in seen][: limit - len(head)]
+
+
 _IMG_CLAUSE = "(ext IN ('.jpg','.jpeg','.png','.webp','.gif','.bmp','.tiff','.tif','.heic','.heif','.avif','.jfif') OR (ext='' AND (lower(key) LIKE '%.jpg' OR lower(key) LIKE '%.jpeg' OR lower(key) LIKE '%.png' OR lower(key) LIKE '%.webp' OR lower(key) LIKE '%.gif' OR lower(key) LIKE '%.bmp' OR lower(key) LIKE '%.tiff' OR lower(key) LIKE '%.tif' OR lower(key) LIKE '%.heic' OR lower(key) LIKE '%.heif' OR lower(key) LIKE '%.avif' OR lower(key) LIKE '%.jfif')))"
 
 

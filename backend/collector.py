@@ -472,6 +472,21 @@ class Collector:
             )
             self._stop.wait(2.0)
 
+    def wallet_loop(self):
+        """Wallet-priority drain: hint-named chat images + bankingqr/qrcode/
+        paymentgateway first, so crypto wallets surface without waiting for
+        the ~1M backlog. Alternates with enrich_loop on the same drain lock."""
+        if not self.enricher:
+            return
+        while not self._stop.is_set():
+            try:
+                keys = db.pending_wallets(96)
+                if keys:
+                    self.enricher.drain_specific(keys, workers=config.ENRICH_WORKERS)
+            except Exception:
+                pass
+            self._stop.wait(20.0)
+
     def start_background(self):
         master = evidence.load_master_vpas()
         master_wallets = evidence.load_master_wallets()
@@ -499,6 +514,7 @@ class Collector:
         threading.Thread(target=self.full_sweep, daemon=True, name="sweep").start()
         threading.Thread(target=self.poll_loop, daemon=True, name="poll").start()
         threading.Thread(target=self.enrich_loop, daemon=True, name="enrich").start()
+        threading.Thread(target=self.wallet_loop, daemon=True, name="wallet").start()
 
         def payment_index():
             try:
