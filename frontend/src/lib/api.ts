@@ -33,13 +33,24 @@ async function handle(r: Response): Promise<Response> {
   return r
 }
 
-export async function api<T = any>(path: string, params?: Record<string, any>): Promise<T> {
+export async function api<T = any>(path: string, params?: Record<string, any>, timeoutMs = 25000): Promise<T> {
   const p = path.startsWith('/api') ? path.slice(4) : path
   const qs = new URLSearchParams(clean(params ?? {}))
   const qstr = qs.toString()
-  const r = await fetch('/api' + p + (qstr ? '?' + qstr : ''), { headers: authHeaders() })
-  await handle(r)
-  return r.json()
+  const url = '/api' + p + (qstr ? '?' + qstr : '')
+  const ctrl = new AbortController()
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const r = await fetch(url, { headers: authHeaders(), signal: ctrl.signal })
+    await handle(r)
+    return r.json()
+  } catch (e: any) {
+    // A hung backend must NEVER leave the UI on skeleton forever — surface it.
+    if (e?.name === 'AbortError') throw new Error(`request timed out after ${Math.round(timeoutMs / 1000)}s (${p || '/'} — backend busy? press Retry)`)
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
 }
 
 export async function post<T = any>(path: string, body?: any): Promise<T> {

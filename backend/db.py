@@ -75,7 +75,8 @@ def _migrate(conn: sqlite3.Connection):
         if name not in cols:
             conn.execute(f"ALTER TABLE objects ADD COLUMN {name} {ddl}")
     payment_cols = {
-        r["name"] for r in conn.execute("PRAGMA table_info(payment_transactions)").fetchall()
+        r["name"]
+        for r in conn.execute("PRAGMA table_info(payment_transactions)").fetchall()
     }
     for name, ddl in (
         ("rail_role", "TEXT NOT NULL DEFAULT 'unknown'"),
@@ -362,7 +363,8 @@ def object_versions(keys: list[str]) -> dict[str, tuple[int, str, str]]:
         ph = ",".join("?" * len(chunk))
         try:
             rows = c.execute(
-                f"SELECT key,size,etag,last_modified FROM objects WHERE key IN ({ph})", chunk
+                f"SELECT key,size,etag,last_modified FROM objects WHERE key IN ({ph})",
+                chunk,
             ).fetchall()
             out.update(
                 {
@@ -487,7 +489,9 @@ def search(
             conds.append("lower(key) LIKE ?")
             args.append("%" + e)
     if prefix:
-        p = prefix if prefix.endswith("/") else prefix + "/"
+        p = prefix.lstrip("/")
+        if not p.endswith("/"):
+            p += "/"
         conds.append("key LIKE ? ESCAPE '\\'")
         args.append(p.replace("%", r"\%").replace("_", r"\_") + "%")
     if since:
@@ -903,9 +907,7 @@ def _replace_payment_rows(c: sqlite3.Connection, key: str, payload: dict):
             [payload.get("vpa")] if payload.get("vpa") else []
         )
         vpa_details = [
-            {"vpa": v, "role": "unknown", "role_confidence": "low"}
-            for v in vpas
-            if v
+            {"vpa": v, "role": "unknown", "role_confidence": "low"} for v in vpas if v
         ]
     if not vpa_details and identity.get("vpa"):
         vpa_details = [

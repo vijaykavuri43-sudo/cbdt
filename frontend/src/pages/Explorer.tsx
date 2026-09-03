@@ -9,6 +9,12 @@ function isImg(key: string) {
   return IMG_EXTS.includes(extOf(key))
 }
 
+// Canonical folder prefix: never a leading slash (openDir from bucket root
+// used to build '/banner/', which matches zero object keys — 2026-09-03).
+function normPrefix(p: string) {
+  return p.replace(/^\/+/, '')
+}
+
 // ---- Folder sidebar tree ----
 function FolderTree({
   dirs,
@@ -83,6 +89,7 @@ function FileCard({
   const color = fileColor(obj.key)
   const icon = fileIcon(obj.key)
   const hasExtract = obj.extract?.amount_inr != null || obj.extract?.vpa || obj.extract?.new_mule
+  const [imgErr, setImgErr] = useState(false)
 
   return (
     <div
@@ -90,12 +97,14 @@ function FileCard({
       onClick={() => onPreview(obj)}
     >
       <div className="ex-file-thumb">
-        {img ? (
+        {img && !imgErr ? (
           <img
             className="ex-file-img"
             loading="lazy"
+            decoding="async"
             src={objectUrl(obj.key)}
             alt=""
+            onError={() => setImgErr(true)}
           />
         ) : (
           <div className="ex-file-placeholder" style={{ background: `${color}12` }}>
@@ -187,7 +196,13 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
     setLoading(true)
     setErrMsg('')
     const rid = ++reqIdRef.current
-    const loadTimer = window.setTimeout(() => { if (rid === reqIdRef.current) setLoading(false) }, 20000)
+    // Absolute backstop: even if a fetch never settles, never skeleton forever.
+    // (api() also aborts at 25s — this covers any other hang path.)
+    const loadTimer = window.setTimeout(() => {
+      if (rid !== reqIdRef.current) return
+      setLoading(false); setInitialLoad(false)
+      setErrMsg((prev) => prev || `Still loading after 20s (folder: /${prefix || ''}) — backend may be busy. Press Retry.`)
+    }, 20000)
     if (source === 'live') {
       api<any>('/api/live/list', { prefix, flat: flat ? 1 : '', q: debouncedQ, limit, cursor: liveCursor })
         .then((d) => {
@@ -252,7 +267,13 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
     const s = seg.replace(/^\/+|\/+$/g, '')
     if (!s) return
     setDirs([]); setDirsPrefix('')
-    setPrefix((prefix.endsWith('/') ? prefix : prefix + '/') + s + '/')
+    const base = normPrefix(prefix)
+    setPrefix((base ? base + '/' : '') + s + '/')
+  }
+
+  function goPrefix(p: string) {
+    setDirs([]); setDirsPrefix('')
+    setPrefix(normPrefix(p)); setQ('')
   }
 
   async function downloadSelected() {
@@ -350,7 +371,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
       <div className="ex-content">
         {/* Breadcrumbs */}
         <div className="ex-breadcrumbs">
-          <button className="ex-crumb ex-crumb-root" onClick={() => { setPrefix(''); setQ('') }}>
+          <button className="ex-crumb ex-crumb-root" onClick={() => goPrefix('')}>
             <span style={{ color: info.color }}>{info.icon}</span>
             bucket root
           </button>
@@ -359,7 +380,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
             return (
               <span key={c.path} style={{ display: 'contents' }}>
                 <span className="ex-crumb-sep">/</span>
-                <button className="ex-crumb" onClick={() => { setPrefix(c.path); setQ('') }}>
+                <button className="ex-crumb" onClick={() => goPrefix(c.path)}>
                   <span style={{ color: ci.color }}>{ci.icon}</span>
                   {c.name}
                 </button>
@@ -408,7 +429,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
               <option value="size">Largest</option>
             </select>
 
-            <select value="" onChange={(e) => e.target.value && setPrefix(e.target.value)} className="ex-select">
+            <select value="" onChange={(e) => e.target.value && goPrefix(e.target.value)} className="ex-select">
               <option value="">Jump to…</option>
               {prefixes.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
@@ -569,7 +590,9 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
                 <div className="ex-empty">
                   <div className="ex-empty-icon">🔍</div>
                   <div className="ex-empty-title">Nothing found</div>
-                  <div className="ex-empty-hint">Try clearing filters, toggling Recursive, or hitting Sync.</div>
+                  <div className="ex-empty-hint">
+                    Folder: <code className="mono">/{prefix || ''}</code> · Try clearing filters, toggling Recursive, or hitting Sync.
+                  </div>
                 </div>
               )}
             </div>

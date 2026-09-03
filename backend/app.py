@@ -128,6 +128,19 @@ def _actual_source() -> str:
     return "s3-fallback" if config.OBJECT_SOURCE == "gcs" else config.OBJECT_SOURCE
 
 
+def _norm_prefix(prefix: str) -> str:
+    """Canonical folder prefix: no leading slashes, trailing slash iff non-empty.
+
+    The Explorer used to build '/banner/' (leading slash) when navigating from
+    bucket root (2026-09-03: every folder click returned 0 rows). Object keys
+    never start with '/', so strip them here as well — belt and braces.
+    """
+    p = (prefix or "").lstrip("/")
+    if p and not p.endswith("/"):
+        p += "/"
+    return p
+
+
 def auth(request: Request):
     """Gate: every /api route requires the access key (header or ?token=).
 
@@ -202,8 +215,7 @@ def live_list(
     prefix='' lists top-level folders + root files. Substring filter `q` is
     applied after fetch and bounded to eight object-store pages.
     """
-    if prefix and not prefix.endswith("/"):
-        prefix += "/"
+    prefix = _norm_prefix(prefix)
     delimiter = None if flat else "/"
     items: list[dict] = []
     folders: list[str] = []
@@ -456,8 +468,7 @@ def _build_stats():
 # ---------------- browsing ----------------
 @app.get("/api/tree")
 def tree(prefix: str = Query(""), _=Depends(auth)):
-    if prefix and not prefix.endswith("/"):
-        prefix += "/"
+    prefix = _norm_prefix(prefix)
     return {"prefix": prefix, **db.subfolders(prefix)}
 
 
@@ -473,8 +484,7 @@ def list_objs(
     flat: int = 0,
     _=Depends(auth),
 ):
-    if prefix and not prefix.endswith("/"):
-        prefix += "/"
+    prefix = _norm_prefix(prefix)
     exts = [e.strip().lower() for e in ext.split(",") if e.strip()]
     return db.list_objects(
         prefix,
@@ -534,8 +544,7 @@ def sync(
     c = collector_holder["collector"]
     started = time.time()
     if prefix:
-        if prefix and not prefix.endswith("/"):
-            prefix += "/"
+        prefix = _norm_prefix(prefix)
         # handle (root) pseudo-folder
         if prefix == "(root)/":
             n = c.poll_root_files()
