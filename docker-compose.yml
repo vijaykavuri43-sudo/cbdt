@@ -15,13 +15,14 @@ services:
       - S3LM_GCS_BUCKET=cbtf-case-evidence-991096649643
       - S3LM_GCS_PREFIX=s3-mirror/
       - S3LM_ENRICH_MAX_AGE_HOURS=0
-      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-6}
-      - S3LM_ENRICH_BATCH=${S3LM_ENRICH_BATCH:-64}
+      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-8}
+      - S3LM_ENRICH_BATCH=${S3LM_ENRICH_BATCH:-96}
+      - OMP_THREAD_LIMIT=1
       # Gemini Vision verify (key lives ONLY in the VM .env, never in git)
       - S3LM_GEMINI_API_KEY=${S3LM_GEMINI_API_KEY:-}
       - S3LM_GEMINI_MODEL=${S3LM_GEMINI_MODEL:-gemini-2.5-flash}
-      - S3LM_GEMINI_DAILY_CAP=${S3LM_GEMINI_DAILY_CAP:-20000}
-      - S3LM_GEMINI_PER_BATCH=${S3LM_GEMINI_PER_BATCH:-12}
+      - S3LM_GEMINI_DAILY_CAP=${S3LM_GEMINI_DAILY_CAP:-100000}
+      - S3LM_GEMINI_PER_BATCH=${S3LM_GEMINI_PER_BATCH:-48}
       # AI investigator assistant (separate small budget + rate limit)
       - S3LM_AI_MODEL=${S3LM_AI_MODEL:-gemini-2.5-flash}
       - S3LM_AIASK_DAILY_CAP=${S3LM_AIASK_DAILY_CAP:-500}

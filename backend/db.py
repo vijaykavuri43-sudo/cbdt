@@ -173,6 +173,12 @@ CREATE INDEX IF NOT EXISTS idx_obj_top_lm ON objects(top_prefix, last_modified D
 -- walks the whole last_modified index on every visit.
 CREATE INDEX IF NOT EXISTS idx_obj_root_lm ON objects(last_modified DESC, key DESC)
   WHERE instr(key, '/') = 0;
+-- Pending-pick fast path (2026-09-03): the 2s enrich drain sorts ~1M pending
+-- rows newest-first on every cycle (~600ms). (top_prefix, seen_utc) serves the
+-- fresh-head query as a tight per-prefix range scan; the bulk fill below uses
+-- rowid order (no sort at all) since backlog drain order is irrelevant.
+CREATE INDEX IF NOT EXISTS idx_obj_enrich_pick ON objects(top_prefix, seen_utc DESC)
+  WHERE enriched = 0 AND extract_json IS NULL;
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS utr_identity(
   utr TEXT PRIMARY KEY,
@@ -631,8 +637,33 @@ def mark_enrichment_error(key: str, error: str):
 
 
 def pending_enrichment(limit: int = 20, full_scan: bool = False) -> list[str]:
-    sql, args = _pending_sql(limit, full_scan=full_scan)
-    return [r["key"] for r in connect().execute(sql, args).fetchall()]
+    where, args = _pending_where(full_scan=full_scan)
+    c = connect()
+    # Phase 1 — fresh head: evidence seen in the last hour, newest first.
+    # Tight per-prefix range scan on idx_obj_enrich_pick (~ms). Fresh slips
+    # must never wait behind the million-row historical backlog.
+    fresh_cut = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
+    head = [
+        r["key"]
+        for r in c.execute(
+            f"SELECT key FROM objects WHERE {where} AND seen_utc >= ? "
+            "ORDER BY seen_utc DESC LIMIT ?",
+            args + [fresh_cut, limit],
+        ).fetchall()
+    ]
+    if len(head) >= limit:
+        return head
+    # Phase 2 — bulk fill in index order (NO sort: backlog drain order is
+    # irrelevant, and sorting ~1M rows cost ~600ms every 2s drain cycle).
+    fill = [
+        r["key"]
+        for r in c.execute(
+            f"SELECT key FROM objects WHERE {where} LIMIT ?",
+            args + [limit],
+        ).fetchall()
+    ]
+    seen = set(head)
+    return head + [k for k in fill if k not in seen][: limit - len(head)]
 
 
 def pending_wallet_candidates(limit: int = 200) -> list[str]:

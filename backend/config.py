@@ -141,9 +141,11 @@ GEMINI_MODEL = (
 # 1.5-flash was retired (verified 2026-09-03: only 2.5-flash family served).
 GEMINI_ENABLED = bool(GEMINI_API_KEY)
 # Max Gemini Vision calls per UTC day across all workers (parent-enforced).
-GEMINI_DAILY_CAP = max(0, int(os.environ.get("S3LM_GEMINI_DAILY_CAP", "20000")))
-# Max Gemini verifications per drain batch (keeps the 2s enrich loop moving).
-GEMINI_PER_BATCH = max(1, int(os.environ.get("S3LM_GEMINI_PER_BATCH", "12")))
+# Only tesseract-miss slips reach Vision; shrunk 768px images run ~700 tokens
+# ≈ $0.0002/call on 2.5-flash, so 100K/day caps worst-case spend ≈ $20/day.
+GEMINI_DAILY_CAP = max(0, int(os.environ.get("S3LM_GEMINI_DAILY_CAP", "100000")))
+# Max Gemini verifications handed to the background thread per drain batch.
+GEMINI_PER_BATCH = max(1, int(os.environ.get("S3LM_GEMINI_PER_BATCH", "48")))
 
 # Optional pre-joined transaction corpus. These paths are searched in order;
 # absence is harmless and live OCR/QR extraction continues normally.

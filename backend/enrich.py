@@ -1,12 +1,19 @@
 """Enrichment workers: QR decode (UPI VPA/amount/name) + deposit-slip OCR (tesseract)."""
 
 import json
+import os as _os
 import re
 import subprocess
 import tempfile
 import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+# Tesseract spawns one OpenMP thread per core PER PROCESS by default — with N
+# decode workers that is N×cores threads thrashing 4 vCPUs. Single-thread each
+# tesseract and scale by worker COUNT instead (2026-09-03: ~2-3x throughput).
+# Set before any pool/tesseract starts; inherited by spawn children via env.
+_os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 from . import config, db
 
@@ -1394,8 +1401,10 @@ class EnrichmentWorker:
                 except Exception as exc:
                     return k, None, f"fetch: {exc}"
 
+            # Fetch is GCS-latency-bound, not CPU-bound: run it wider than the
+            # decode worker count so tesseract procs never starve for bytes.
             with ThreadPoolExecutor(
-                max_workers=min(workers, len(keys) or 1),
+                max_workers=min(16, len(keys) or 1),
                 thread_name_prefix="evidence-fetch",
             ) as fetch_pool:
                 fetched = list(fetch_pool.map(fetch_one, keys))
@@ -1428,7 +1437,26 @@ class EnrichmentWorker:
                     from . import config as _cfg
 
                     if _cfg.GEMINI_ENABLED:
-                        gemini_verify_payloads(flagged)
+                        # Vision calls take ~2s each — NEVER hold the 2s
+                        # drain_lock for them. Persist tesseract payloads now
+                        # (saved even if Gemini lags), verify in background
+                        # and re-persist merged results as they land.
+                        def _bg(items=flagged, worker=self):
+                            try:
+                                gemini_verify_payloads(items)
+                                for key, payload, _d in items:
+                                    if payload.get("needs_gemini"):
+                                        continue  # over per-batch cap; keep tesseract row
+                                    try:
+                                        worker._persist_payload(key, payload)
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+
+                        threading.Thread(
+                            target=_bg, daemon=True, name="gemini-verify"
+                        ).start()
                     else:
                         for _, p, _d in flagged:
                             p.pop("needs_gemini", None)
