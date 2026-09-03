@@ -489,6 +489,7 @@ def tree(prefix: str = Query(""), _=Depends(auth)):
 
 @app.get("/api/list")
 def list_objs(
+    request: Request,
     prefix: str = "",
     q: str = "",
     limit: int = Query(200, le=1000),
@@ -499,9 +500,11 @@ def list_objs(
     flat: int = 0,
     _=Depends(auth),
 ):
+    from fastapi.responses import JSONResponse as _JR
+
     prefix = _norm_prefix(prefix)
     exts = [e.strip().lower() for e in ext.split(",") if e.strip()]
-    return db.list_objects(
+    payload = db.list_objects(
         prefix,
         limit=limit,
         offset=offset,
@@ -511,6 +514,31 @@ def list_objs(
         since=since,
         flat=bool(flat),
     )
+    # Content ETag: total + page-window fingerprints. Repeat nav (Back button,
+    # re-click, poll) answers 304 with zero JSON rebuild (2026-09-03 review).
+    items = payload.get("items", [])
+    first = items[0] if items else {}
+    last = items[-1] if items else {}
+    etag = hashlib.sha1(
+        f"{prefix}\x00{order}\x00{limit}\x00{offset}\x00{payload.get('total')}\x00"
+        f"{len(items)}\x00{first.get('key')}\x00{first.get('last_modified')}\x00"
+        f"{last.get('key')}\x00{last.get('last_modified')}".encode()
+    ).hexdigest()[:32]
+    headers = {
+        "ETag": f'"{etag}"',
+        "Cache-Control": "private, max-age=30",
+        "X-Cache-Status": "MISS",
+    }
+    if request is not None:
+        inm = request.headers.get("if-none-match", "")
+        if inm and etag in inm.replace('"', ""):
+            from fastapi.responses import Response as _Resp
+
+            return _Resp(
+                status_code=304,
+                headers={"ETag": f'"{etag}"', "X-Cache-Status": "REVALIDATED"},
+            )
+    return _JR(content=payload, headers=headers)
 
 
 @app.get("/api/search")
@@ -577,6 +605,8 @@ def sync(
         c.state["last_poll_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         c.bump_total(n)
         c.state["objects_total"] = c.total_objects()
+        if n:
+            db.invalidate_list_totals(prefix)
         return {
             "synced_prefix": prefix,
             "new_objects": n,
@@ -591,6 +621,8 @@ def sync(
             found[p] = n
     root_new = c.poll_root_files()
     new_pfx = c.rediscover_prefixes()
+    if found or root_new or new_pfx:
+        db.invalidate_list_totals()
     return {
         "new_by_prefix": found,
         "new_root_files": root_new,
@@ -629,6 +661,7 @@ def sync_object_notice(notice: SyncObjectNotice, _=Depends(auth)):
     changed = bool(c._changed_objects([obj]))
     inserted = db.upsert_objects([obj])
     if changed:
+        db.invalidate_list_totals(top if top != "(root)" else "")
         c.state["new_since_start"] += 1
         c.state["last_poll_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         # Incremental (log review 2026-09-03): a full COUNT(*) here on every
@@ -749,6 +782,8 @@ def verify(_=Depends(auth)):
         c.poll_once(p, cold=True)
     if new_pfx:
         db.set_meta("prefixes", "\n".join(sorted(set(prefixes) | set(new_pfx))))
+    if found or root_new or new_pfx:
+        db.invalidate_list_totals()
     return {
         "new_by_prefix": found,
         "new_root_files": root_new,
@@ -762,27 +797,54 @@ def verify(_=Depends(auth)):
 # paint (50 × ~0.5–2 MB per page). This cache stores fetched bytes (and
 # resized thumbnails) on local disk keyed by key+etag, serves repeats with
 # zero GCS traffic, and answers browser revalidation (304) from the manifest.
+# 23GB free disk + ~15GB free RAM on the host (2026-09-03 review): split the
+# disk cache so rare full-size Previews can't evict hot grid thumbnails, and
+# keep the hottest thumbs in RAM (VM disk reads measured ~100ms vs ~7ms local).
 _OBJ_CACHE_DIR = config.DATA_DIR / "objcache"
-_OBJ_CACHE_MAX_BYTES = int(os.environ.get("S3LM_OBJCACHE_MB", "2048")) * 1024 * 1024
+_OBJ_CACHE_THUMB_BYTES = (
+    int(os.environ.get("S3LM_OBJCACHE_THUMB_MB", "6144")) * 1024 * 1024
+)
+_OBJ_CACHE_FULL_BYTES = (
+    int(os.environ.get("S3LM_OBJCACHE_FULL_MB", "2048")) * 1024 * 1024
+)
+# Back-compat: single S3LM_OBJCACHE_MB overrides the combined default.
+if "S3LM_OBJCACHE_MB" in os.environ and (
+    "S3LM_OBJCACHE_THUMB_MB" not in os.environ
+    and "S3LM_OBJCACHE_FULL_MB" not in os.environ
+):
+    _total = int(os.environ["S3LM_OBJCACHE_MB"]) * 1024 * 1024
+    _OBJ_CACHE_THUMB_BYTES = _total * 3 // 4
+    _OBJ_CACHE_FULL_BYTES = _total - _OBJ_CACHE_THUMB_BYTES
 _OBJ_CACHE_FILE_CAP = 64 * 1024 * 1024  # don't cache single files above this
 _objcache_writes = 0
+_objcache_hits_ram = 0
+_objcache_hits_disk = 0
+_objcache_miss = 0
+
+
+def _objcache_kind(thumb: int) -> str:
+    return "t" if thumb else "f"
 
 
 def _objcache_entry(key: str, etag: str, thumb: int):
     h = hashlib.sha256(f"{key}\x00{etag}\x00{thumb}".encode()).hexdigest()
-    return _OBJ_CACHE_DIR / h[:2] / (h + ".bin")
+    return _OBJ_CACHE_DIR / _objcache_kind(thumb) / h[:2] / (h + ".bin")
 
 
-def _objcache_trim():
+def _objcache_cap(thumb: int) -> int:
+    return _OBJ_CACHE_THUMB_BYTES if thumb else _OBJ_CACHE_FULL_BYTES
+
+
+def _objcache_trim(thumb: int):
+    """Evict oldest entries of one kind (thumb/full) when over its own cap."""
+    sub = _OBJ_CACHE_DIR / _objcache_kind(thumb)
     try:
-        files = [
-            (p.stat().st_mtime, p.stat().st_size, p)
-            for p in _OBJ_CACHE_DIR.rglob("*.bin")
-        ]
+        files = [(p.stat().st_mtime, p.stat().st_size, p) for p in sub.rglob("*.bin")]
     except OSError:
         return
+    cap = _objcache_cap(thumb)
     total = sum(s for _, s, _ in files)
-    if total <= _OBJ_CACHE_MAX_BYTES:
+    if total <= cap:
         return
     files.sort()
     for mtime, size, p in files:
@@ -795,11 +857,44 @@ def _objcache_trim():
         except OSError:
             continue
         total -= size
-        if total <= _OBJ_CACHE_MAX_BYTES:
+        if total <= cap:
             break
 
 
-def _serve_cached(path, media, filename, etag, download):
+# In-RAM hot LRU for thumbnails only (small ~8KB JPEGs; full images stay on
+# disk). Kills the ~100ms VM disk-read stall on repeat grid paints.
+from collections import OrderedDict as _OrderedDict
+
+_RAM_CACHE_MAX_BYTES = int(os.environ.get("S3LM_RAMCACHE_MB", "512")) * 1024 * 1024
+_ram_cache: _OrderedDict = _OrderedDict()
+_ram_cache_bytes = 0
+
+
+def _ram_get(cetag: str):
+    global _ram_cache_bytes
+    try:
+        media, body = _ram_cache.pop(cetag)
+    except KeyError:
+        return None
+    _ram_cache[cetag] = (media, body)  # re-insert = most-recently-used
+    return media, body
+
+
+def _ram_put(cetag: str, media: str, body: bytes):
+    global _ram_cache_bytes
+    if len(body) > 2 * 1024 * 1024:  # never RAM-cache big payloads
+        return
+    old = _ram_cache.pop(cetag, None)
+    if old is not None:
+        _ram_cache_bytes -= len(old[1])
+    _ram_cache[cetag] = (media, body)
+    _ram_cache_bytes += len(body)
+    while _ram_cache_bytes > _RAM_CACHE_MAX_BYTES and _ram_cache:
+        _, (_, b) = _ram_cache.popitem(last=False)
+        _ram_cache_bytes -= len(b)
+
+
+def _serve_cached(path, media, filename, etag, download, cache_status="HIT-disk"):
     disp = f'{"attachment" if download else "inline"}; filename="{filename}"'
     return FileResponse(
         str(path),
@@ -809,6 +904,7 @@ def _serve_cached(path, media, filename, etag, download):
             "Content-Disposition": disp,
             "Cache-Control": "private, max-age=3600",
             "ETag": f'"{etag}"',
+            "X-Cache-Status": cache_status,
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -842,16 +938,42 @@ def get_object(
     cache_etag = hashlib.sha1(
         f"{key}\x00{manifest_etag}\x00{thumb}".encode()
     ).hexdigest()[:32]
+    global _objcache_hits_ram, _objcache_hits_disk, _objcache_miss
     if not download:
         inm = request.headers.get("if-none-match", "")
         if inm and cache_etag in inm.replace('"', ""):
             from fastapi.responses import Response as _Resp
 
-            return _Resp(status_code=304, headers={"ETag": f'"{cache_etag}"'})
+            return _Resp(
+                status_code=304,
+                headers={"ETag": f'"{cache_etag}"', "X-Cache-Status": "REVALIDATED"},
+            )
+        if thumb:
+            ram = _ram_get(cache_etag)
+            if ram is not None:
+                _objcache_hits_ram += 1
+                ram_media, ram_body = ram
+                return StreamingResponse(
+                    [ram_body].__iter__(),
+                    media_type=ram_media,
+                    headers={
+                        "Content-Disposition": f'inline; filename="{filename}"',
+                        "Cache-Control": "private, max-age=3600",
+                        "ETag": f'"{cache_etag}"',
+                        "X-Cache-Status": "HIT-ram",
+                        "X-Content-Type-Options": "nosniff",
+                    },
+                )
         hit = _objcache_entry(key, manifest_etag, thumb)
         if hit.exists():
             try:
                 meta = json.loads(hit.with_suffix(".json").read_text())
+                _objcache_hits_disk += 1
+                if thumb and meta.get("media", "").startswith("image/"):
+                    try:
+                        _ram_put(cache_etag, meta["media"], hit.read_bytes())
+                    except OSError:
+                        pass
                 return _serve_cached(
                     hit,
                     meta.get("media", "application/octet-stream"),
@@ -861,6 +983,7 @@ def get_object(
                 )
             except Exception:
                 pass
+        _objcache_miss += 1
     try:
         resp, headers = object_store.get_object_stream(key)
     except RuntimeError as e:
@@ -919,8 +1042,10 @@ def get_object(
             dest.write_bytes(body)
             dest.with_suffix(".json").write_text(json.dumps({"media": out_media}))
             _objcache_writes += 1
+            if thumb and out_media.startswith("image/"):
+                _ram_put(cache_etag, out_media, body)
             if _objcache_writes % 50 == 0:
-                _objcache_trim()
+                _objcache_trim(thumb)
             return _serve_cached(dest, out_media, filename, cache_etag, download)
         except OSError:
             pass
@@ -932,6 +1057,7 @@ def get_object(
                 "Content-Disposition": f'inline; filename="{filename}"',
                 "Cache-Control": "private, max-age=300",
                 "ETag": f'"{cache_etag}"',
+                "X-Cache-Status": "MISS",
                 "X-Content-Type-Options": "nosniff",
             },
         )
@@ -943,6 +1069,7 @@ def get_object(
             headers={
                 "Content-Disposition": f'{"attachment" if download else "inline"}; filename="{filename}"',
                 "Cache-Control": "private, max-age=300",
+                "X-Cache-Status": "BYPASS-too-big",
                 "X-Content-Type-Options": "nosniff",
             },
         )
@@ -952,9 +1079,44 @@ def get_object(
         headers={
             "Content-Disposition": f'{"attachment" if download else "inline"}; filename="{filename}"',
             "Cache-Control": "private, max-age=300",
+            "X-Cache-Status": "BYPASS-stream",
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@app.get("/api/cache-stats")
+def cache_stats(_=Depends(auth)):
+    """Cache observability for tuning: RAM LRU + disk kinds + hit counters."""
+    disk = {}
+    for kind, cap in (("t", _OBJ_CACHE_THUMB_BYTES), ("f", _OBJ_CACHE_FULL_BYTES)):
+        sub = _OBJ_CACHE_DIR / kind
+        try:
+            entries = list(sub.rglob("*.bin"))
+            used = sum(p.stat().st_size for p in entries)
+        except OSError:
+            entries, used = [], 0
+        disk[kind] = {
+            "entries": len(entries),
+            "bytes": used,
+            "cap_bytes": cap,
+            "pct": round(100.0 * used / cap, 1) if cap else 0,
+        }
+    hits = _objcache_hits_ram + _objcache_hits_disk
+    total = hits + _objcache_miss
+    return {
+        "ram": {
+            "entries": len(_ram_cache),
+            "bytes": _ram_cache_bytes,
+            "cap_bytes": _RAM_CACHE_MAX_BYTES,
+        },
+        "disk": disk,
+        "hits_ram": _objcache_hits_ram,
+        "hits_disk": _objcache_hits_disk,
+        "miss": _objcache_miss,
+        "hit_pct": round(100.0 * hits / total, 1) if total else None,
+        "list_total_cache_entries": len(db._list_total_cache),
+    }
 
 
 @app.post("/api/enrich")

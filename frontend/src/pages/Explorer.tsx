@@ -178,6 +178,24 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   const [errMsg, setErrMsg] = useState('')
   const [filterOpen, setFilterOpen] = useState(false)
   const reqIdRef = useRef(0)
+  const pageCache = useRef(new Map<string, { at: number; data: any }>())
+  // Warm page N+1 in the background so Next feels instant; failures are
+  // silent — the real navigation fetch remains the source of truth.
+  const prefetchNext = useCallback((ck: string, d: any) => {
+    try {
+      const parts = ck.split('|')
+      const total = d?.total ?? 0, lim = Number(parts[2]) || 50, pg = Number(parts[3]) || 0
+      if ((pg + 1) * lim >= total) return
+      const nk = `${parts[0]}|${parts[1]}|${parts[2]}|${pg + 1}|${parts[4]}|${parts[5]}|${parts[6]}|${parts[7]}`
+      if (pageCache.current.has(nk)) return
+      api<any>('/api/list', {
+        prefix: parts[0], order: parts[1], limit: lim, offset: (pg + 1) * lim,
+        q: parts[4], ext: parts[5], since: parts[6], flat: parts[7] ? 1 : '',
+      }).then((nd) => {
+        pageCache.current.set(nk, { at: Date.now(), data: nd })
+      }).catch(() => {})
+    } catch { /* never break navigation */ }
+  }, [])
   const contentRef = useRef<HTMLDivElement>(null)
 
   const since = sinceDays
@@ -222,8 +240,25 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
         })
       return
     }
-    api<any>('/api/list', { prefix, q: debouncedQ, order, limit, offset: page * limit, ext, since, flat: flat ? 1 : '' })
-      .then((d) => { if (rid === reqIdRef.current) setData(d) })
+    // Client page cache (60s): Back / re-click / Next-then-Prev answers instantly
+  // without re-querying; server totals are cached 300s so this stays coherent.
+  const ck = `${prefix}|${order}|${limit}|${page}|${debouncedQ}|${ext}|${since}|${flat ? 1 : ''}`
+  const cached = pageCache.current.get(ck)
+  if (cached && Date.now() - cached.at < 60000) {
+    setData(cached.data)
+    window.clearTimeout(loadTimer)
+    setLoading(false); setInitialLoad(false)
+    prefetchNext(ck, cached.data)
+    return
+  }
+  api<any>('/api/list', { prefix, q: debouncedQ, order, limit, offset: page * limit, ext, since, flat: flat ? 1 : '' })
+      .then((d) => {
+        if (rid !== reqIdRef.current) return
+        pageCache.current.set(ck, { at: Date.now(), data: d })
+        if (pageCache.current.size > 40) { const oldest = pageCache.current.keys().next().value; if (oldest !== undefined) pageCache.current.delete(oldest) }
+        setData(d)
+        prefetchNext(ck, d)
+      })
       .catch((e) => {
         if (rid !== reqIdRef.current) return
         console.error('[Explorer] list failed:', e)

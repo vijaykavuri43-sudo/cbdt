@@ -55,6 +55,11 @@ def connect() -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA busy_timeout=30000")
+        # Read-heavy 1M+ row dashboard on a 16GB host: keep hot index/B-tree
+        # pages in RAM instead of re-reading them per navigation (2026-09-03).
+        conn.execute("PRAGMA cache_size=-262144")  # 256MB page cache
+        conn.execute("PRAGMA mmap_size=1073741824")  # 1GB mmap for index scans
+        conn.execute("PRAGMA temp_store=MEMORY")  # ORDER BY spill goes to RAM
         conn.executescript(SCHEMA)
         _migrate(conn)
         _local.conn = conn
@@ -426,10 +431,22 @@ def subfolders(prefix: str) -> list[dict]:
 
 
 # TTL cache for list totals: COUNT(*) over a 100K+ row prefix range is the
-# slowest part of folder browsing; exact totals drift slowly so a 60s stale
-# total is fine for pagination UI (page windows always query live rows).
-_LIST_TOTAL_TTL = 60.0
+# slowest part of folder browsing; exact totals drift slowly so a stale total
+# is fine for pagination UI (page windows always query live rows). Explicitly
+# invalidated on sync/verify/notice ingestion (2026-09-03 cache review).
+_LIST_TOTAL_TTL = 300.0
 _list_total_cache: dict = {}
+
+
+def invalidate_list_totals(prefix: str = ""):
+    """Drop cached COUNTs for a top_prefix ('' = all) after new arrivals."""
+    if not prefix:
+        _list_total_cache.clear()
+        return
+    # cache keys store the normalized prefix ("banner/" or "" for root)
+    top = prefix if prefix.endswith("/") else prefix.split("/", 1)[0] + "/"
+    for k in [k for k in _list_total_cache if k[0] == top or k[0] == ""]:
+        _list_total_cache.pop(k, None)
 
 
 def _cached_list_total(cache_key, where, args) -> int:

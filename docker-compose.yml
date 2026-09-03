@@ -27,11 +27,12 @@ services:
       # reference files; reference masters are optional and ignored when absent)
       - ../intelligence:/app/intelligence
     restart: unless-stopped
-    # budget VM: keep memory in check
+    # 16GB host, ~15GB free (2026-09-03): room for SQLite page cache + RAM thumbs
+
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 8G
 
   # Continuous S3 -> GCS evidence mirror sync (Defect A fix, staleness review
   # 2026-09-02): the s3lm dashboard reads gs://cbtf…/s3-mirror/, which was
