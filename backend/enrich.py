@@ -462,6 +462,45 @@ def extract_amount(text: str) -> Optional[float]:
     return candidates[0][0]
 
 
+def detect_glyph_collision(text: str) -> Optional[dict]:
+    """Detect ₹-glyph misread collisions (verified 2026-09-03: ₹1,000 read as
+    BOTH '71,000' (₹→7) and '21,000' (₹→2) on one PhonePe slip; scorer crowned
+    71,000 by earliest-position tiebreak).
+
+    Tesseract eats the ₹ into the leading digit, so the SAME true amount yields
+    ≥2 distinct bare numbers sharing their trailing digits. True distinct
+    same-suffix amounts on one slip are near-impossible, so a collision means
+    the winner is untrustworthy → return detail for Gemini adjudication.
+    Only bare numbers (no ₹/=~/Rs prefix) participate: prefixed reads kept
+    their glyph and are not suspect.
+    """
+    if not text:
+        return None
+    flat = " ".join(text.split())
+    bare: list[str] = []
+    for pi in (5, 6):  # spaced-thousands / bare-comma patterns
+        for m in AMOUNT_PATTERNS[pi].finditer(flat):
+            g0 = m.group(0)
+            # skip if a currency glyph survived just before the number
+            pre = flat[max(0, m.start() - 4) : m.start()]
+            if re.search(r"[₹%=~]", pre) or re.search(
+                r"(?:rs\.?|inr)$", pre.strip(), re.IGNORECASE
+            ):
+                continue
+            digits = m.group(1).replace(",", "").replace(" ", "").split(".")[0]
+            if len(digits) >= 5:  # need a leading digit + 4-digit suffix
+                bare.append(digits)
+    if len(set(bare)) < 2:
+        return None
+    by_suffix: dict[str, set[str]] = {}
+    for d in set(bare):
+        by_suffix.setdefault(d[-4:], set()).add(d)
+    for suffix, vals in by_suffix.items():
+        if len(vals) >= 2:
+            return {"shared_suffix": suffix, "variants": sorted(vals)}
+    return None
+
+
 def extract_amount_candidates(text: str) -> list[dict]:
     """Return all scored candidates for audit/UI (ignored amounts)."""
     if not text:
@@ -1196,9 +1235,19 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
                 out["ifsc"] = accounts[0]["ifsc"]
         out.update(extract_participants(" ".join(text.split())))
 
-        # — Gemini verification: cost-controlled. Auto-call only when tesseract fails
-        # to find a principal amount; otherwise rely on healed tesseract heuristics
-        # (Balance/promo blacklists) and let officer force Gemini via Re-run button.
+        # — Gemini verification: cost-controlled. Auto-call when tesseract fails
+        # to find a principal amount, when the ₹-glyph collision detector fires
+        # (₹1,000 → '71,000' + '21,000' verified 2026-09-03), or when promo
+        # candidates were ignored (medium confidence = winner uncorroborated).
+        # High-confidence clean tesseract reads stay local (no token burn).
+        try:
+            collision = detect_glyph_collision(text)
+        except Exception:
+            collision = None
+        if collision:
+            out["glyph_collision"] = collision
+            tesseract_amount = None
+            out["amount_inr"] = None
         use_gemini = False
         if config.GEMINI_ENABLED:
             has_rejected = bool(out.get("amount_ignored"))
@@ -1206,6 +1255,9 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             # the 200 vs 31785 case is now solved by context-aware scoring, no need to burn tokens.
             if tesseract_amount is None:
                 # If we have rejected promo but no principal, likely ₹ was missed — Gemini can rescue
+                use_gemini = True
+            elif collision or has_rejected:
+                # Winner uncorroborated (medium confidence): let Vision adjudicate
                 use_gemini = True
             # Optional: also invoke if tesseract amount is plausible but confidence would be low
             # and the slip contains a high-value promo that dwarfed the true amount (defensive)

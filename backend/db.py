@@ -213,6 +213,9 @@ CREATE INDEX IF NOT EXISTS idx_pay_direction_rail ON payment_transactions(direct
 CREATE INDEX IF NOT EXISTS idx_pay_gambler ON payment_transactions(gambler) WHERE gambler != '';
 CREATE INDEX IF NOT EXISTS idx_pay_rail ON payment_transactions(rail_type,rail_id) WHERE rail_id != '';
 CREATE INDEX IF NOT EXISTS idx_pay_utr ON payment_transactions(utr) WHERE utr != '';
+CREATE INDEX IF NOT EXISTS idx_pay_railid ON payment_transactions(rail_id) WHERE rail_id != '';
+CREATE INDEX IF NOT EXISTS idx_pay_holder ON payment_transactions(account_holder) WHERE account_holder != '';
+CREATE INDEX IF NOT EXISTS idx_pay_ifsc ON payment_transactions(ifsc) WHERE ifsc != '';
 CREATE TABLE IF NOT EXISTS payment_flow_totals(
   direction TEXT NOT NULL,
   rail_filter TEXT NOT NULL DEFAULT '',
@@ -1358,6 +1361,23 @@ def money_flows(
         args.extend([like] * 5)
     where = " AND ".join(conds)
     c = connect()
+    if q:
+        # Exact-identifier fast path (officer pastes a full VPA / account /
+        # UTR / holder / IFSC): equality hits idx_pay_* instead of a 5-column
+        # %LIKE% full scan over ~105K rows. Falls back to LIKE below when
+        # nothing matches exactly (incl. case mismatches — LIKE stays ASCII
+        # case-insensitive, so results are unchanged, just slower).
+        hit = c.execute(
+            "SELECT 1 FROM payment_transactions WHERE direction=? AND "
+            "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?) LIMIT 1",
+            (direction, q, q, q, q, q),
+        ).fetchone()
+        if hit:
+            conds.append(
+                "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?)"
+            )
+            args.extend([q] * 5)
+            where = " AND ".join(conds)
     materialized = None
     if not q:
         materialized = c.execute(

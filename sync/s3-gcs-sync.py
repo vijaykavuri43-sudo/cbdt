@@ -36,6 +36,7 @@ Safety: read-only against S3 (LIST+GET only); GCS bucket has versioning ON
 import argparse
 import hashlib
 import json
+import mimetypes
 import os
 import queue
 import sqlite3
@@ -582,9 +583,12 @@ class SyncWorker(threading.Thread):
                     "authorization_ref": AUTH_REF,
                 }
                 with open(tmp.name, "rb") as f:
+                    # ext-first: the S3 source lies about content-type for some
+                    # QR objects (text/plain for real JPEGs) — trust the key.
                     blob.upload_from_file(
                         f,
-                        content_type=r.headers.get("content-type")
+                        content_type=mimetypes.guess_type(key)[0]
+                        or r.headers.get("content-type")
                         or "application/octet-stream",
                     )
                 self._record(key, n, etag, h_sha.hexdigest(), blob.generation)

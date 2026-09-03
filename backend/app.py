@@ -937,6 +937,31 @@ def _serve_cached(path, media, filename, etag, download, cache_status="HIT-disk"
     )
 
 
+def _sniff_media(head: bytes) -> str | None:
+    """Magic-byte media override (QR/content-type fix 2026-09-03).
+
+    Some mirrored objects carry a wrong stored content_type (e.g. text/plain
+    for a real JPEG — the S3 source lied and the sync upload trusted it), so
+    ext-first guessing still loses on ext-less keys. Magic bytes don't lie.
+    Returns a media type or None when nothing conclusive.
+    """
+    if not head:
+        return None
+    if head[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[:5] == b"%PDF-":
+        return "application/pdf"
+    if head[:4] == b"PK\x03\x04":
+        return "application/zip"
+    return None
+
+
 @app.get("/api/object")
 def get_object(
     key: str,
@@ -996,14 +1021,21 @@ def get_object(
             try:
                 meta = json.loads(hit.with_suffix(".json").read_text())
                 _objcache_hits_disk += 1
-                if thumb and meta.get("media", "").startswith("image/"):
+                hit_media = meta.get("media", "application/octet-stream")
+                # heal wrongly-cached media (text/plain JPEG etc.): one 32B read
+                try:
+                    with open(hit, "rb") as _hf:
+                        hit_media = _sniff_media(_hf.read(32)) or hit_media
+                except OSError:
+                    pass
+                if thumb and hit_media.startswith("image/"):
                     try:
-                        _ram_put(cache_etag, meta["media"], hit.read_bytes())
+                        _ram_put(cache_etag, hit_media, hit.read_bytes())
                     except OSError:
                         pass
                 return _serve_cached(
                     hit,
-                    meta.get("media", "application/octet-stream"),
+                    hit_media,
                     filename,
                     cache_etag,
                     download,
@@ -1016,8 +1048,8 @@ def get_object(
     except RuntimeError as e:
         raise HTTPException(404, str(e))
     mt = (
-        headers.get("content_type")
-        or mimetypes.guess_type(key)[0]
+        mimetypes.guess_type(key)[0]
+        or headers.get("content_type")
         or "application/octet-stream"
     )
     media = mt.split(";")[0].strip()
@@ -1045,7 +1077,8 @@ def get_object(
         except Exception:
             pass
     if data is not None and len(data) <= _OBJ_CACHE_FILE_CAP:
-        out_media = media
+        # bytes in hand: magic wins over any stored/ext guess (fixes QR-as-text)
+        out_media = _sniff_media(data[:32]) or media
         body = data
         if thumb and media.startswith("image/"):
             try:
@@ -1397,9 +1430,11 @@ def money_flows_api(
 ):
     """Normalized gambler↔payment-rail flows from OCR, QR, and case references."""
     cache_key = f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}"
+    # q-searches were cached 5s: every retry re-ran the expensive GROUP BYs.
+    # 60s is fine for a search view (no-q fast path stays at 5s).
     return cached(
         cache_key,
-        5.0,
+        60.0 if q else 5.0,
         lambda: db.money_flows(
             direction=direction,
             rail_type=rail_type,
