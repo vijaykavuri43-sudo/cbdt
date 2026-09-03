@@ -903,9 +903,46 @@ _gemini_stats = {
     "errors": 0,
     "capped": 0,
     "cooled": 0,
+    "reserved": 0,
+    "quota_skips": 0,
     "last_error": "",
+    "quota_scope": "",
+    "detected_cap": 0,
+    "day_dead": [],
 }
 _gemini_client = None
+# Quota-aware state (2026-09-03: key is free tier, 20 req/day/model —
+# quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier).
+_gemini_day_dead: dict[str, str] = {}  # model -> UTC date it died for
+_gemini_detected_cap = 0  # learned from quotaValue in 429 bodies (x keys)
+_gemini_key_cursor = 0  # round-robin over config.GEMINI_API_KEYS
+_gemini_minute_hits: list[float] = []  # monotonic ts of recent claims
+
+
+def _gemini_parse_429(text: str) -> dict:
+    """Extract scope from a 429 body: day vs minute, retry delay, quotaValue."""
+    import re as _re
+
+    out = {"scope": "unknown", "retry_s": 0.0, "quota_value": 0}
+    if not text:
+        return out
+    m = _re.search(r'"quotaId"\s*:\s*"([^"]+)"', text)
+    qid = m.group(1) if m else ""
+    if "PerDay" in qid or "per_day" in qid or "daily" in qid.lower():
+        out["scope"] = "day"
+    elif "PerMinute" in qid or "per_minute" in qid or "minute" in qid.lower():
+        out["scope"] = "minute"
+    m = _re.search(r'"quotaValue"\s*:\s*"(\d+)"', text)
+    if m:
+        out["quota_value"] = int(m.group(1))
+    m = _re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', text)
+    if m:
+        out["retry_s"] = float(m.group(1))
+    else:
+        m = _re.search(r'"retryInfo"[^}]*?"retryDelay"\s*:\s*"(\d+)s"', text, _re.S)
+        if m:
+            out["retry_s"] = float(m.group(1))
+    return out
 
 
 def gemini_stats() -> dict:
@@ -989,43 +1026,111 @@ def _gemini_client_shared():
     return _gemini_client
 
 
-def _gemini_budget_claim() -> Optional[str]:
-    """Claim one call from the daily budget + breaker. None = proceed."""
+def _gemini_model_dead(model: str) -> bool:
+    """True if this model hit a day-scope 429 today (free-tier 20/day)."""
     import time as _t
 
-    if not config.GEMINI_ENABLED:
-        return "disabled"
+    with _gemini_lock:
+        return _gemini_day_dead.get(model) == _t.strftime("%Y-%m-%d", _t.gmtime())
+
+
+def _gemini_budget_claim(
+    manual: bool = False,
+) -> tuple[Optional[str], str]:
+    """Claim one call. Returns (block_reason_or_None, api_key_to_use).
+
+    manual=True (officer Re-run buttons) bypasses pacing + reserve but never
+    the day-dead flags. Key rotation spreads the free-tier 20/day/model
+    across every configured key.
+    """
+    import time as _t
+
+    keys = config.GEMINI_API_KEYS
+    if not keys:
+        return "disabled", ""
     today = _t.strftime("%Y-%m-%d", _t.gmtime())
     with _gemini_lock:
-        global _gemini_day, _gemini_used_today
+        global _gemini_day, _gemini_used_today, _gemini_key_cursor
         if _gemini_day != today:
             _gemini_day, _gemini_used_today = today, 0
-        if _t.monotonic() < _gemini_cooldown_until:
+            _gemini_day_dead.clear()
+            _gemini_minute_hits.clear()
+        now = _t.monotonic()
+        if now < _gemini_cooldown_until:
             _gemini_stats["cooled"] += 1
-            return "breaker-cooldown"
-        if _gemini_used_today >= config.GEMINI_DAILY_CAP:
+            return "breaker-cooldown", ""
+        hits = [h for h in _gemini_minute_hits if h > now - 60]
+        if not manual and len(hits) >= config.GEMINI_PER_MIN:
+            _gemini_stats["paced"] = _gemini_stats.get("paced", 0) + 1
+            return "paced-per-minute", ""
+        cap = config.GEMINI_DAILY_CAP
+        if _gemini_detected_cap:
+            cap = min(cap, _gemini_detected_cap * max(1, len(keys)))
+        if not manual and _gemini_used_today >= cap:
             _gemini_stats["capped"] += 1
-            return "daily-budget-exhausted"
+            return "daily-budget-exhausted", ""
+        if not manual and cap - _gemini_used_today <= config.GEMINI_RESERVE:
+            _gemini_stats["reserved"] += 1
+            return "reserved-for-manual", ""
         _gemini_used_today += 1
         _gemini_stats["calls"] += 1
-    return None
+        _gemini_minute_hits[:] = hits + [now]
+        key = keys[_gemini_key_cursor % len(keys)]
+        _gemini_key_cursor += 1
+    return None, key
 
 
-def _gemini_note(ok: bool, err: str = ""):
+def _gemini_note(ok: bool, err: str = "", model: Optional[str] = None):
+    """Record a call outcome; LEARN from 429s (the old code threw them away).
+
+    Day-scope quota → model flagged dead until UTC midnight + short global
+    cooldown (RetryInfo or 60s) so the chain's fallback model gets its turn.
+    Minute-scope → cooldown per RetryInfo (default 120s). 5 straight
+    non-quota failures → 600s breaker as before.
+    """
     import time as _t
 
     with _gemini_lock:
-        global _gemini_consec_fail, _gemini_cooldown_until
+        global _gemini_consec_fail, _gemini_cooldown_until, _gemini_detected_cap
         if ok:
             _gemini_consec_fail = 0
             _gemini_stats["ok"] += 1
-        else:
-            _gemini_consec_fail += 1
-            _gemini_stats["errors"] += 1
-            _gemini_stats["last_error"] = err[:200]
-            if _gemini_consec_fail >= 5:
-                _gemini_cooldown_until = _t.monotonic() + 600.0
-                _gemini_consec_fail = 0
+            return
+        _gemini_consec_fail += 1
+        _gemini_stats["errors"] += 1
+        _gemini_stats["last_error"] = err[:200]
+        q = _gemini_parse_429(err)
+        if q.get("scope"):
+            _gemini_stats["quota_scope"] = q["scope"]
+        if q.get("quota_value"):
+            try:
+                qv = int(q["quota_value"])
+                if _gemini_detected_cap is None or qv < _gemini_detected_cap:
+                    _gemini_detected_cap = qv
+            except Exception:
+                pass
+        cool = 600.0
+        if q.get("scope") == "day":
+            if model:
+                _gemini_day_dead[model] = _t.strftime("%Y-%m-%d", _t.gmtime())
+            try:
+                cool = max(60.0, float(q.get("retry_s") or 60))
+            except Exception:
+                cool = 60.0
+            _gemini_cooldown_until = _t.monotonic() + cool
+            _gemini_consec_fail = 0
+            return
+        if q.get("scope") == "minute":
+            try:
+                cool = max(120.0, float(q.get("retry_s") or 120))
+            except Exception:
+                cool = 120.0
+            _gemini_cooldown_until = _t.monotonic() + cool
+            _gemini_consec_fail = 0
+            return
+        if _gemini_consec_fail >= 5:
+            _gemini_cooldown_until = _t.monotonic() + cool
+            _gemini_consec_fail = 0
 
 
 def _gemini_shrink(data: bytes) -> tuple[bytes, str]:
@@ -1059,7 +1164,7 @@ def _gemini_shrink(data: bytes) -> tuple[bytes, str]:
 
 
 def _gemini_extract(
-    data: bytes, text_sample: str = "", mode: str = "slip"
+    data: bytes, text_sample: str = "", mode: str = "slip", manual: bool = False
 ) -> Optional[dict]:
     """Call Gemini Vision if a key is configured; return parsed JSON or None.
 
@@ -1071,7 +1176,7 @@ def _gemini_extract(
     Budgeted: daily cap + 10-min breaker after 5 consecutive failures, model
     chain with backoff on 429/5xx (400-class is fatal, no retry).
     """
-    blocked = _gemini_budget_claim()
+    blocked, _key = _gemini_budget_claim(manual=manual)
     if blocked:
         return {"_gemini_error": blocked}
     try:
@@ -1128,19 +1233,28 @@ def _gemini_extract(
         models = [config.GEMINI_MODEL]
         if config.GEMINI_FALLBACK_MODEL not in models:
             models.append(config.GEMINI_FALLBACK_MODEL)
+        err_model: Optional[str] = None
         for model in models:
+            if _gemini_model_dead(model):
+                last_err = f"quota-day-dead@{model}"
+                err_model = model
+                continue  # free-tier day budget spent — try next model
             url = (
                 "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{model}:generateContent?key={config.GEMINI_API_KEY}"
+                f"{model}:generateContent?key={_key}"
             )
             for attempt in range(2):
                 try:
                     r = client.post(url, json=body)
                     if r.status_code in (400, 404):
                         last_err = f"{r.status_code}@{model}: {r.text[:160]}"
+                        err_model = model
                         break  # model-level fatal — try next model
                     if r.status_code == 429 or r.status_code >= 500:
-                        last_err = f"{r.status_code}@{model}: {r.text[:160]}"
+                        # Keep the FULL 429 body (quotaId/quotaValue/retryDelay
+                        # live past char 160 — truncating hid the diagnosis).
+                        last_err = f"{r.status_code}@{model}: {r.text[:800]}"
+                        err_model = model
                         _t.sleep(1.5 * (2**attempt))
                         continue
                     r.raise_for_status()
@@ -1149,17 +1263,19 @@ def _gemini_extract(
                     break
                 except Exception as e:
                     last_err = f"{model}: {str(e)[:160]}"
+                    err_model = model
                     _t.sleep(1.5 * (2**attempt))
             if j is not None:
                 break
         if j is None:
-            _gemini_note(False, last_err)
-            return {"_gemini_error": last_err}
+            _gemini_note(False, last_err, err_model)
+            return {"_gemini_error": last_err[:200]}
         # Parse candidates[0].content.parts[0].text
         try:
             txt = j["candidates"][0]["content"]["parts"][0]["text"]
-        except Exception:
-            return None
+        except Exception as e:
+            _gemini_note(False, f"bad-response@{served_by}: {str(e)[:120]}", served_by)
+            return {"_gemini_error": "bad-response-shape"}
         # Model is asked for JSON; be robust to markdown fences AND prose
         # wrapping (observed live 2026-09-03: truncated/fenced replies raised
         # "Unterminated string", burning budget on 5 straight failures).
@@ -1240,16 +1356,26 @@ def gemini_verify_payloads(items: list[tuple[str, dict, bytes]]) -> int:
     """
     if not config.GEMINI_ENABLED or not items:
         return 0
+    # Quota-skip reasons: the flag must SURVIVE these (old code popped it, so
+    # the item never retried when budget returned — the 20/day burn bug).
+    _SKIP = (
+        "quota-day-dead",
+        "breaker-cooldown",
+        "daily-budget-exhausted",
+        "reserved-for-manual",
+        "paced-per-minute",
+    )
     done = 0
     for key, payload, data in items[: config.GEMINI_PER_BATCH]:
         try:
             if not isinstance(payload, dict):
                 continue
-            if payload.pop("needs_qr_rescue", False):
+            if payload.get("needs_qr_rescue"):
                 # QR unreadable by zxing: Vision transcription attempt, then
                 # re-parse through the normal QR field extractors.
                 g = _gemini_extract(data, mode="qr")
                 if g and not g.get("_gemini_error") and g.get("qr_text"):
+                    payload.pop("needs_qr_rescue", None)
                     text = g["qr_text"]
                     payload["raw_text"] = text[:500]
                     payload["qr_rescued_by"] = g.get("_model")
@@ -1264,15 +1390,22 @@ def gemini_verify_payloads(items: list[tuple[str, dict, bytes]]) -> int:
                     done += 1
                 elif g and g.get("_gemini_error"):
                     payload["_gemini_error"] = g["_gemini_error"]
+                    if str(g["_gemini_error"]) in _SKIP:
+                        break  # quota gone — keep flag, retry next cycle
+                    payload.pop("needs_qr_rescue", None)
                 continue
-            if not payload.pop("needs_gemini", False):
+            if not payload.get("needs_gemini"):
                 continue
             g = _gemini_extract(data, payload.get("text_sample") or "")
             if g and not g.get("_gemini_error"):
+                payload.pop("needs_gemini", None)
                 _merge_gemini(payload, g)
                 done += 1
             elif g and g.get("_gemini_error"):
                 payload["_gemini_error"] = g["_gemini_error"]
+                if str(g["_gemini_error"]) in _SKIP:
+                    break  # quota gone — keep flag, retry next cycle
+                payload.pop("needs_gemini", None)
         except Exception:
             continue
     return done
@@ -1532,9 +1665,11 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
 def gemini_ocr_slip(data: bytes) -> dict:
     """Force Gemini path (used by Re-run OCR/QR when key present)."""
     base = ocr_slip(data)
-    # If still tesseract-only, force a Gemini call regardless of heuristic
+    # If still tesseract-only, force a Gemini call regardless of heuristic.
+    # Manual trigger: bypasses the auto reserve so the officer Re-run always
+    # spends when any quota remains (free-tier 20/day/model, 2026-09-03).
     if config.GEMINI_ENABLED and base.get("engine") == "tesseract":
-        g = _gemini_extract(data, base.get("text_sample") or "")
+        g = _gemini_extract(data, base.get("text_sample") or "", manual=True)
         if g and not g.get("_gemini_error") and g.get("amount_inr") is not None:
             base["amount_tesseract"] = base.get("amount_inr")
             base["amount_inr"] = g["amount_inr"]

@@ -148,6 +148,19 @@ GEMINI_FALLBACK_MODEL = (
     or "gemini-2.5-flash-lite"
 )
 GEMINI_ENABLED = bool(GEMINI_API_KEY)
+# Multi-key rotation: comma-separated keys in S3LM_GEMINI_API_KEYS, each with
+# its own free-tier daily budget (verified 2026-09-03: 20 req/day/model/key).
+GEMINI_API_KEYS = [
+    k.strip()
+    for k in os.environ.get("S3LM_GEMINI_API_KEYS", "").split(",")
+    if k.strip()
+] or ([GEMINI_API_KEY] if GEMINI_API_KEY else [])
+# Reserve the last N calls of the effective daily budget for manual officer
+# triggers (Re-run buttons); the background batch must not burn them.
+GEMINI_RESERVE = max(0, int(os.environ.get("S3LM_GEMINI_RESERVE", "5")))
+# Per-minute pacing for the background batch (free-tier minute quotas are
+# tiny; bursts 429 even when daily budget remains).
+GEMINI_PER_MIN = max(1, int(os.environ.get("S3LM_GEMINI_PER_MIN", "8")))
 # Max Gemini Vision calls per UTC day across all workers (parent-enforced).
 # Only tesseract-miss slips reach Vision; shrunk 768px images run ~700 tokens
 # ≈ $0.0002/call on 2.5-flash, so 100K/day caps worst-case spend ≈ $20/day.

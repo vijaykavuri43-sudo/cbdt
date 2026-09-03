@@ -29,8 +29,12 @@ _cooldown_until = 0.0
 _stats = {"calls": 0, "ok": 0, "errors": 0, "capped": 0, "limited": 0, "last_error": ""}
 _minute_hits: deque = deque()
 
+# Officer Q&A deliberately uses gemini-2.5-flash, NOT the enrich pair
+# (3.8-flash + lite fallback): free-tier quota is 20 req/day/MODEL, and the
+# enrich workers burn the 3.8/lite pools. 2.5-flash text verified 200 OK
+# 2026-09-03. S3LM_AI_MODEL overrides.
 AI_MODEL = (
-    __import__("os").environ.get("S3LM_AI_MODEL", "gemini-3.8-flash").strip()
+    __import__("os").environ.get("S3LM_AI_MODEL", "gemini-2.5-flash").strip()
     or "gemini-2.5-flash"
 )
 AIASK_DAILY_CAP = max(
@@ -83,6 +87,13 @@ def _note(ok: bool, err: str = ""):
         if ok:
             _consec_fail = 0
             _stats["ok"] += 1
+        elif err.startswith("429"):
+            # Quota, not breakage: don't burn the breaker, just back off and
+            # surface the scope (free-tier 20/day/model, 2026-09-03).
+            _consec_fail = 0
+            _stats["errors"] += 1
+            _stats["last_error"] = err[:300]
+            _cooldown_until = max(_cooldown_until, time.monotonic() + 300.0)
         else:
             _consec_fail += 1
             _stats["errors"] += 1
@@ -433,7 +444,12 @@ def _generate(prompt_parts: list[dict], system: str) -> Optional[str]:
             if r.status_code == 404:  # model retired -> lite fallback once
                 fb = url.replace(AI_MODEL, "gemini-2.5-flash-lite")
                 r = client.post(fb, json=body)
-            if r.status_code == 429 or r.status_code >= 500:
+            if r.status_code == 429:
+                # Retrying a dead quota inside one request only burns latency;
+                # keep the FULL body (scope/quotaId) for stats, fail fast.
+                last_err = f"429@{AI_MODEL}: {r.text[:500]}"
+                break
+            if r.status_code >= 500:
                 last_err = f"{r.status_code}"
                 _t.sleep(2.0 * (2**attempt))
                 continue
