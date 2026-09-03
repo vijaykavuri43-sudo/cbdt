@@ -216,6 +216,7 @@ CREATE INDEX IF NOT EXISTS idx_pay_utr ON payment_transactions(utr) WHERE utr !=
 CREATE INDEX IF NOT EXISTS idx_pay_railid ON payment_transactions(rail_id) WHERE rail_id != '';
 CREATE INDEX IF NOT EXISTS idx_pay_holder ON payment_transactions(account_holder) WHERE account_holder != '';
 CREATE INDEX IF NOT EXISTS idx_pay_ifsc ON payment_transactions(ifsc) WHERE ifsc != '';
+CREATE INDEX IF NOT EXISTS idx_pay_amount ON payment_transactions(amount_inr);
 CREATE TABLE IF NOT EXISTS payment_flow_totals(
   direction TEXT NOT NULL,
   rail_filter TEXT NOT NULL DEFAULT '',
@@ -1351,46 +1352,58 @@ def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
     scanned = repaired = need_reocr = 0
     samples: list[dict] = []
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    with _writer_lock:
-        c = connect()
-        rows = c.execute(
-            "SELECT key, extract_json FROM objects WHERE extract_json IS NOT NULL"
-            " AND json_extract(extract_json,'$.kind') IN ('deposit','withdrawal')"
-            " AND json_extract(extract_json,'$.amount_inr') BETWEEN 10000 AND 99999"
-            " AND json_extract(extract_json,'$.engine')='tesseract'"
-            " AND (json_extract(extract_json,'$.confidence') IS NULL"
-            "  OR json_extract(extract_json,'$.confidence') IN ('low','medium'))"
-            " AND json_extract(extract_json,'$.twin_artifact') IS NULL"
-            " LIMIT ?",
-            (limit,),
-        ).fetchall()
-        for r in rows:
-            try:
-                p = json.loads(r["extract_json"])
-            except Exception:
-                continue
-            scanned += 1
-            hit = detect_twin_artifact(p.get("text_sample") or "", p.get("amount_inr"))
-            if not hit:
-                need_reocr += 1
-                continue
-            repaired += 1
-            if len(samples) < 10:
-                samples.append(
-                    {"key": r["key"], "from": hit["artifact"], "to": hit["true_amount"]}
-                )
-            if dry_run:
-                continue
-            p["amount_tesseract_raw"] = hit["artifact"]
-            p["amount_inr"] = hit["true_amount"]
-            p["twin_artifact"] = {**hit, "repaired_utc": now, "repaired_from": "batch"}
-            c.execute(
-                "UPDATE objects SET extract_json=? WHERE key=?",
-                (json.dumps(p, ensure_ascii=False), r["key"]),
+    # Suspect scan runs on a READ connection with NO writer lock (repair-twins
+    # used to hold _writer_lock across a full-table json_extract scan — on the
+    # loaded VM that stalled the endpoint past 280s). Candidates come from the
+    # indexed payment_transactions.amount_inr (idx_pay_amount) so only
+    # small-candidate JSON guards run, not a 1M-row json_extract sweep.
+    c = connect()
+    rows = c.execute(
+        "SELECT o.key AS key, o.extract_json AS extract_json FROM objects o"
+        " JOIN (SELECT DISTINCT source_key FROM payment_transactions"
+        "  WHERE amount_inr BETWEEN 10000 AND 99999) p ON p.source_key=o.key"
+        " WHERE o.extract_json IS NOT NULL"
+        " AND json_extract(o.extract_json,'$.kind') IN ('deposit','withdrawal')"
+        " AND json_extract(o.extract_json,'$.engine')='tesseract'"
+        " AND (json_extract(o.extract_json,'$.confidence') IS NULL"
+        "  OR json_extract(o.extract_json,'$.confidence') IN ('low','medium'))"
+        " AND json_extract(o.extract_json,'$.twin_artifact') IS NULL"
+        " LIMIT ?",
+        (limit,),
+    ).fetchall()
+    # Phase 1 (no lock): decide. Phase 2 (live only, locked): write.
+    fixes: list[tuple[str, dict]] = []
+    for r in rows:
+        try:
+            p = json.loads(r["extract_json"])
+        except Exception:
+            continue
+        scanned += 1
+        hit = detect_twin_artifact(p.get("text_sample") or "", p.get("amount_inr"))
+        if not hit:
+            need_reocr += 1
+            continue
+        repaired += 1
+        if len(samples) < 10:
+            samples.append(
+                {"key": r["key"], "from": hit["artifact"], "to": hit["true_amount"]}
             )
-            _replace_payment_rows(c, r["key"], p)
-        if not dry_run:
-            c.commit()
+        if dry_run:
+            continue
+        p["amount_tesseract_raw"] = hit["artifact"]
+        p["amount_inr"] = hit["true_amount"]
+        p["twin_artifact"] = {**hit, "repaired_utc": now, "repaired_from": "batch"}
+        fixes.append((r["key"], p))
+    if fixes:
+        with _writer_lock:
+            wc = connect()
+            for key, p in fixes:
+                wc.execute(
+                    "UPDATE objects SET extract_json=? WHERE key=?",
+                    (json.dumps(p, ensure_ascii=False), key),
+                )
+                _replace_payment_rows(wc, key, p)
+            wc.commit()
     totals = {} if dry_run else refresh_payment_summaries()
     return {
         "scanned": scanned,
