@@ -714,28 +714,138 @@ def decode_qr_image(data: bytes) -> dict:
     return out
 
 
+# ---- Gemini Vision: budgeted, parent-enforced (2026-09-03 robustness) ----
+# decode workers run in spawned ProcessPool children, so quota state CANNOT
+# live here per-process (each child would get its own budget). Children run
+# tesseract-only and flag needs_gemini; the parent batch-verify path below
+# (gemini_verify_payloads) owns budget/breaker/stats. The single-slip paths
+# (process_key workers=1, /api/enrich) run in-process and may call
+# _gemini_extract directly — it enforces the same budget via this gate.
+import threading as _th
+
+_gemini_lock = _th.Lock()
+_gemini_day = ""
+_gemini_used_today = 0
+_gemini_consec_fail = 0
+_gemini_cooldown_until = 0.0
+_gemini_stats = {
+    "calls": 0,
+    "ok": 0,
+    "errors": 0,
+    "capped": 0,
+    "cooled": 0,
+    "last_error": "",
+}
+_gemini_client = None
+
+
+def gemini_stats() -> dict:
+    with _gemini_lock:
+        d = dict(_gemini_stats)
+        d["used_today"] = _gemini_used_today
+        d["day_utc"] = _gemini_day
+        d["cap"] = config.GEMINI_DAILY_CAP
+        d["model"] = config.GEMINI_MODEL
+        d["enabled"] = config.GEMINI_ENABLED
+    return d
+
+
+def _gemini_client_shared():
+    global _gemini_client
+    if _gemini_client is None:
+        import httpx
+
+        _gemini_client = httpx.Client(timeout=25.0)
+    return _gemini_client
+
+
+def _gemini_budget_claim() -> Optional[str]:
+    """Claim one call from the daily budget + breaker. None = proceed."""
+    import time as _t
+
+    if not config.GEMINI_ENABLED:
+        return "disabled"
+    today = _t.strftime("%Y-%m-%d", _t.gmtime())
+    with _gemini_lock:
+        global _gemini_day, _gemini_used_today
+        if _gemini_day != today:
+            _gemini_day, _gemini_used_today = today, 0
+        if _t.monotonic() < _gemini_cooldown_until:
+            _gemini_stats["cooled"] += 1
+            return "breaker-cooldown"
+        if _gemini_used_today >= config.GEMINI_DAILY_CAP:
+            _gemini_stats["capped"] += 1
+            return "daily-budget-exhausted"
+        _gemini_used_today += 1
+        _gemini_stats["calls"] += 1
+    return None
+
+
+def _gemini_note(ok: bool, err: str = ""):
+    import time as _t
+
+    with _gemini_lock:
+        global _gemini_consec_fail, _gemini_cooldown_until
+        if ok:
+            _gemini_consec_fail = 0
+            _gemini_stats["ok"] += 1
+        else:
+            _gemini_consec_fail += 1
+            _gemini_stats["errors"] += 1
+            _gemini_stats["last_error"] = err[:200]
+            if _gemini_consec_fail >= 5:
+                _gemini_cooldown_until = _t.monotonic() + 600.0
+                _gemini_consec_fail = 0
+
+
+def _gemini_shrink(data: bytes) -> tuple[bytes, str]:
+    """Downscale to max-768px JPEG for Vision: full phone screenshots waste
+    ~10x tokens with zero extraction gain. Returns (bytes, mime)."""
+    try:
+        from PIL import Image as _Image
+        import io as _io
+
+        im = _Image.open(_io.BytesIO(data))
+        try:
+            from PIL import ImageOps as _Ops
+
+            im = _Ops.exif_transpose(im)
+        except Exception:
+            pass
+        if im.mode in ("RGBA", "LA", "P"):
+            im = im.convert("RGB")
+        w, h = im.size
+        if max(w, h) > 768:
+            im.thumbnail((768, 768))
+        buf = _io.BytesIO()
+        im.save(buf, "JPEG", quality=60, optimize=True)
+        return buf.getvalue(), "image/jpeg"
+    except Exception:
+        if data[:8].startswith(b"\x89PNG"):
+            return data, "image/png"
+        if data[:4] == b"RIFF":
+            return data, "image/webp"
+        return data, "image/jpeg"
+
+
 def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
     """Call Gemini Vision if a key is configured; return parsed JSON or None.
 
     Strict prompt: principal transaction amount ONLY, ignore Balance / promo.
     Returns dict with keys amount_inr, utr, vpa, beneficiary_name, etc. or None on failure.
+    Budgeted: daily cap + 10-min breaker after 5 consecutive failures, 3 tries
+    with backoff on 429/5xx (400-class is fatal, no retry).
     """
-    if not config.GEMINI_ENABLED:
-        return None
+    blocked = _gemini_budget_claim()
+    if blocked:
+        return {"_gemini_error": blocked}
     try:
         import base64
         import json as _json
+        import time as _t
 
-        # Use REST via httpx (already a dep) to avoid adding google-generativeai for now.
-        import httpx
-
-        b64 = base64.b64encode(data).decode("ascii")
-        # Detect mime
-        mime = "image/jpeg"
-        if data[:8].startswith(b"\x89PNG"):
-            mime = "image/png"
-        elif data[:4] == b"RIFF":
-            mime = "image/webp"
+        small, mime = _gemini_shrink(data)
+        b64 = base64.b64encode(small).decode("ascii")
 
         prompt = (
             "You are a forensic payment-slip extractor for Indian UPI/bank screenshots. "
@@ -762,10 +872,28 @@ def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
             },
         }
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GEMINI_API_KEY}"
-        with httpx.Client(timeout=20.0) as client:
-            r = client.post(url, json=body)
-            r.raise_for_status()
-            j = r.json()
+        client = _gemini_client_shared()
+        j = None
+        last_err = "unknown"
+        for attempt in range(3):
+            try:
+                r = client.post(url, json=body)
+                if r.status_code == 400:
+                    last_err = f"400: {r.text[:200]}"
+                    break  # fatal (bad model/prompt) — retrying won't help
+                if r.status_code == 429 or r.status_code >= 500:
+                    last_err = f"{r.status_code}: {r.text[:200]}"
+                    _t.sleep(2.0 * (2**attempt))
+                    continue
+                r.raise_for_status()
+                j = r.json()
+                break
+            except Exception as e:
+                last_err = str(e)[:200]
+                _t.sleep(2.0 * (2**attempt))
+        if j is None:
+            _gemini_note(False, last_err)
+            return {"_gemini_error": last_err}
         # Parse candidates[0].content.parts[0].text
         try:
             txt = j["candidates"][0]["content"]["parts"][0]["text"]
@@ -800,17 +928,69 @@ def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
             if parsed.get(k) is not None:
                 parsed[k] = str(parsed[k]).strip() or None
         parsed["_gemini_raw"] = txt[:600]
+        _gemini_note(True)
         return parsed
     except Exception as e:
         # Never fail OCR because Gemini failed — caller logs to error field
+        _gemini_note(False, str(e)[:200])
         return {"_gemini_error": str(e)[:300]}
 
 
-def ocr_slip(data: bytes) -> dict:
+def _merge_gemini(out: dict, g: dict) -> None:
+    """Merge a successful Gemini extraction into a tesseract payload (in place)."""
+    if g.get("amount_inr") is not None:
+        if out.get("amount_inr") != g["amount_inr"]:
+            out["amount_tesseract"] = out.get("amount_inr")
+            out["amount_inr"] = g["amount_inr"]
+            out["engine"] = "tesseract+gemini"
+        else:
+            out["engine"] = "tesseract+gemini"
+    for k in ("utr", "vpa", "beneficiary_name", "sender_name", "ifsc"):
+        if not out.get(k) and g.get(k):
+            out[k] = g[k]
+    if g.get("bank_account") and not out.get("bank_accounts"):
+        out["bank_accounts"] = [
+            {
+                "account_number": g["bank_account"],
+                "masked": False,
+                "ifsc": g.get("ifsc") or "",
+            }
+        ]
+    out["_gemini"] = {k: g[k] for k in g if not k.startswith("_")}
+    out["_gemini_raw"] = g.get("_gemini_raw")
+
+
+def gemini_verify_payloads(items: list[tuple[str, dict, bytes]]) -> int:
+    """Parent-side bounded Gemini pass over tesseract-ambiguous payloads.
+
+    items: (key, payload, raw_image_bytes). Mutates payloads in place, returns
+    number of successful verifications. Never raises.
+    """
+    if not config.GEMINI_ENABLED or not items:
+        return 0
+    done = 0
+    for key, payload, data in items[: config.GEMINI_PER_BATCH]:
+        try:
+            if not isinstance(payload, dict) or not payload.pop("needs_gemini", False):
+                continue
+            g = _gemini_extract(data, payload.get("text_sample") or "")
+            if g and not g.get("_gemini_error"):
+                _merge_gemini(payload, g)
+                done += 1
+            elif g and g.get("_gemini_error"):
+                payload["_gemini_error"] = g["_gemini_error"]
+        except Exception:
+            continue
+    return done
+
+
+def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
     """OCR a deposit/withdrawal slip screenshot; extract amount/UTR/VPA.
 
     Improved: context-aware amount (principal only), audit of ignored candidates,
     optional Gemini Vision verification when tesseract is ambiguous or key present.
+    allow_gemini=False (spawned decode workers): skip the Vision call and flag
+    needs_gemini so the parent batch-verify path can spend budget centrally.
     """
     out: dict = {
         "kind": "ocr",
@@ -841,6 +1021,15 @@ def ocr_slip(data: bytes) -> dict:
         except Exception:
             pass
         w, h = img.size
+        # Cap giant inputs (camera originals, stitched chats): tesseract gains
+        # nothing past ~2000px but costs 2-4x time. Downscale first, then the
+        # small-image upscale below still applies to thumbnailed variants.
+        if max(w, h) > 2000:
+            try:
+                img.thumbnail((2000, 2000))
+                w, h = img.size
+            except Exception:
+                pass
         # Always upscale small phone screenshots; phone slips are ~1080×2400 but
         # thumbnailed GCS variants can be <800px. 2× LANCZOS preserves ₹ glyph.
         if max(w, h) < 1600:
@@ -992,34 +1181,15 @@ def ocr_slip(data: bytes) -> dict:
             pass
         # Also allow forced Gemini via env flag for officers who want max accuracy
         if config.GEMINI_ENABLED and use_gemini:
-            g = _gemini_extract(data, out.get("text_sample") or "")
-            if g and not g.get("_gemini_error"):
-                # Gemini amount overrides tesseract when it is not null and plausible
-                if g.get("amount_inr") is not None:
-                    # If tesseract amount existed but was from promo region, Gemini's
-                    # principal wins. Keep tesseract value as audit.
-                    if out.get("amount_inr") != g["amount_inr"]:
-                        out["amount_tesseract"] = out.get("amount_inr")
-                        out["amount_inr"] = g["amount_inr"]
-                        out["engine"] = "tesseract+gemini"
-                    else:
-                        out["engine"] = "tesseract+gemini"
-                # Merge other fields Gemini found that tesseract missed
-                for k in ("utr", "vpa", "beneficiary_name", "sender_name", "ifsc"):
-                    if not out.get(k) and g.get(k):
-                        out[k] = g[k]
-                if g.get("bank_account") and not out.get("bank_accounts"):
-                    out["bank_accounts"] = [
-                        {
-                            "account_number": g["bank_account"],
-                            "masked": False,
-                            "ifsc": g.get("ifsc") or "",
-                        }
-                    ]
-                out["_gemini"] = {k: g[k] for k in g if not k.startswith("_")}
-                out["_gemini_raw"] = g.get("_gemini_raw")
-            elif g and g.get("_gemini_error"):
-                out["_gemini_error"] = g["_gemini_error"]
+            if not allow_gemini:
+                # Spawned worker: defer to the parent batch-verify (budget/breaker).
+                out["needs_gemini"] = True
+            else:
+                g = _gemini_extract(data, out.get("text_sample") or "")
+                if g and not g.get("_gemini_error"):
+                    _merge_gemini(out, g)
+                elif g and g.get("_gemini_error"):
+                    out["_gemini_error"] = g["_gemini_error"]
 
         if (
             out["amount_inr"] is None
@@ -1082,7 +1252,7 @@ def classify(key: str, full_chat_scan: bool = False) -> str:
 
 
 def _extract_payload_from_bytes(
-    key: str, data: bytes, full_scan: bool = False
+    key: str, data: bytes, full_scan: bool = False, allow_gemini: bool = True
 ) -> Optional[dict]:
     """CPU-heavy, process-safe extraction with no DB/client dependencies."""
     kind = classify(key, full_chat_scan=full_scan)
@@ -1090,20 +1260,16 @@ def _extract_payload_from_bytes(
         return decode_qr_image(data)
     if kind not in ("deposit", "withdrawal"):
         return None
-    payload = ocr_slip(data)
+    payload = ocr_slip(data, allow_gemini=allow_gemini)
     payload["kind"] = kind
     q = decode_qr_image(data)  # slips often embed payment QR too
     if q.get("amount_inr") is not None or q.get("vpa"):
         payload.update({k: v for k, v in q.items() if v and not payload.get(k)})
     if q.get("vpas"):
-        payload["vpas"] = list(
-            dict.fromkeys((payload.get("vpas") or []) + q["vpas"])
-        )
+        payload["vpas"] = list(dict.fromkeys((payload.get("vpas") or []) + q["vpas"]))
         payload["vpa"] = payload.get("vpa") or payload["vpas"][0]
         merged_details = {
-            d.get("vpa"): d
-            for d in (payload.get("vpa_details") or [])
-            if d.get("vpa")
+            d.get("vpa"): d for d in (payload.get("vpa_details") or []) if d.get("vpa")
         }
         for detail in q.get("vpa_details") or []:
             # QR URI semantics are stronger than OCR proximity labels.
@@ -1121,7 +1287,13 @@ def _decode_task(task: tuple[str, bytes, bool]):
     """Pickle-friendly ProcessPool entrypoint; errors return to the parent."""
     key, data, full_scan = task
     try:
-        return key, _extract_payload_from_bytes(key, data, full_scan), None
+        # Spawned child: tesseract-only; needs_gemini flags go to the parent
+        # batch-verify so the daily budget + breaker are enforced centrally.
+        return (
+            key,
+            _extract_payload_from_bytes(key, data, full_scan, allow_gemini=False),
+            None,
+        )
     except Exception as exc:
         return key, None, f"decode: {exc}"
 
@@ -1229,7 +1401,28 @@ class EnrichmentWorker:
                     max_workers=workers,
                     mp_context=multiprocessing.get_context("spawn"),
                 )
-            for key, payload, error in self._cpu_pool.map(_decode_task, tasks):
+            results = list(self._cpu_pool.map(_decode_task, tasks))
+            by_key = {k: d for k, d, _fs in tasks}
+            try:
+                flagged = [
+                    (key, payload, by_key[key])
+                    for key, payload, error in results
+                    if not error
+                    and isinstance(payload, dict)
+                    and payload.get("needs_gemini")
+                    and key in by_key
+                ]
+                if flagged:
+                    from . import config as _cfg
+
+                    if _cfg.GEMINI_ENABLED:
+                        gemini_verify_payloads(flagged)
+                    else:
+                        for _, p, _d in flagged:
+                            p.pop("needs_gemini", None)
+            except Exception:
+                pass
+            for key, payload, error in results:
                 if error:
                     db.mark_enrichment_error(key, error)
                 else:

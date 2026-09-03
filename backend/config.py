@@ -113,8 +113,10 @@ MAX_GET_RATE_PER_SEC = 5
 # 0 disables the cutoff (old behaviour — full-bucket wallet hunt uses 0).
 ENRICH_MAX_AGE_HOURS = float(os.environ.get("S3LM_ENRICH_MAX_AGE_HOURS", "0"))
 _DEFAULT_WORKERS = max(2, min(6, (os.cpu_count() or 4)))
-ENRICH_WORKERS = max(1, int(os.environ.get("S3LM_ENRICH_WORKERS", str(_DEFAULT_WORKERS))))
-ENRICH_BATCH = max(ENRICH_WORKERS, int(os.environ.get("S3LM_ENRICH_BATCH", "24")))
+ENRICH_WORKERS = max(
+    1, int(os.environ.get("S3LM_ENRICH_WORKERS", str(_DEFAULT_WORKERS)))
+)
+ENRICH_BATCH = max(ENRICH_WORKERS, int(os.environ.get("S3LM_ENRICH_BATCH", "48")))
 # Full-bucket wallet scan: when set, the pending queue also includes every chat_file image
 # (not just hint-named). Keep live default False for latency; POST /api/wallets/full-scan enables it.
 WALLET_FULL_SCAN = os.environ.get("S3LM_WALLET_FULL_SCAN", "0").strip() == "1"
@@ -133,10 +135,15 @@ GEMINI_API_KEY = (
     or os.environ.get("S3LM_GOOGLE_API_KEY", "").strip()
 )
 GEMINI_MODEL = (
-    os.environ.get("S3LM_GEMINI_MODEL", "gemini-1.5-flash").strip()
-    or "gemini-1.5-flash"
+    os.environ.get("S3LM_GEMINI_MODEL", "gemini-2.5-flash").strip()
+    or "gemini-2.5-flash"
 )
+# 1.5-flash was retired (verified 2026-09-03: only 2.5-flash family served).
 GEMINI_ENABLED = bool(GEMINI_API_KEY)
+# Max Gemini Vision calls per UTC day across all workers (parent-enforced).
+GEMINI_DAILY_CAP = max(0, int(os.environ.get("S3LM_GEMINI_DAILY_CAP", "20000")))
+# Max Gemini verifications per drain batch (keeps the 2s enrich loop moving).
+GEMINI_PER_BATCH = max(1, int(os.environ.get("S3LM_GEMINI_PER_BATCH", "12")))
 
 # Optional pre-joined transaction corpus. These paths are searched in order;
 # absence is harmless and live OCR/QR extraction continues normally.

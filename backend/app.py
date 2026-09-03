@@ -443,6 +443,12 @@ def _build_status():
     st["enrichment"] = db.enrichment_progress()
     st["gemini_enabled"] = config.GEMINI_ENABLED
     st["gemini_model"] = config.GEMINI_MODEL if config.GEMINI_ENABLED else None
+    try:
+        from .enrich import gemini_stats as _gs
+
+        st["gemini_stats"] = _gs()
+    except Exception:
+        st["gemini_stats"] = {}
     st["max_amount_inr"] = config.MAX_AMOUNT_INR
     return st
 
