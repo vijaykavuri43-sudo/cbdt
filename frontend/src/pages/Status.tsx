@@ -235,7 +235,7 @@ export function StatusPage() {
                   ? 'AUTH REQUIRED — unlock to verify bucket'
                   : 'UNREACHABLE'}
           </span>
-          {health?.checked_utc && <span className="small dim">probed {fmtTime(health.checked_utc)} UTC{health?.effective_source ? ` · via ${health.effective_source}` : ''}</span>}
+          {health?.checked_utc && <span className="small dim">probed {fmtTime(health.checked_utc)} UTC{(health as any)?.checked_ist ? ` (${(health as any).checked_ist})` : ''}{health?.effective_source ? ` · via ${health.effective_source}` : ''}</span>}
           {health && !health.live && health.error && <span className="small" style={{ color: 'var(--bad)' }}>{health.error}</span>}
         </div>
         <div className="small dim" style={{ marginTop: 8 }}>

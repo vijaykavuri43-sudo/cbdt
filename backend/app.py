@@ -1,6 +1,7 @@
 """GCS evidence monitor API for the preserved CASE-2026-CBTF object mirror."""
 
 import asyncio
+from datetime import datetime, timedelta
 import hashlib
 import json
 import mimetypes
@@ -316,20 +317,24 @@ def bucket_health(request: Request):
     try:
         page = object_store.list_page("", delimiter="/", max_keys=1)
         ms = int((time.monotonic() - t0) * 1000)
+        checked = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         return {
             "live": True,
             "latency_ms": ms,
-            "checked_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "checked_utc": checked,
+            "checked_ist": _ist_str(checked),
             "bucket_url": config.SOURCE_ID,
             "object_source": config.OBJECT_SOURCE,
             "effective_source": _actual_source(),
         }
     except Exception as e:
+        checked = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         return {
             "live": False,
             "error": str(e)[:200],
             "latency_ms": int((time.monotonic() - t0) * 1000),
-            "checked_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "checked_utc": checked,
+            "checked_ist": _ist_str(checked),
             "bucket_url": config.SOURCE_ID,
             "object_source": config.OBJECT_SOURCE,
             "effective_source": _actual_source(),
@@ -426,6 +431,20 @@ def status(_=Depends(auth)):
     return cached("status", 5.0, _build_status)
 
 
+# Officer-facing times follow Indian Standard Time (UTC+5:30) — the bucket
+# content is Indian betting evidence. UTC stays canonical (chain-of-custody);
+# every *_ist field is a display sibling, never a replacement.
+_IST_DELTA = timedelta(hours=5, minutes=30)
+
+
+def _ist_str(utc_iso) -> str:
+    try:
+        dt = datetime.strptime(str(utc_iso)[:19], "%Y-%m-%dT%H:%M:%S") + _IST_DELTA
+        return dt.strftime("%d %b %Y, %H:%M IST")
+    except Exception:
+        return ""
+
+
 def _build_status():
     st = dict(collector.state)
     try:
@@ -441,6 +460,8 @@ def _build_status():
         db.get_meta("prefixes") or "\n".join(config.DEFAULT_PREFIXES)
     ).splitlines()
     st["enrichment"] = db.enrichment_progress()
+    st["last_poll_ist"] = _ist_str(st.get("last_poll_utc"))
+    st["started_ist"] = _ist_str(st.get("started_utc"))
     st["gemini_enabled"] = config.GEMINI_ENABLED
     st["gemini_model"] = config.GEMINI_MODEL if config.GEMINI_ENABLED else None
     try:
@@ -1132,6 +1153,39 @@ def cache_stats(_=Depends(auth)):
     }
 
 
+class _AskBody(BaseModel):
+    question: str = ""
+
+
+@app.post("/api/ask")
+def ai_ask(body: _AskBody, _=Depends(auth)):
+    """AI investigator assistant: Gemini answers over live case data.
+
+    Read-only (SELECTs + one bounded object fetch), gated, separately
+    budgeted (S3LM_AIASK_DAILY_CAP) + per-minute rate limited. The Gemini
+    key never leaves the server.
+    """
+    from .aiask import aiask_stats, ask
+
+    try:
+        out = ask(body.question or "", object_store)
+        out["usage"] = aiask_stats()
+        return out
+    except Exception as e:
+        return {
+            "answer": f"Assistant error: {str(e)[:200]}",
+            "sources": [],
+            "model": "unavailable",
+        }
+
+
+@app.get("/api/ask/stats")
+def ai_ask_stats(_=Depends(auth)):
+    from .aiask import aiask_stats
+
+    return aiask_stats()
+
+
 @app.post("/api/enrich")
 def enrich_now(key: str, gemini: int = 0, _=Depends(auth)):
     """Re-run enrichment for a single object; gemini=1 forces Gemini Vision when configured."""
@@ -1219,6 +1273,86 @@ def enrich_now(key: str, gemini: int = 0, _=Depends(auth)):
     # reload masters for worker as well (empty set still works, enrich will still store)
     w.process_key(key)
     return db.get_object_row(key) or {"ok": False}
+
+
+@app.get("/api/enrich/completeness")
+def enrich_completeness(_=Depends(auth)):
+    """Full-bucket parse audit: per-prefix indexed/enriched/pending/retry/dead/skipped.
+
+    dead = 5 failed attempts (needs officer revive). skipped = triaged
+    non-evidence (kind=none). Complete = pending 0 AND retry_wait 0 AND dead 0.
+    """
+    try:
+        rows = (
+            db.connect()
+            .execute(
+                "SELECT top_prefix, COUNT(*) n, "
+                "SUM(enriched) done, "
+                "SUM(CASE WHEN enriched=0 AND (enrich_retry_utc IS NULL OR enrich_retry_utc <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) THEN 1 ELSE 0 END) pending, "
+                "SUM(CASE WHEN enriched=0 AND enrich_retry_utc > strftime('%Y-%m-%dT%H:%M:%SZ','now') THEN 1 ELSE 0 END) retry_wait, "
+                "SUM(CASE WHEN enrich_attempts>=5 THEN 1 ELSE 0 END) dead, "
+                'SUM(CASE WHEN enriched=1 AND extract_json LIKE \'%"kind": "none"%\' THEN 1 ELSE 0 END) skipped '
+                "FROM objects GROUP BY top_prefix ORDER BY n DESC"
+            )
+            .fetchall()
+        )
+        by_prefix = [dict(r) for r in rows]
+    except Exception as e:
+        raise HTTPException(500, f"completeness query failed: {e}")
+    tot = lambda k: sum(int(r.get(k) or 0) for r in by_prefix)
+    try:
+        pay_rows = db.payment_row_count()
+    except Exception:
+        pay_rows = None
+    complete = tot("pending") == 0 and tot("retry_wait") == 0 and tot("dead") == 0
+    return {
+        "complete": complete,
+        "by_prefix": by_prefix,
+        "totals": {
+            "indexed": tot("n"),
+            "enriched": tot("done"),
+            "pending": tot("pending"),
+            "retry_wait": tot("retry_wait"),
+            "dead": tot("dead"),
+            "skipped_none": tot("skipped"),
+            "payment_rows": pay_rows,
+        },
+        "checked_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+@app.post("/api/enrich/revive")
+def enrich_revive(
+    prefix: str = Query(""),
+    limit: int = Query(5000, ge=1, le=50000),
+    _=Depends(auth),
+):
+    """Re-queue dead objects (5 failed attempts) for another OCR pass.
+
+    prefix scopes to one folder (e.g. deposit/); empty = all prefixes.
+    """
+    try:
+        c = db.connect()
+        if prefix:
+            cur = c.execute(
+                "UPDATE objects SET enriched=0, enrich_attempts=0, enrich_error=NULL, "
+                "enrich_retry_utc=NULL, extract_json=NULL, enriched_utc=NULL "
+                "WHERE enrich_attempts>=5 AND top_prefix=? "
+                "AND key IN (SELECT key FROM objects WHERE enrich_attempts>=5 AND top_prefix=? LIMIT ?)",
+                (prefix, prefix, limit),
+            )
+        else:
+            cur = c.execute(
+                "UPDATE objects SET enriched=0, enrich_attempts=0, enrich_error=NULL, "
+                "enrich_retry_utc=NULL, extract_json=NULL, enriched_utc=NULL "
+                "WHERE enrich_attempts>=5 "
+                "AND key IN (SELECT key FROM objects WHERE enrich_attempts>=5 LIMIT ?)",
+                (limit,),
+            )
+        c.commit()
+        return {"revived": cur.rowcount, "prefix": prefix or "all", "limit": limit}
+    except Exception as e:
+        raise HTTPException(500, f"revive failed: {e}")
 
 
 # ---------------- SSE live feed ----------------

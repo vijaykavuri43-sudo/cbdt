@@ -53,15 +53,25 @@ export async function api<T = any>(path: string, params?: Record<string, any>, t
   }
 }
 
-export async function post<T = any>(path: string, body?: any): Promise<T> {
+export async function post<T = any>(path: string, body?: any, timeoutMs = 120000): Promise<T> {
   const p = path.startsWith('/api') ? path.slice(4) : path
-  const r = await fetch('/api' + p, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
-  await handle(r)
-  return r.status === 204 ? ({} as T) : r.json()
+  const ctrl = new AbortController()
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const r = await fetch('/api' + p, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+    await handle(r)
+    return r.status === 204 ? ({} as T) : r.json()
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw new Error(`request timed out after ${Math.round(timeoutMs / 1000)}s (${p || '/'} — press Retry)`)
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
 }
 
 function clean(p: Record<string, any>) {

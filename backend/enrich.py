@@ -878,6 +878,18 @@ def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
         for attempt in range(3):
             try:
                 r = client.post(url, json=body)
+                if (
+                    r.status_code == 404
+                    and config.GEMINI_MODEL != "gemini-2.5-flash-lite"
+                ):
+                    # Model retired mid-deploy? One fallback try on flash-lite.
+                    try:
+                        r = client.post(
+                            url.replace(config.GEMINI_MODEL, "gemini-2.5-flash-lite"),
+                            json=body,
+                        )
+                    except Exception:
+                        pass
                 if r.status_code == 400:
                     last_err = f"400: {r.text[:200]}"
                     break  # fatal (bad model/prompt) — retrying won't help

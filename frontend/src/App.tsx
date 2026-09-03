@@ -12,6 +12,7 @@ import { Upis } from './pages/Upis'
 import { Wallets } from './pages/Wallets'
 import { Evidence } from './pages/Evidence'
 import { Search } from './pages/Search'
+import { Ask } from './pages/Ask'
 
 const TABS = [
   { id: 'status', label: 'Overview', icon: '◉' },
@@ -23,6 +24,7 @@ const TABS = [
   { id: 'upis', label: 'UPI / Mules', icon: '@' },
   { id: 'wallets', label: 'Crypto Wallets', icon: '₿' },
   { id: 'evidence', label: 'Evidence', icon: '⛨' },
+  { id: 'ask', label: 'AI Investigator', icon: '✦' },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -137,6 +139,9 @@ export default function App() {
         </div>
         <div style={{ display: tab === 'evidence' ? 'block' : 'none' }}>
           <ErrorBoundary><Evidence /></ErrorBoundary>
+        </div>
+        <div style={{ display: tab === 'ask' ? 'block' : 'none' }}>
+          <ErrorBoundary><Ask /></ErrorBoundary>
         </div>
       </main>
     </div>
