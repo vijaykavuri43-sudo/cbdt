@@ -465,11 +465,14 @@ def _build_status():
     st["gemini_enabled"] = config.GEMINI_ENABLED
     st["gemini_model"] = config.GEMINI_MODEL if config.GEMINI_ENABLED else None
     try:
+        from .enrich import drain_stats as _ds
         from .enrich import gemini_stats as _gs
 
         st["gemini_stats"] = _gs()
+        st["drain_stats"] = _ds()
     except Exception:
         st["gemini_stats"] = {}
+        st["drain_stats"] = {}
     st["max_amount_inr"] = config.MAX_AMOUNT_INR
     return st
 
@@ -1410,6 +1413,25 @@ def enrich_revive(
         return {"revived": cur.rowcount, "prefix": prefix or "all", "limit": limit}
     except Exception as e:
         raise HTTPException(500, f"revive failed: {e}")
+
+
+@app.post("/api/enrich/repair-twins")
+def enrich_repair_twins(
+    dry_run: int = Query(1, ge=0, le=1),
+    limit: int = Query(20000, ge=1, le=100000),
+    _=Depends(auth),
+):
+    """Repair persisted twin-misread amounts (₹ eaten into leading digit).
+
+    dry_run=1 (default) scans and reports without writing. dry_run=0 corrects
+    decidable rows (signature visible in stored text sample) and rebuilds
+    their payment rows + summaries. Undecidable rows are counted as
+    need_reocr for a future Vision pass.
+    """
+    try:
+        return db.repair_twin_artifacts(dry_run=bool(dry_run), limit=limit)
+    except Exception as e:
+        raise HTTPException(500, f"repair-twins failed: {e}")
 
 
 # ---------------- SSE live feed ----------------

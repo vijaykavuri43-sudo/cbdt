@@ -1338,6 +1338,70 @@ def sanitize_stored_amounts() -> dict:
     return {"impossible_amounts_cleared": cleared, **totals}
 
 
+def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
+    """Batch repair persisted twin-misread amounts (₹ eaten into leading digit).
+
+    Suspects: tesseract 5-digit amounts at medium/low confidence. The stored
+    text_sample is only the first 400 chars, so the twin signature (X repeated
+    + shorter sibling Y) must be visible there; undecidable rows are counted
+    as need_reocr (re-OCR when Vision quota returns) and left untouched.
+    """
+    from .enrich import detect_twin_artifact  # lazy: enrich imports db
+
+    scanned = repaired = need_reocr = 0
+    samples: list[dict] = []
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with _writer_lock:
+        c = connect()
+        rows = c.execute(
+            "SELECT key, extract_json FROM objects WHERE extract_json IS NOT NULL"
+            " AND json_extract(extract_json,'$.kind') IN ('deposit','withdrawal')"
+            " AND json_extract(extract_json,'$.amount_inr') BETWEEN 10000 AND 99999"
+            " AND json_extract(extract_json,'$.engine')='tesseract'"
+            " AND (json_extract(extract_json,'$.confidence') IS NULL"
+            "  OR json_extract(extract_json,'$.confidence') IN ('low','medium'))"
+            " AND json_extract(extract_json,'$.twin_artifact') IS NULL"
+            " LIMIT ?",
+            (limit,),
+        ).fetchall()
+        for r in rows:
+            try:
+                p = json.loads(r["extract_json"])
+            except Exception:
+                continue
+            scanned += 1
+            hit = detect_twin_artifact(p.get("text_sample") or "", p.get("amount_inr"))
+            if not hit:
+                need_reocr += 1
+                continue
+            repaired += 1
+            if len(samples) < 10:
+                samples.append(
+                    {"key": r["key"], "from": hit["artifact"], "to": hit["true_amount"]}
+                )
+            if dry_run:
+                continue
+            p["amount_tesseract_raw"] = hit["artifact"]
+            p["amount_inr"] = hit["true_amount"]
+            p["twin_artifact"] = {**hit, "repaired_utc": now, "repaired_from": "batch"}
+            c.execute(
+                "UPDATE objects SET extract_json=? WHERE key=?",
+                (json.dumps(p, ensure_ascii=False), r["key"]),
+            )
+            _replace_payment_rows(c, r["key"], p)
+        if not dry_run:
+            c.commit()
+    totals = {} if dry_run else refresh_payment_summaries()
+    return {
+        "scanned": scanned,
+        "repaired": repaired,
+        "need_reocr": need_reocr,
+        "dry_run": dry_run,
+        "samples": samples,
+        **totals,
+    }
+
+
 def refresh_payment_summaries() -> dict:
     """Materialize common dashboard aggregates; live rows refresh every minute."""
     refreshed = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

@@ -501,6 +501,57 @@ def detect_glyph_collision(text: str) -> Optional[dict]:
     return None
 
 
+def detect_twin_artifact(text: str, amount: Optional[float]) -> Optional[dict]:
+    """Detect TWIN glyph-eaten misreads (verified 2026-09-03 on a real slip:
+    ₹1,000 rendered twice, tesseract read BOTH copies as '71,000' — Paid-to
+    row AND the total — while the Debited-from row read the true '1,000').
+
+    Invisible to detect_glyph_collision (needs DISTINCT variants): here the
+    winner X is 5-digit, repeats identically (count>=2), and a 4-digit sibling
+    Y == X[-4:] exists elsewhere in the text. PhonePe slips print the true
+    amount twice (Paid row + Debited row), so a genuine 5-digit amount would
+    NOT have a shorter same-suffix sibling — X is a ₹-eaten artifact of Y.
+    Returns {'artifact': X, 'true_amount': Y} or None.
+    """
+    if not text or amount is None:
+        return None
+    try:
+        iv = int(amount)
+    except Exception:
+        return None
+    if not (10000 <= iv <= 99999) or float(iv) != float(amount):
+        return None
+    xs, ys = str(iv), str(iv)[-4:]
+    flat = " ".join(text.split())
+    # count exact whole-token occurrences of X (comma or bare form)
+    xhits = len(
+        re.findall(
+            r"(?<![\d,])"
+            + re.escape(xs[:2])
+            + r"[, ]?"
+            + re.escape(xs[2:])
+            + r"(?![\d,])",
+            flat,
+        )
+    )
+    if xhits == 0:
+        xhits = len(re.findall(r"(?<![\d])" + re.escape(xs) + r"(?![\d])", flat))
+    if xhits < 2:
+        return None
+    yhits = re.findall(
+        r"(?<![\d,])" + re.escape(ys[:1]) + r"," + re.escape(ys[1:]) + r"(?![\d,])",
+        flat,
+    )
+    if not yhits:
+        return None
+    return {
+        "artifact": xs,
+        "true_amount": int(ys),
+        "x_hits": xhits,
+        "y_hits": len(yhits),
+    }
+
+
 def extract_amount_candidates(text: str) -> list[dict]:
     """Return all scored candidates for audit/UI (ignored amounts)."""
     if not text:
@@ -865,6 +916,67 @@ def gemini_stats() -> dict:
         d["cap"] = config.GEMINI_DAILY_CAP
         d["model"] = config.GEMINI_MODEL
         d["enabled"] = config.GEMINI_ENABLED
+    return d
+
+
+# ---- drain timing instrumentation (stall watch 2026-09-03) ----
+# In-memory only (a DB write per drain would add writer contention to the
+# very thing being measured). One log line per drain + rolling last-20.
+_drain_lock2 = _th.Lock()
+_drain_stats = {
+    "drains": 0,
+    "keys": 0,
+    "done": 0,
+    "errors": 0,
+    "lock_skips": 0,
+    "last": [],
+}
+
+
+def _note_lock_skip(source: str):
+    with _drain_lock2:
+        _drain_stats["lock_skips"] += 1
+
+
+def _note_drain(
+    source: str,
+    n_keys: int,
+    fetch_ms: int,
+    decode_ms: int,
+    persist_ms: int,
+    done: int,
+    errors: int,
+):
+    total = fetch_ms + decode_ms + persist_ms
+    with _drain_lock2:
+        _drain_stats["drains"] += 1
+        _drain_stats["keys"] += n_keys
+        _drain_stats["done"] += done
+        _drain_stats["errors"] += errors
+        _drain_stats["last"].append(
+            {
+                "source": source,
+                "n": n_keys,
+                "fetch_ms": fetch_ms,
+                "decode_ms": decode_ms,
+                "persist_ms": persist_ms,
+                "total_ms": total,
+                "done": done,
+                "errors": errors,
+            }
+        )
+        del _drain_stats["last"][:-20]
+    print(
+        f"[drain {source}] n={n_keys} fetch={fetch_ms / 1000:.1f}s "
+        f"decode={decode_ms / 1000:.1f}s persist={persist_ms / 1000:.1f}s "
+        f"done={done} err={errors} (total {total / 1000:.1f}s)",
+        flush=True,
+    )
+
+
+def drain_stats() -> dict:
+    with _drain_lock2:
+        d = {k: (list(v) if k == "last" else v) for k, v in _drain_stats.items()}
     return d
 
 
@@ -1357,6 +1469,20 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             out["glyph_collision"] = collision
             tesseract_amount = None
             out["amount_inr"] = None
+        # Twin-misread (verified 2026-09-03: both ₹1,000 copies read as
+        # '71,000', Debited row correct '1,000'): identical 5-digit repeats
+        # are invisible to the collision detector (needs DISTINCT variants).
+        # The shorter same-suffix sibling (Debited row, authoritative — debited
+        # must equal paid) is the true amount. Applied locally so the fix
+        # works even with Gemini quota-dead; Vision re-adjudicates when live.
+        try:
+            twin = detect_twin_artifact(text, out.get("amount_inr"))
+        except Exception:
+            twin = None
+        if twin:
+            out["twin_artifact"] = twin
+            out["amount_tesseract_raw"] = out.get("amount_inr")
+            out["amount_inr"] = twin["true_amount"]
         use_gemini = False
         if config.GEMINI_ENABLED:
             has_rejected = bool(out.get("amount_ignored"))
@@ -1365,7 +1491,7 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             if tesseract_amount is None:
                 # If we have rejected promo but no principal, likely ₹ was missed — Gemini can rescue
                 use_gemini = True
-            elif collision or has_rejected:
+            elif collision or twin or has_rejected:
                 # Winner uncorroborated (medium confidence): let Vision adjudicate
                 use_gemini = True
             # Optional: also invoke if tesseract amount is plausible but confidence would be low
@@ -1557,10 +1683,11 @@ class EnrichmentWorker:
         # poll_loop and the dedicated enrich_loop can request a drain at the
         # same time. One guarded batch prevents duplicate fetch/decode work.
         if not self._drain_lock.acquire(blocking=False):
+            _note_lock_skip("pending")
             return
         try:
             keys = db.pending_enrichment(batch, full_scan=full_scan)
-            self._drain_keys(keys, workers, full_scan)
+            self._drain_keys(keys, workers, full_scan, "pending")
         finally:
             self._drain_lock.release()
 
@@ -1573,21 +1700,32 @@ class EnrichmentWorker:
         if not keys:
             return
         if not self._drain_lock.acquire(blocking=False):
+            _note_lock_skip("specific")
             return
         try:
-            self._drain_keys(list(keys), workers, False)
+            self._drain_keys(list(keys), workers, False, "specific")
         finally:
             self._drain_lock.release()
 
-    def _drain_keys(self, keys: list, workers: int, full_scan: bool):
+    def _drain_keys(
+        self, keys: list, workers: int, full_scan: bool, source: str = "pending"
+    ):
+        import time as _t
+
         if not keys:
             return
         try:
             if workers <= 1:
+                t0 = _t.monotonic()
+                done = 0
                 for k in keys:
                     if not self.enabled:
                         break
                     self.process_key(k, full_scan=full_scan)
+                    done += 1
+                _note_drain(
+                    source, len(keys), 0, int((_t.monotonic() - t0) * 1000), 0, done, 0
+                )
                 return
 
             from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
@@ -1604,11 +1742,13 @@ class EnrichmentWorker:
 
             # Fetch is GCS-latency-bound, not CPU-bound: run it wider than the
             # decode worker count so tesseract procs never starve for bytes.
+            t_fetch = _t.monotonic()
             with ThreadPoolExecutor(
                 max_workers=min(16, len(keys) or 1),
                 thread_name_prefix="evidence-fetch",
             ) as fetch_pool:
                 fetched = list(fetch_pool.map(fetch_one, keys))
+            fetch_ms = int((_t.monotonic() - t_fetch) * 1000)
 
             tasks = []
             for key, data, error in fetched:
@@ -1617,13 +1757,18 @@ class EnrichmentWorker:
                 elif data is not None:
                     tasks.append((key, data, full_scan))
             if not tasks:
+                _note_drain(
+                    source, len(keys), fetch_ms, 0, 0, 0, len(fetched) - len(tasks)
+                )
                 return
             if self._cpu_pool is None:
                 self._cpu_pool = ProcessPoolExecutor(
                     max_workers=workers,
                     mp_context=multiprocessing.get_context("spawn"),
                 )
+            t_dec = _t.monotonic()
             results = list(self._cpu_pool.map(_decode_task, tasks))
+            decode_ms = int((_t.monotonic() - t_dec) * 1000)
             by_key = {k: d for k, d, _fs in tasks}
             try:
                 flagged = [
@@ -1664,11 +1809,17 @@ class EnrichmentWorker:
                             p.pop("needs_qr_rescue", None)
             except Exception:
                 pass
+            t_per = _t.monotonic()
+            done = errs = 0
             for key, payload, error in results:
                 if error:
                     db.mark_enrichment_error(key, error)
+                    errs += 1
                 else:
                     self._persist_payload(key, payload)
+                    done += 1
+            persist_ms = int((_t.monotonic() - t_per) * 1000)
+            _note_drain(source, len(keys), fetch_ms, decode_ms, persist_ms, done, errs)
         except Exception:
             pass
 
