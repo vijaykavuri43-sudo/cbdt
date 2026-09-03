@@ -194,7 +194,7 @@ function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen
   return (
     <div className={`lf-card ${flash ? 'flash' : ''}`}>
       {kind === 'image' && (
-        <img className="lf-thumb" src={objectUrl(evt.key)} loading="lazy" onClick={onOpen} alt="" />
+        <img className="lf-thumb" src={objectUrl(evt.key, false, 320)} loading="lazy" onClick={onOpen} alt="" />
       )}
       {kind === 'audio' && (
         <div className="lf-audio-wrap">

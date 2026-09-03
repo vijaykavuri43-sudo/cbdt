@@ -1,6 +1,7 @@
 """GCS evidence monitor API for the preserved CASE-2026-CBTF object mirror."""
 
 import asyncio
+import hashlib
 import json
 import mimetypes
 import os
@@ -53,10 +54,15 @@ try:
             if t in ("new_object", "enriched", "wallet_found", "new_folders"):
                 _invalidate_prefix("flows:")
                 _invalidate_prefix("mule-rails:")
-                # status/stats aggregates depend on counts that just changed
-                _stats_cache.pop("status", None)
-                _stats_cache.pop("stats", None)
-                _stats_cache.pop("types", None)
+                # NOTE (log review 2026-09-03): status/stats/types used to be
+                # popped here too. During live intake that busted the caches
+                # on EVERY event, so each dashboard poll rebuilt them with
+                # full-table scans (COUNT(*) + GROUP BY over ~1.4M rows),
+                # saturating a CPU core and starving /api/sync/object past
+                # the sync daemon's 10s notify timeout (68 notify errors).
+                # Bounded staleness via TTL (5s/30s/60s) is the correct
+                # freshness mechanism for aggregates; per-event busting is
+                # kept only for the cheap paginated flows/mule-rails builders.
         except Exception:
             pass
         return _orig_publish(event)
@@ -422,7 +428,10 @@ def status(_=Depends(auth)):
 
 def _build_status():
     st = dict(collector.state)
-    st["objects_total"] = db.total_count()
+    try:
+        st["objects_total"] = collector.total_objects()
+    except Exception:
+        st["objects_total"] = st.get("objects_total", 0)
     st["bucket_url"] = config.SOURCE_ID
     st["object_source"] = config.OBJECT_SOURCE
     st["effective_source"] = _actual_source()
@@ -446,7 +455,9 @@ def types(_=Depends(auth)):
 
 @app.get("/api/stats")
 def stats(_=Depends(auth)):
-    return cached("stats", 10.0, _build_stats)
+    # 30s TTL (log review 2026-09-03): the builder runs GROUP BY + json
+    # aggregates over ~1.4M rows; 10s cadence kept a core busy.
+    return cached("stats", 30.0, _build_stats)
 
 
 def _build_stats():
@@ -455,8 +466,12 @@ def _build_stats():
     today = _t.strftime("%Y-%m-%d", _t.gmtime())
     dep = db.deposits(limit=1)
     wd = db.deposits(kind="withdrawal", limit=1)
+    try:
+        _objects_total = collector.total_objects()
+    except Exception:
+        _objects_total = db.total_count()
     return {
-        "objects_total": db.total_count(),
+        "objects_total": _objects_total,
         "per_prefix": db.prefix_stats(),
         "day_histogram": db.day_histogram(14),
         "deposits": {"count": dep["total"], "sum_amount_inr": dep["sum_amount_inr"]},
@@ -560,7 +575,8 @@ def sync(
             if n2:
                 n = n2
         c.state["last_poll_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        c.state["objects_total"] = db.total_count()
+        c.bump_total(n)
+        c.state["objects_total"] = c.total_objects()
         return {
             "synced_prefix": prefix,
             "new_objects": n,
@@ -615,7 +631,10 @@ def sync_object_notice(notice: SyncObjectNotice, _=Depends(auth)):
     if changed:
         c.state["new_since_start"] += 1
         c.state["last_poll_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        c.state["objects_total"] = db.total_count()
+        # Incremental (log review 2026-09-03): a full COUNT(*) here on every
+        # daemon upload stalled notifies past the 10s client timeout.
+        c.bump_total(inserted)
+        c.state["objects_total"] = c.total_objects()
         bus.publish(
             {
                 "type": "new_object",
@@ -738,8 +757,110 @@ def verify(_=Depends(auth)):
 
 
 # ---------------- object proxy (preview + download) ----------------
+# ---- /api/object disk cache + thumbnails ----
+# Grid views were fetching every full-size image live from GCS on each page
+# paint (50 × ~0.5–2 MB per page). This cache stores fetched bytes (and
+# resized thumbnails) on local disk keyed by key+etag, serves repeats with
+# zero GCS traffic, and answers browser revalidation (304) from the manifest.
+_OBJ_CACHE_DIR = config.DATA_DIR / "objcache"
+_OBJ_CACHE_MAX_BYTES = int(os.environ.get("S3LM_OBJCACHE_MB", "2048")) * 1024 * 1024
+_OBJ_CACHE_FILE_CAP = 64 * 1024 * 1024  # don't cache single files above this
+_objcache_writes = 0
+
+
+def _objcache_entry(key: str, etag: str, thumb: int):
+    h = hashlib.sha256(f"{key}\x00{etag}\x00{thumb}".encode()).hexdigest()
+    return _OBJ_CACHE_DIR / h[:2] / (h + ".bin")
+
+
+def _objcache_trim():
+    try:
+        files = [
+            (p.stat().st_mtime, p.stat().st_size, p)
+            for p in _OBJ_CACHE_DIR.rglob("*.bin")
+        ]
+    except OSError:
+        return
+    total = sum(s for _, s, _ in files)
+    if total <= _OBJ_CACHE_MAX_BYTES:
+        return
+    files.sort()
+    for mtime, size, p in files:
+        try:
+            p.unlink()
+            try:
+                p.with_suffix(".json").unlink()
+            except OSError:
+                pass
+        except OSError:
+            continue
+        total -= size
+        if total <= _OBJ_CACHE_MAX_BYTES:
+            break
+
+
+def _serve_cached(path, media, filename, etag, download):
+    disp = f'{"attachment" if download else "inline"}; filename="{filename}"'
+    return FileResponse(
+        str(path),
+        media_type=media,
+        filename=filename,
+        headers={
+            "Content-Disposition": disp,
+            "Cache-Control": "private, max-age=3600",
+            "ETag": f'"{etag}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @app.get("/api/object")
-def get_object(key: str, download: int = 0, _=Depends(auth)):
+def get_object(
+    key: str,
+    request: Request,
+    download: int = 0,
+    thumb: int = Query(0, ge=0, le=1024),
+    _=Depends(auth),
+):
+    global _objcache_writes
+    if 0 < thumb < 64:
+        thumb = 64
+    filename = key.rsplit("/", 1)[-1] or "object"
+    # Manifest row gives a fast etag for cache key + 304 handling (PK lookup).
+    manifest_etag = ""
+    if not download:
+        try:
+            row = (
+                db.connect()
+                .execute("SELECT etag FROM objects WHERE key=?", (key,))
+                .fetchone()
+            )
+            if row:
+                manifest_etag = row["etag"] or ""
+        except Exception:
+            pass
+    cache_etag = hashlib.sha1(
+        f"{key}\x00{manifest_etag}\x00{thumb}".encode()
+    ).hexdigest()[:32]
+    if not download:
+        inm = request.headers.get("if-none-match", "")
+        if inm and cache_etag in inm.replace('"', ""):
+            from fastapi.responses import Response as _Resp
+
+            return _Resp(status_code=304, headers={"ETag": f'"{cache_etag}"'})
+        hit = _objcache_entry(key, manifest_etag, thumb)
+        if hit.exists():
+            try:
+                meta = json.loads(hit.with_suffix(".json").read_text())
+                return _serve_cached(
+                    hit,
+                    meta.get("media", "application/octet-stream"),
+                    filename,
+                    cache_etag,
+                    download,
+                )
+            except Exception:
+                pass
     try:
         resp, headers = object_store.get_object_stream(key)
     except RuntimeError as e:
@@ -749,7 +870,6 @@ def get_object(key: str, download: int = 0, _=Depends(auth)):
         or mimetypes.guess_type(key)[0]
         or "application/octet-stream"
     )
-    filename = key.rsplit("/", 1)[-1] or "object"
     media = mt.split(";")[0].strip()
     if download:
         media = "application/octet-stream"
@@ -757,6 +877,75 @@ def get_object(key: str, download: int = 0, _=Depends(auth)):
         # avoid browsers executing anything
         if media in ("text/html", "application/xhtml+xml", "image/svg+xml"):
             media = "text/plain"
+    try:
+        size_hint = int(headers.get("content_length") or 0)
+    except (TypeError, ValueError):
+        size_hint = 0
+    cacheable = not download and (
+        size_hint <= _OBJ_CACHE_FILE_CAP if size_hint else True
+    )
+    data = None
+    if cacheable or (thumb and media.startswith("image/")):
+        try:
+            data = b"".join(resp.iter_bytes(65536))
+        except Exception:
+            data = None
+        try:
+            resp.close()
+        except Exception:
+            pass
+    if data is not None and len(data) <= _OBJ_CACHE_FILE_CAP:
+        out_media = media
+        body = data
+        if thumb and media.startswith("image/"):
+            try:
+                from PIL import Image as _Image
+                import io as _io
+
+                im = _Image.open(_io.BytesIO(data))
+                im.thumbnail((thumb, thumb))
+                if im.mode in ("RGBA", "LA", "P"):
+                    im = im.convert("RGB")
+                buf = _io.BytesIO()
+                im.save(buf, "JPEG", quality=72, optimize=True)
+                body = buf.getvalue()
+                out_media = "image/jpeg"
+            except Exception:
+                body = data
+                out_media = media
+        dest = _objcache_entry(key, manifest_etag, thumb)
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(body)
+            dest.with_suffix(".json").write_text(json.dumps({"media": out_media}))
+            _objcache_writes += 1
+            if _objcache_writes % 50 == 0:
+                _objcache_trim()
+            return _serve_cached(dest, out_media, filename, cache_etag, download)
+        except OSError:
+            pass
+        # cache write failed: serve bytes directly from memory
+        return StreamingResponse(
+            [body].__iter__(),
+            media_type=out_media,
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"',
+                "Cache-Control": "private, max-age=300",
+                "ETag": f'"{cache_etag}"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    if data is not None:
+        # too big to cache: serve from memory, keep stream semantics
+        return StreamingResponse(
+            [data].__iter__(),
+            media_type=media,
+            headers={
+                "Content-Disposition": f'{"attachment" if download else "inline"}; filename="{filename}"',
+                "Cache-Control": "private, max-age=300",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     return StreamingResponse(
         resp.iter_bytes(65536),
         media_type=media,

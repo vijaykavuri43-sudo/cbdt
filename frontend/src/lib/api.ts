@@ -70,9 +70,9 @@ function clean(p: Record<string, any>) {
   return o
 }
 
-export function objectUrl(key: string, download = false): string {
+export function objectUrl(key: string, download = false, thumb = 0): string {
   const at = authParams()
-  return `/api/object?key=${encodeURIComponent(key)}${download ? '&download=1' : ''}${at ? '&' + at : ''}`
+  return `/api/object?key=${encodeURIComponent(key)}${download ? '&download=1' : ''}${thumb ? `&thumb=${thumb}` : ''}${at ? '&' + at : ''}`
 }
 
 export function eventsUrl(): string {

@@ -102,7 +102,7 @@ function FileCard({
             className="ex-file-img"
             loading="lazy"
             decoding="async"
-            src={objectUrl(obj.key)}
+            src={objectUrl(obj.key, false, 320)}
             alt=""
             onError={() => setImgErr(true)}
           />

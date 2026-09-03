@@ -54,11 +54,40 @@ class Collector:
             "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         self._stop = threading.Event()
+        # Monotonic timestamp of the last full COUNT(*) — hot paths use the
+        # incrementally bumped counter and recount at most every 10 min
+        # (log review 2026-09-03: per-poll COUNT(*) over ~1.4M rows saturated
+        # a core and stalled sync-daemon notifies past their timeout).
+        self._total_recount_mono = 0.0
         self.enricher: Optional[EnrichmentWorker] = None
         # Rolling per-prefix crawl cursors for the wrapping cold crawl
         # (crawl_once) — see comment there for why the watermark poll alone
         # cannot see new uploads whose keys sort before the watermark.
         self._crawl_cursor: dict[str, Optional[str]] = {}
+
+    def bump_total(self, n: int):
+        """Add freshly inserted objects to the cached total (exact: upsert
+        helpers return inserted-only counts)."""
+        try:
+            self.state["objects_total"] = int(
+                self.state.get("objects_total") or 0
+            ) + max(0, int(n or 0))
+        except Exception:
+            pass
+
+    def total_objects(self) -> int:
+        """Cached total with a throttled exact recount (600s)."""
+        try:
+            now = time.monotonic()
+            if now - self._total_recount_mono >= 600.0:
+                self.state["objects_total"] = db.total_count()
+                self._total_recount_mono = now
+            return int(self.state.get("objects_total") or 0)
+        except Exception:
+            try:
+                return int(self.state.get("objects_total") or 0)
+            except Exception:
+                return 0
 
     @staticmethod
     def _changed_objects(objects: list[dict]) -> list[dict]:
@@ -104,6 +133,7 @@ class Collector:
         if done_before:
             self.state["sweep_done"] = True
             self.state["objects_total"] = db.total_count()
+            self._total_recount_mono = time.monotonic()
             self.state["phase"] = "live-polling"
 
             from concurrent.futures import ThreadPoolExecutor
@@ -152,6 +182,7 @@ class Collector:
                 total += fut.result() or 0
         self.state["sweep_done"] = True
         self.state["objects_total"] = db.total_count()
+        self._total_recount_mono = time.monotonic()
         self.state["phase"] = "live-polling"
         db.set_meta(
             "sweep_complete_utc", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -417,7 +448,11 @@ class Collector:
             self.state["last_poll_utc"] = time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
             )
-            self.state["objects_total"] = db.total_count()
+            # Incremental + throttled recount (log review 2026-09-03):
+            # total_new already sums poll_once inserted counts, so the hot
+            # loop never needs a full COUNT(*) here.
+            self.bump_total(total_new)
+            self.state["objects_total"] = self.total_objects()
             try:
                 self.state["bucket_live"] = self.s3.head_bucket_ok()
             except Exception:

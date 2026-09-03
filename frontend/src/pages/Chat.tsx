@@ -167,7 +167,7 @@ export function Chat() {
                   )}
                   <div style={{ marginTop: sameSender ? 0 : 6 }}>
                     {isImg ? (
-                      <img className="ch-img" src={objectUrl(o.key)} alt="" loading="lazy" onClick={() => setPreview(o)} />
+                      <img className="ch-img" src={objectUrl(o.key, false, 320)} alt="" loading="lazy" onClick={() => setPreview(o)} />
                     ) : isVoice ? (
                       <div className="ch-audio-wrap">
                         <span style={{ fontSize: 14 }}>🎙️</span>

@@ -162,6 +162,12 @@ CREATE INDEX IF NOT EXISTS idx_obj_extract_kind ON objects(extract_json)
   WHERE extract_json IS NOT NULL;
 -- Index for search (LIKE queries benefit from prefix matching via top_prefix)
 CREATE INDEX IF NOT EXISTS idx_obj_prefix_key ON objects(top_prefix, key);
+-- Composite index for newest-first folder browsing: tight range scan per top dir
+CREATE INDEX IF NOT EXISTS idx_obj_top_lm ON objects(top_prefix, last_modified DESC, key DESC);
+-- Bucket-root files are a handful of ancient rows; without this the root view
+-- walks the whole last_modified index on every visit.
+CREATE INDEX IF NOT EXISTS idx_obj_root_lm ON objects(last_modified DESC, key DESC)
+  WHERE instr(key, '/') = 0;
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS utr_identity(
   utr TEXT PRIMARY KEY,
@@ -419,6 +425,28 @@ def subfolders(prefix: str) -> list[dict]:
     return {"dirs": dirs, "files_n": files_n, "files_size": files_s}
 
 
+# TTL cache for list totals: COUNT(*) over a 100K+ row prefix range is the
+# slowest part of folder browsing; exact totals drift slowly so a 60s stale
+# total is fine for pagination UI (page windows always query live rows).
+_LIST_TOTAL_TTL = 60.0
+_list_total_cache: dict = {}
+
+
+def _cached_list_total(cache_key, where, args) -> int:
+    now = time.monotonic()
+    hit = _list_total_cache.get(cache_key)
+    if hit is not None and now - hit[0] < _LIST_TOTAL_TTL:
+        return hit[1]
+    conn = connect()
+    total = conn.execute(f"SELECT COUNT(*) c FROM objects {where}", args).fetchone()[
+        "c"
+    ]
+    if len(_list_total_cache) > 2000:
+        _list_total_cache.clear()
+    _list_total_cache[cache_key] = (now, total)
+    return total
+
+
 def list_objects(
     prefix: str,
     limit=200,
@@ -432,6 +460,11 @@ def list_objects(
     conds = []
     args: list = []
     if prefix:
+        # top_prefix equality narrows to a tight index range (idx_obj_top_lm /
+        # idx_obj_prefix_key) before the LIKE + instr() residual filters run.
+        top = prefix.split("/", 1)[0] + "/"
+        conds.append("top_prefix = ?")
+        args.append(top)
         like = prefix.replace("%", r"\%").replace("_", r"\_") + "%"
         conds.append("key LIKE ? ESCAPE '\\'")
         args.append(like)
@@ -453,10 +486,9 @@ def list_objects(
         conds.append("last_modified >= ?")
         args.append(since)
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    cache_key = (prefix, q, tuple(exts or []), since, flat)
+    total = _cached_list_total(cache_key, where, list(args))
     conn = connect()
-    total = conn.execute(f"SELECT COUNT(*) c FROM objects {where}", args).fetchone()[
-        "c"
-    ]
     # Stable newest-first: secondary key breaks ties where many objects share same timestamp.
     order_sql = {
         "key": "key ASC",

@@ -76,10 +76,12 @@ PREFIXES_ENV = os.environ.get("S3SYNC_PREFIXES", "")  # csv, empty = auto-discov
 # Hot prefixes (money + chat paths) are re-listed EVERY cycle; the rest are
 # verified round-robin one per cycle. Matches the collector's HOT_PREFIXES.
 HOT_PREFIXES = [
-    p.strip() for p in os.environ.get(
+    p.strip()
+    for p in os.environ.get(
         "S3SYNC_HOT_PREFIXES",
         "chat_file/,deposit/,withdrawal/,bankingqr/,qrcode/,payment/,csv-files/,uploads/",
-    ).split(",") if p.strip()
+    ).split(",")
+    if p.strip()
 ]
 CASE_ID = os.environ.get("S3LM_CASE", "CASE-2026-CBTF")
 AUTH_REF = os.environ.get("S3LM_AUTH", "STANDING-JUDICIAL-AUTH-ILLEGAL-BETTING")
@@ -88,9 +90,7 @@ SOURCE_BUCKET_LABEL = os.environ.get("S3SYNC_SOURCE_LABEL", "bx-s3-dev-001")
 # preservation effort already captured them; re-copying 1GB logs wastes money)
 MAX_SYNC_BYTES = int(os.environ.get("S3SYNC_MAX_BYTES", str(512 * 1024 * 1024)))
 AUDIT_LOG = Path(
-    os.environ.get(
-        "S3SYNC_AUDIT_LOG", "/app/intelligence/audit/collection-log.jsonl"
-    )
+    os.environ.get("S3SYNC_AUDIT_LOG", "/app/intelligence/audit/collection-log.jsonl")
 )
 MONITOR_URL = os.environ.get("S3SYNC_MONITOR_URL", "http://s3lm:8787").rstrip("/")
 MONITOR_TOKEN_FILE = Path(
@@ -196,9 +196,7 @@ def open_state() -> sqlite3.Connection:
         r[1] for r in c.execute("PRAGMA table_info(sync_failures)").fetchall()
     }
     if "terminal" not in failure_cols:
-        c.execute(
-            "ALTER TABLE sync_failures ADD COLUMN terminal INTEGER DEFAULT 0"
-        )
+        c.execute("ALTER TABLE sync_failures ADD COLUMN terminal INTEGER DEFAULT 0")
     c.execute(
         """CREATE TABLE IF NOT EXISTS prefix_inventory(
             prefix TEXT PRIMARY KEY, object_count INTEGER NOT NULL,
@@ -460,24 +458,41 @@ class SyncWorker(threading.Thread):
         try:
             token = MONITOR_TOKEN_FILE.read_text(encoding="utf-8").strip()
             headers = {"Authorization": f"Bearer {token}"} if token else {}
-            r = self.s3.post(
-                MONITOR_URL + "/api/sync/object",
-                headers=headers,
-                json={
-                    "key": key,
-                    "size": size,
-                    "etag": etag,
-                    "last_modified": last_modified,
-                },
-                timeout=10.0,
-            )
-            if r.status_code >= 300:
-                raise RuntimeError(f"HTTP {r.status_code}")
+            payload = {
+                "key": key,
+                "size": size,
+                "etag": etag,
+                "last_modified": last_modified,
+            }
+            # Log review 2026-09-03: 10s timeout with no retry lost 68/87
+            # notifies when the dashboard was busy (full-table COUNT(*) per
+            # request). 30s + one retry; dashboard hot paths are fixed too.
+            last_err: Exception | None = None
+            for attempt in range(2):
+                try:
+                    r = self.s3.post(
+                        MONITOR_URL + "/api/sync/object",
+                        headers=headers,
+                        json=payload,
+                        timeout=30.0,
+                    )
+                    if r.status_code >= 300:
+                        raise RuntimeError(f"HTTP {r.status_code}")
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+            if last_err is not None:
+                raise last_err
             self.stats["notified"] += 1
         except Exception as e:
             self.stats["notify_errors"] += 1
-            if self.stats["notify_errors"] <= 5:
-                log(f"dashboard notify deferred for {key[:80]}: {str(e)[:100]}")
+            n_err = self.stats["notify_errors"]
+            if n_err <= 5 or n_err % 50 == 0:
+                log(
+                    f"dashboard notify deferred for {key[:80]}: {str(e)[:100]}"
+                    + (f" ({n_err} total)" if n_err > 5 else "")
+                )
 
     def sync_one(self, item: tuple):
         key, size_hint, etag_hint = item
@@ -495,12 +510,14 @@ class SyncWorker(threading.Thread):
                     f"listed size={size_hint} etag={etag_hint})"
                 )
                 log(f"DELETED-AT-SOURCE {key[:100]} — tombstoned + logged")
-                self._record_failure(
-                    key, size_hint, err, etag=etag_hint, terminal=True
-                )
+                self._record_failure(key, size_hint, err, etag=etag_hint, terminal=True)
                 try:
                     dl = bucket_del.blob(
-                        SYNC_STATUS_PREFIX + "deletions/" + utcnow().replace(":", "") + "-" + s3_escape(key)[-120:]
+                        SYNC_STATUS_PREFIX
+                        + "deletions/"
+                        + utcnow().replace(":", "")
+                        + "-"
+                        + s3_escape(key)[-120:]
                     )
                     dl.metadata = {
                         "source_key": key,
@@ -524,7 +541,9 @@ class SyncWorker(threading.Thread):
                         content_type="application/json",
                     )
                 except Exception as gcs_err:
-                    log(f"deletion-log upload failed {str(key)[:80]}: {str(gcs_err)[:120]}")
+                    log(
+                        f"deletion-log upload failed {str(key)[:80]}: {str(gcs_err)[:120]}"
+                    )
                 _audit(
                     f"SYNC-TOMBSTONE: {key} (size={size_hint}) was deleted from "
                     f"{SOURCE_BUCKET_LABEL} before mirror capture — evidence "
@@ -792,7 +811,9 @@ def main():
             # bounded (hot prefixes are the money/chat paths officers watch).
             cold = [p for p in (tops or []) if p not in HOT_PREFIXES]
             next_cold = cold[(cycle - 1) % len(cold)] if cold else None
-            targets = fixed or ([p for p in hot if p] + ([next_cold] if next_cold else []))
+            targets = fixed or (
+                [p for p in hot if p] + ([next_cold] if next_cold else [])
+            )
             queued = 0
             oversized = 0
             root_files = 0
@@ -814,7 +835,7 @@ def main():
             if pending_retries:
                 log(f"retrying {pending_retries:,} tombstoned object(s)…")
                 retried = 0
-                for (rk, rsize, retag) in state.execute(
+                for rk, rsize, retag in state.execute(
                     "SELECT key,size,etag FROM sync_failures "
                     "WHERE fail_count>0 AND terminal=0"
                 ).fetchall():
@@ -929,8 +950,7 @@ def main():
                             "gcs_mirror_objects": mirror_n,
                             "preserved_only_estimate": max(
                                 0,
-                                mirror_n
-                                - int(inventory["source_inventory_objects"]),
+                                mirror_n - int(inventory["source_inventory_objects"]),
                             )
                             if inventory["source_inventory_complete"]
                             else None,
@@ -994,8 +1014,7 @@ def main():
                             "gcs_mirror_objects": mirror_n,
                             "preserved_only_estimate": max(
                                 0,
-                                mirror_n
-                                - int(inventory["source_inventory_objects"]),
+                                mirror_n - int(inventory["source_inventory_objects"]),
                             )
                             if inventory["source_inventory_complete"]
                             else None,
