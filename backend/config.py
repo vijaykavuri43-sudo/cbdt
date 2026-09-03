@@ -138,8 +138,11 @@ GEMINI_MODEL = (
     os.environ.get("S3LM_GEMINI_MODEL", "gemini-3.8-flash").strip()
     or "gemini-3.8-flash"
 )
-# Verified 2026-09-03 with the case key: 3.8-flash 200 clean-JSON, 2.5-flash
-# 429 (quota burned), 2.5-flash-lite 200 exact-JSON. 3.5-flash answers prose.
+# Verified 2026-09-03 with the case key (live generateContent probes):
+# 3.8/3.7/3.6-flash all 200 clean-JSON (3.8 newest = primary); 3.5-flash 200
+# but prose (rejected); 2.5-flash 429 quota-burned (rejected); 3.5-flash-lite
+# timed out (rejected); 2.5-flash-lite 200 exact-JSON (fallback). Chain tries
+# ONLY these two — no dead models.
 GEMINI_FALLBACK_MODEL = (
     os.environ.get("S3LM_GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite").strip()
     or "gemini-2.5-flash-lite"
