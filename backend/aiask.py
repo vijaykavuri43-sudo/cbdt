@@ -30,7 +30,7 @@ _stats = {"calls": 0, "ok": 0, "errors": 0, "capped": 0, "limited": 0, "last_err
 _minute_hits: deque = deque()
 
 AI_MODEL = (
-    __import__("os").environ.get("S3LM_AI_MODEL", "gemini-2.5-flash").strip()
+    __import__("os").environ.get("S3LM_AI_MODEL", "gemini-3.8-flash").strip()
     or "gemini-2.5-flash"
 )
 AIASK_DAILY_CAP = max(

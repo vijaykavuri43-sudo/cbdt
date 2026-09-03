@@ -20,7 +20,8 @@ services:
       - OMP_THREAD_LIMIT=1
       # Gemini Vision verify (key lives ONLY in the VM .env, never in git)
       - S3LM_GEMINI_API_KEY=${S3LM_GEMINI_API_KEY:-}
-      - S3LM_GEMINI_MODEL=${S3LM_GEMINI_MODEL:-gemini-2.5-flash}
+      - S3LM_GEMINI_MODEL=${S3LM_GEMINI_MODEL:-gemini-3.8-flash}
+      - S3LM_GEMINI_FALLBACK_MODEL=${S3LM_GEMINI_FALLBACK_MODEL:-gemini-2.5-flash-lite}
       - S3LM_GEMINI_DAILY_CAP=${S3LM_GEMINI_DAILY_CAP:-100000}
       - S3LM_GEMINI_PER_BATCH=${S3LM_GEMINI_PER_BATCH:-48}
       # AI investigator assistant (separate small budget + rate limit)

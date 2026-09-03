@@ -135,10 +135,15 @@ GEMINI_API_KEY = (
     or os.environ.get("S3LM_GOOGLE_API_KEY", "").strip()
 )
 GEMINI_MODEL = (
-    os.environ.get("S3LM_GEMINI_MODEL", "gemini-2.5-flash").strip()
-    or "gemini-2.5-flash"
+    os.environ.get("S3LM_GEMINI_MODEL", "gemini-3.8-flash").strip()
+    or "gemini-3.8-flash"
 )
-# 1.5-flash was retired (verified 2026-09-03: only 2.5-flash family served).
+# Verified 2026-09-03 with the case key: 3.8-flash 200 clean-JSON, 2.5-flash
+# 429 (quota burned), 2.5-flash-lite 200 exact-JSON. 3.5-flash answers prose.
+GEMINI_FALLBACK_MODEL = (
+    os.environ.get("S3LM_GEMINI_FALLBACK_MODEL", "gemini-2.5-flash-lite").strip()
+    or "gemini-2.5-flash-lite"
+)
 GEMINI_ENABLED = bool(GEMINI_API_KEY)
 # Max Gemini Vision calls per UTC day across all workers (parent-enforced).
 # Only tesseract-miss slips reach Vision; shrunk 768px images run ~700 tokens

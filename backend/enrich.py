@@ -881,38 +881,39 @@ def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
                 "responseMimeType": "application/json",
             },
         }
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={config.GEMINI_API_KEY}"
         client = _gemini_client_shared()
         j = None
+        served_by = config.GEMINI_MODEL
         last_err = "unknown"
-        for attempt in range(3):
-            try:
-                r = client.post(url, json=body)
-                if (
-                    r.status_code == 404
-                    and config.GEMINI_MODEL != "gemini-2.5-flash-lite"
-                ):
-                    # Model retired mid-deploy? One fallback try on flash-lite.
-                    try:
-                        r = client.post(
-                            url.replace(config.GEMINI_MODEL, "gemini-2.5-flash-lite"),
-                            json=body,
-                        )
-                    except Exception:
-                        pass
-                if r.status_code == 400:
-                    last_err = f"400: {r.text[:200]}"
-                    break  # fatal (bad model/prompt) — retrying won't help
-                if r.status_code == 429 or r.status_code >= 500:
-                    last_err = f"{r.status_code}: {r.text[:200]}"
-                    _t.sleep(2.0 * (2**attempt))
-                    continue
-                r.raise_for_status()
-                j = r.json()
+        # Model chain: primary (best verified) then fallback (separate quota
+        # pool). 429/quota on one model must not kill the whole batch.
+        models = [config.GEMINI_MODEL]
+        if config.GEMINI_FALLBACK_MODEL not in models:
+            models.append(config.GEMINI_FALLBACK_MODEL)
+        for model in models:
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={config.GEMINI_API_KEY}"
+            )
+            for attempt in range(2):
+                try:
+                    r = client.post(url, json=body)
+                    if r.status_code in (400, 404):
+                        last_err = f"{r.status_code}@{model}: {r.text[:160]}"
+                        break  # model-level fatal — try next model
+                    if r.status_code == 429 or r.status_code >= 500:
+                        last_err = f"{r.status_code}@{model}: {r.text[:160]}"
+                        _t.sleep(1.5 * (2**attempt))
+                        continue
+                    r.raise_for_status()
+                    j = r.json()
+                    served_by = model
+                    break
+                except Exception as e:
+                    last_err = f"{model}: {str(e)[:160]}"
+                    _t.sleep(1.5 * (2**attempt))
+            if j is not None:
                 break
-            except Exception as e:
-                last_err = str(e)[:200]
-                _t.sleep(2.0 * (2**attempt))
         if j is None:
             _gemini_note(False, last_err)
             return {"_gemini_error": last_err}
@@ -960,6 +961,7 @@ def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
             if parsed.get(k) is not None:
                 parsed[k] = str(parsed[k]).strip() or None
         parsed["_gemini_raw"] = txt[:600]
+        parsed["_model"] = served_by
         _gemini_note(True)
         return parsed
     except Exception as e:
