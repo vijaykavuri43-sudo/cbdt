@@ -959,6 +959,30 @@ def _sniff_media(head: bytes) -> str | None:
         return "application/pdf"
     if head[:4] == b"PK\x03\x04":
         return "application/zip"
+    # ---- audio/video magic (voice-note fix 2026-09-03) ----
+    # Chat voice notes are WhatsApp Opus-in-WebM misnamed .wav (EBML magic);
+    # mislabeled audio/mp3 + nosniff made <audio> refuse them (0:00).
+    if head[:4] == b"\x1a\x45\xdf\xa3":
+        return "audio/webm"
+    if head[:4] == b"OggS":
+        return "audio/ogg"
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return "audio/wav"
+    if head[:4] == b"RIFF" and head[8:12] == b"AVI ":
+        return "video/x-msvideo"
+    if len(head) >= 12 and head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in (b"M4A ", b"mp42", b"isom", b"msf1"):
+            return "audio/mp4"
+        return "video/mp4"
+    if head[:3] == b"ID3" or (
+        len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0
+    ):
+        return "audio/mpeg"
+    if head[:5] == b"#!AMR":
+        return "audio/amr"
+    if head[:4] == b"fLaC":
+        return "audio/flac"
     return None
 
 
