@@ -1046,7 +1046,14 @@ def get_object(
                 _ram_put(cache_etag, out_media, body)
             if _objcache_writes % 50 == 0:
                 _objcache_trim(thumb)
-            return _serve_cached(dest, out_media, filename, cache_etag, download)
+            return _serve_cached(
+                dest,
+                out_media,
+                filename,
+                cache_etag,
+                download,
+                cache_status="MISS",
+            )
         except OSError:
             pass
         # cache write failed: serve bytes directly from memory
