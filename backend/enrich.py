@@ -874,7 +874,7 @@ def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
             ],
             "generationConfig": {
                 "temperature": 0.0,
-                "maxOutputTokens": 512,
+                "maxOutputTokens": 1024,
                 "responseMimeType": "application/json",
             },
         }
@@ -918,14 +918,24 @@ def _gemini_extract(data: bytes, text_sample: str = "") -> Optional[dict]:
             txt = j["candidates"][0]["content"]["parts"][0]["text"]
         except Exception:
             return None
-        # Model is asked for JSON; be robust to markdown fences
+        # Model is asked for JSON; be robust to markdown fences AND prose
+        # wrapping (observed live 2026-09-03: truncated/fenced replies raised
+        # "Unterminated string", burning budget on 5 straight failures).
         txt = txt.strip()
         if txt.startswith("```"):
             txt = txt.strip("`")
             # remove leading json marker
             if txt.lower().startswith("json"):
                 txt = txt[4:].strip()
-        parsed = _json.loads(txt)
+        try:
+            parsed = _json.loads(txt)
+        except Exception:
+            import re as _re
+
+            m = _re.search(r"\{.*\}", txt, _re.S)
+            if not m:
+                raise
+            parsed = _json.loads(m.group(0))
         # Sanitize amount via same bound as OCR
         amt = parsed.get("amount_inr")
         try:
