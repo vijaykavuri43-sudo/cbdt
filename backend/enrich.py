@@ -240,6 +240,9 @@ _ACCOUNT_KEYWORDS_RE = re.compile(
 
 
 def fetch_bytes(s3: Any, key: str) -> bytes:
+    fast = getattr(s3, "get_object_bytes", None)
+    if callable(fast):
+        return fast(key)
     resp, _ = s3.get_object_stream(key)
     data = resp.read()
     resp.close()

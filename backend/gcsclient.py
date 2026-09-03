@@ -68,8 +68,11 @@ class GCSMirrorClient:
             page = next(iterator.pages)
         except StopIteration:
             return {
-                "objects": [], "prefixes": [], "is_truncated": False,
-                "next_token": None, "key_count": 0,
+                "objects": [],
+                "prefixes": [],
+                "is_truncated": False,
+                "next_token": None,
+                "key_count": 0,
             }
         objects = []
         for blob in page:
@@ -83,7 +86,9 @@ class GCSMirrorClient:
             # every value to ISO-8601 UTC before it reaches the manifest.
             modified = normalize_object_ts(metadata.get("last_modified"))
             if not modified and blob.updated:
-                modified = blob.updated.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                modified = blob.updated.astimezone(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
             objects.append(
                 {
                     "key": key,
@@ -129,6 +134,20 @@ class GCSMirrorClient:
             self.lister_errors += 1
             return False
 
+    def get_object_bytes(self, key: str) -> bytes:
+        """Fast path for bulk fetch (enrich workers): single round-trip.
+
+        get_object_stream does get_blob (metadata GET) + open (download) =
+        ~2x latency. OCR only needs bytes, so skip the metadata call.
+        """
+        from google.api_core.exceptions import NotFound
+
+        blob = self.bucket.blob(self._stored(key))
+        try:
+            return blob.download_as_bytes()
+        except NotFound:
+            raise RuntimeError(f"GetObject {key} -> not found in GCS mirror")
+
     def get_object_stream(self, key: str, chunk_size: int = 65536):
         blob = self.bucket.get_blob(self._stored(key))
         if blob is None:
@@ -142,7 +161,8 @@ class GCSMirrorClient:
             "last_modified": normalize_object_ts(metadata.get("last_modified"))
             or (
                 blob.updated.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                if blob.updated else ""
+                if blob.updated
+                else ""
             ),
             "sha256": metadata.get("sha256") or "",
         }
