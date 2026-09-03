@@ -89,15 +89,43 @@ if _FRONTEND_DIST.exists():
             name="assets",
         )
 
-if config.OBJECT_SOURCE == "gcs":
-    object_store = GCSMirrorClient(config.GCS_BUCKET, config.GCS_PREFIX)
-else:
-    object_store = S3PublicClient(
+
+def _init_object_store():
+    """Lazy init: GCS needs ADC credentials absent on dev machines.
+
+    Fall back to the public-S3 client so `import backend.app` (tests,
+    local dev without `gcloud auth`) never crashes at import time.
+    The VM has the service-account scope, so production still uses GCS.
+    """
+    if config.OBJECT_SOURCE == "gcs":
+        try:
+            return GCSMirrorClient(config.GCS_BUCKET, config.GCS_PREFIX)
+        except Exception as e:
+            print(f"[store] GCS init failed ({e}); falling back to public S3")
+            return S3PublicClient(
+                config.BUCKET_URL, max_rate_per_sec=config.MAX_GET_RATE_PER_SEC
+            )
+    return S3PublicClient(
         config.BUCKET_URL, max_rate_per_sec=config.MAX_GET_RATE_PER_SEC
     )
+
+
+object_store = _init_object_store()
 collector = Collector(object_store)
 collector_holder["collector"] = collector
 downloads = DownloadManager(object_store)
+
+
+def _actual_source() -> str:
+    """Effective store type — differs from config when GCS creds are absent."""
+    try:
+        from .gcsclient import GCSMirrorClient as _GCS
+
+        if isinstance(object_store, _GCS):
+            return "gcs"
+    except Exception:
+        pass
+    return "s3-fallback" if config.OBJECT_SOURCE == "gcs" else config.OBJECT_SOURCE
 
 
 def auth(request: Request):
@@ -276,6 +304,7 @@ def bucket_health(request: Request):
             "checked_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "bucket_url": config.SOURCE_ID,
             "object_source": config.OBJECT_SOURCE,
+            "effective_source": _actual_source(),
         }
     except Exception as e:
         return {
@@ -285,6 +314,7 @@ def bucket_health(request: Request):
             "checked_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "bucket_url": config.SOURCE_ID,
             "object_source": config.OBJECT_SOURCE,
+            "effective_source": _actual_source(),
         }
 
 
@@ -304,7 +334,9 @@ def mirror_sync(_=Depends(auth)):
         "authorization_ref": config.AUTH_REF,
     }
     try:
-        client = object_store.client if hasattr(object_store, "client") else None
+        from .gcsclient import GCSMirrorClient as _GCS
+
+        client = object_store.client if isinstance(object_store, _GCS) else None
         if client is None:
             raise RuntimeError("GCS client unavailable (object_source not gcs)")
         bucket = client.bucket(config.GCS_BUCKET)
@@ -334,7 +366,9 @@ def mirror_sync(_=Depends(auth)):
             daemon_state = (data.get("state") or "").lower()
             healthy = age_min is not None and age_min <= 15
             if daemon_state == "stopped":
-                verdict = "STOPPED — sync daemon exited; mirror is frozen until it restarts"
+                verdict = (
+                    "STOPPED — sync daemon exited; mirror is frozen until it restarts"
+                )
             elif daemon_state == "starting":
                 verdict = "STARTING — daemon is up; first cycle in progress"
             elif daemon_state == "syncing" and healthy:
@@ -379,6 +413,7 @@ def _build_status():
     st["objects_total"] = db.total_count()
     st["bucket_url"] = config.SOURCE_ID
     st["object_source"] = config.OBJECT_SOURCE
+    st["effective_source"] = _actual_source()
     st["case"] = config.CASE_ID
     st["auth_ref"] = config.AUTH_REF
     st["prefixes"] = (
@@ -570,9 +605,7 @@ def sync_object_notice(notice: SyncObjectNotice, _=Depends(auth)):
     inserted = db.upsert_objects([obj])
     if changed:
         c.state["new_since_start"] += 1
-        c.state["last_poll_utc"] = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
-        )
+        c.state["last_poll_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         c.state["objects_total"] = db.total_count()
         bus.publish(
             {
@@ -905,17 +938,22 @@ def mule_rails_api(
             role_evidence = int(item.get("high_role_evidence") or 0) + int(
                 item.get("medium_role_evidence") or 0
             )
-            score = min(100, (
-                (30 if both else 0)
-                + min(25, int(item.get("gamblers") or 0) * 4)
-                + min(20, int(item.get("transactions") or 0) * 2)
-                + (10 if int(item.get("object_evidence_rows") or 0) else 0)
-                + (10 if role_evidence else 0)
-                + (20 if known else 0)
-            ))
+            score = min(
+                100,
+                (
+                    (30 if both else 0)
+                    + min(25, int(item.get("gamblers") or 0) * 4)
+                    + min(20, int(item.get("transactions") or 0) * 2)
+                    + (10 if int(item.get("object_evidence_rows") or 0) else 0)
+                    + (10 if role_evidence else 0)
+                    + (20 if known else 0)
+                ),
+            )
             item["known_indicator"] = known
             item["candidate_score"] = score
-            item["priority"] = "high" if score >= 60 else "medium" if score >= 30 else "lead"
+            item["priority"] = (
+                "high" if score >= 60 else "medium" if score >= 30 else "lead"
+            )
             item["fact_type"] = "fact"
             item["assessment_fact_type"] = "analyst_conclusion"
         all_items = sorted(

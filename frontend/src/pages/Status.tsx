@@ -22,6 +22,7 @@ interface BucketHealth {
   latency_ms?: number
   checked_utc?: string
   error?: string
+  effective_source?: string
 }
 
 interface MirrorSync {
@@ -152,7 +153,7 @@ export function StatusPage() {
           <span className="pg-header-icon">◉</span>
           <div>
             <h1 className="pg-header-title">Overview</h1>
-            <div className="pg-header-sub">Read-only monitoring · {st?.auth_ref} · Source: {st?.object_source ?? 'gcs'} · gcs_mirror: cbtf-case-evidence-991096649643/s3-mirror/</div>
+            <div className="pg-header-sub">Read-only monitoring · {st?.auth_ref} · Source: {st?.effective_source ?? st?.object_source ?? 'gcs'}{st?.effective_source === 's3-fallback' ? ' (direct S3 — GCS creds absent)' : ''} · gcs_mirror: cbtf-case-evidence-991096649643/s3-mirror/</div>
           </div>
         </div>
         <div className="pg-header-right">
@@ -234,7 +235,7 @@ export function StatusPage() {
                   ? 'AUTH REQUIRED — unlock to verify bucket'
                   : 'UNREACHABLE'}
           </span>
-          {health?.checked_utc && <span className="small dim">probed {fmtTime(health.checked_utc)} UTC</span>}
+          {health?.checked_utc && <span className="small dim">probed {fmtTime(health.checked_utc)} UTC{health?.effective_source ? ` · via ${health.effective_source}` : ''}</span>}
           {health && !health.live && health.error && <span className="small" style={{ color: 'var(--bad)' }}>{health.error}</span>}
         </div>
         <div className="small dim" style={{ marginTop: 8 }}>
@@ -246,7 +247,7 @@ export function StatusPage() {
           })()}
         </div>
         <div className="small dim" style={{ marginTop: 4 }}>
-          Live sync: <code className="mono">{st?.object_source ?? 'gcs'}</code> via <code className="mono">gs://cbtf-case-evidence-991096649643/s3-mirror/</code> · Watermarks <code className="mono">wm:&lt;prefix&gt;</code> + poll interval 10s hot / 900s cold-crawl (wrapping cursor) · Cold catch-up: <code className="mono">POST /api/verify</code> · Recon script: <code className="mono">scripts/reconcile_s3_gcs_shard.py</code>
+          Live sync: <code className="mono">{st?.effective_source ?? st?.object_source ?? 'gcs'}</code> via <code className="mono">gs://cbtf-case-evidence-991096649643/s3-mirror/</code> · Watermarks <code className="mono">wm:&lt;prefix&gt;</code> + poll interval 10s hot / 900s cold-crawl (wrapping cursor) · Cold catch-up: <code className="mono">POST /api/verify</code> · Recon script: <code className="mono">scripts/reconcile_s3_gcs_shard.py</code>
         </div>
       </div>
 

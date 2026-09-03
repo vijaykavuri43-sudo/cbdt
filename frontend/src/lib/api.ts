@@ -80,6 +80,7 @@ export interface Status {
   started_utc: string
   bucket_url: string
   object_source?: string
+  effective_source?: string
   case: string
   auth_ref: string
   prefixes: string[]
