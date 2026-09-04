@@ -129,6 +129,22 @@ def extract_txids(text: str) -> list[str]:
     return out
 
 
+# A wallet-looking token immediately after a Txid label is a transaction
+# hash fragment, never a wallet (verified live 2026-09-04: degraded tesseract
+# read "Txid 144fdabb…baa6b cOfde…" — OCR errors broke the 64-hex run so the
+# long-run guard could not fire, but the label is unambiguous).
+_TXID_LABEL_RE = re.compile(
+    r"(?:\btx\.?\s*id\b|\btxid\b|transaction\s*(?:hash|id)\b|hash\b)\s*[:#]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _labeled_as_txid(text: str, start: int, window: int = 60) -> bool:
+    """True if a Txid/hash label sits immediately before position start."""
+    before = text[max(0, start - window) : start]
+    return bool(_TXID_LABEL_RE.search(before))
+
+
 def _in_long_hex_run(text: str, start: int, end: int, min_run: int = 40) -> bool:
     """True if the [start:end) token is a fragment of a longer hex run.
 
@@ -193,6 +209,9 @@ def extract_wallets(text: str) -> list[dict]:
         addr = m.group(1)
         if addr in seen:
             continue
+        # Same txid-fragment class as BTC (a glued "Txid"+hash can read as T…).
+        if _labeled_as_txid(text, m.start()):
+            continue
         # checksum-ish sanity: reject all-same-char artifacts from OCR smears
         if len(set(addr)) < 8:
             continue
@@ -233,8 +252,11 @@ def extract_wallets(text: str) -> list[dict]:
             continue
         # Txids are not wallets: a wrapped 64-hex TRON txid starting with '1'
         # matches BTC_RE on its first line (verified 2026-09-04). Suppress any
-        # candidate that is a fragment of a longer hex run.
+        # candidate that is a fragment of a longer hex run, or that sits right
+        # behind a Txid/hash label (degraded OCR breaks the run but not the label).
         if _in_long_hex_run(text, m.start(), m.end()):
+            continue
+        if _labeled_as_txid(text, m.start()):
             continue
         if addr.lower().startswith("bc1") and not (14 <= len(addr) <= 90):
             continue

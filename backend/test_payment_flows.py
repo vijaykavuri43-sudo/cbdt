@@ -71,6 +71,23 @@ class ExtractionTests(unittest.TestCase):
     def test_extract_txids_reassembles_wrapped_txid(self):
         self.assertEqual(extract_txids(BINANCE_USDT_TEXT), [BINANCE_TXID])
 
+    def test_txid_labeled_fragment_suppressed_on_degraded_ocr(self):
+        # Live 2026-09-04: tesseract misread the txid (O-for-0, Fy!-for-56,
+        # dropped chars) so the 64-hex run broke and the 28-char first line
+        # sat below the long-run guard — but the Txid label is unambiguous.
+        degraded = (
+            "Network TRX Address TJXhSVWjd2U09uuabhSdZztq "
+            "Txid 144fdabb1fbee27c7f5c7baaa6b "
+            "cOfde675d8a7e6214d604ca7a5 Fy Amount 69.5 USDT"
+        )
+        for w in extract_wallets(degraded):
+            self.assertNotEqual(w["network"], "BITCOIN")
+        # A genuine BTC address with no Txid label is unaffected.
+        btc = extract_wallets(
+            "Send to 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa Amount Rs 500"
+        )
+        self.assertEqual(btc[0]["network"], "BITCOIN")
+
     def test_usdt_principal_keeps_crypto_currency(self):
         value, ccy = extract_amount_with_currency(BINANCE_USDT_TEXT)
         self.assertEqual(value, 69.5)
