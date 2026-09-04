@@ -33,6 +33,11 @@ services:
       - S3LM_AIASK_PER_MIN=${S3LM_AIASK_PER_MIN:-10}
       - S3LM_COLD_SEC=${S3LM_COLD_SEC:-1800}
       - S3LM_CRAWL_CAP=${S3LM_CRAWL_CAP:-5000}
+      # Gambler-slip OCR loop (deposit/withdrawal VPAs/UTRs). Default off:
+      # 500k+ slip backlog would compete with live QR decoding. Enable with
+      # S3LM_SLIP_OCR=1 once the QR backlog drains.
+      - S3LM_SLIP_OCR=${S3LM_SLIP_OCR:-}
+      - S3LM_SLIP_BATCH=${S3LM_SLIP_BATCH:-24}
       - S3LM_INTELLIGENCE_ROOT=/app/intelligence
       - S3LM_REFERENCE_ROOT=/app/intelligence
     volumes:

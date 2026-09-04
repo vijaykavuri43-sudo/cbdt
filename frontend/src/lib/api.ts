@@ -14,6 +14,16 @@ export function hasToken(): boolean {
 
 export class AuthError extends Error {}
 
+// Tabs stay mounted when hidden — background intervals must not hammer the
+// backend (or drain laptop/phone batteries). Gate every poller on this.
+export function tabHidden(): boolean {
+  try {
+    return typeof document !== 'undefined' && document.hidden
+  } catch {
+    return false
+  }
+}
+
 function authParams(): string {
   const t = getToken()
   return t ? `token=${encodeURIComponent(t)}` : ''

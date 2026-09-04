@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, eventsUrl, AuthError, type Status } from '../lib/api'
+import { api, eventsUrl, AuthError, tabHidden, type Status } from '../lib/api'
 import { fmtBytes, fmtINR, fmtTime } from '../lib/format'
+import { OfficerStrip } from '../components/OfficerStrip'
 import { folderInfo } from '../lib/format'
 
 interface Stats {
@@ -83,7 +84,7 @@ export function StatusPage() {
         .then(([s, x]) => { if (alive) { setSt(s); setStats(x) } })
         .catch(() => {})
     load()
-    const t = setInterval(load, st?.sweep_done ? 30000 : 8000)
+    const t = setInterval(() => { if (!tabHidden()) load() }, st?.sweep_done ? 30000 : 8000)
     return () => { alive = false; clearInterval(t) }
   }, [st?.sweep_done])
 
@@ -164,6 +165,9 @@ export function StatusPage() {
           {lastEventAt && <span className="tiny dim" style={{ marginLeft: 8 }}>{new Date(lastEventAt).toLocaleTimeString()} last event</span>}
         </div>
       </div>
+
+      {/* Officer briefing — last-24h live money movement + rail triage */}
+      <OfficerStrip />
 
       {/* Stat cards */}
       <div className="st-cards">

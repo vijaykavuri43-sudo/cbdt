@@ -494,8 +494,8 @@ def _build_stats():
     import time as _t
 
     today = _t.strftime("%Y-%m-%d", _t.gmtime())
-    dep = db.deposits(limit=1)
-    wd = db.deposits(kind="withdrawal", limit=1)
+    kinds = db.flow_kind_totals()
+    dep, wd = kinds["deposit"], kinds["withdrawal"]
     try:
         _objects_total = collector.total_objects()
     except Exception:
@@ -789,6 +789,42 @@ def sheet_preview(
         "truncated": truncated,
         "limit": limit,
     }
+
+
+@app.get("/api/ledger/summary")
+def ledger_summary(_=Depends(auth)):
+    """Officer ledger totals: corrected ex-bonus cash from csv-files/ exports."""
+    from . import ledger
+
+    return cached("ledger:summary", 60.0, ledger.summary)
+
+
+@app.post("/api/ledger/sync")
+def ledger_sync(limit: int = Query(25, ge=1, le=200), _=Depends(auth)):
+    """Index new/changed csv-files/ exports (bounded per call)."""
+    from . import ledger
+
+    out = ledger.sync_ledger(object_store, limit_files=limit)
+    _invalidate_prefix("ledger:")
+    return out
+
+
+@app.get("/api/gateway/summary")
+def gateway_summary(_=Depends(auth)):
+    """Officer gateway totals: real deposits by brand + payout mule accounts."""
+    from . import gateway
+
+    return cached("gateway:summary", 60.0, gateway.summary)
+
+
+@app.post("/api/gateway/sync")
+def gateway_sync(limit: int = Query(25, ge=1, le=200), _=Depends(auth)):
+    """Index new/changed paymentgateway/csv-files/ exports (bounded per call)."""
+    from . import gateway
+
+    out = gateway.sync_gateway(object_store, limit_files=limit)
+    _invalidate_prefix("gateway:")
+    return out
 
 
 @app.post("/api/verify")
@@ -1472,10 +1508,12 @@ def money_flows_api(
     q: str = "",
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    source: str = Query("", pattern="^(|object|reference)$"),
+    since: str = Query("", max_length=32),
     _=Depends(auth),
 ):
     """Normalized gambler↔payment-rail flows from OCR, QR, and case references."""
-    cache_key = f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}"
+    cache_key = f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}:{source}:{since}"
     # q-searches were cached 5s: every retry re-ran the expensive GROUP BYs.
     # 60s is fine for a search view (no-q fast path stays at 5s).
     return cached(
@@ -1487,6 +1525,8 @@ def money_flows_api(
             q=q,
             limit=limit,
             offset=offset,
+            source=source,
+            since=since,
         ),
     )
 
@@ -1498,17 +1538,28 @@ def mule_rails_api(
     priority: str = Query("", pattern="^(|high|medium|lead)$"),
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    source: str = Query("", pattern="^(|object|reference)$"),
+    new_since: str = Query("", max_length=32),
     _=Depends(auth),
 ):
     """Rank observed payment rails for corroboration—not automatic attribution."""
     from .evidence import load_master_vpas, load_master_wallets
 
-    cache_key = f"mule-rails:{rail_type}:{q}:{priority}:{limit}:{offset}"
+    cache_key = (
+        f"mule-rails:{rail_type}:{q}:{priority}:{limit}:{offset}:{source}:{new_since}"
+    )
 
     def build():
         # Rank the complete filtered set before pagination so page order and
         # priority totals remain stable.
-        raw = db.mule_rails(rail_type=rail_type, q=q, limit=10000, offset=0)
+        raw = db.mule_rails(
+            rail_type=rail_type,
+            q=q,
+            limit=10000,
+            offset=0,
+            source=source,
+            new_since=new_since,
+        )
         master_vpas = load_master_vpas()
         master_wallets = load_master_wallets()
         for item in raw["items"]:

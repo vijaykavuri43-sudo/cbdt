@@ -243,6 +243,76 @@ CREATE TABLE IF NOT EXISTS payment_rail_summary(
   PRIMARY KEY(direction,rail_type,rail_id,account_holder,ifsc,network)
 );
 CREATE INDEX IF NOT EXISTS idx_pay_summary_rank ON payment_rail_summary(direction,rail_type,transactions DESC,amount_inr DESC);
+CREATE TABLE IF NOT EXISTS ledger_files(
+  key TEXT PRIMARY KEY,
+  etag TEXT DEFAULT '',
+  size INTEGER NOT NULL DEFAULT 0,
+  last_modified TEXT DEFAULT '',
+  kind TEXT DEFAULT '',
+  rows INTEGER NOT NULL DEFAULT 0,
+  status TEXT DEFAULT '',
+  synced_utc TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS ledger_rows(
+  key TEXT NOT NULL,
+  row_no INTEGER NOT NULL DEFAULT 0,
+  type TEXT DEFAULT '',
+  sender TEXT DEFAULT '',
+  gambler TEXT DEFAULT '',
+  amount REAL,
+  bonus REAL NOT NULL DEFAULT 0,
+  cash REAL,
+  utr TEXT DEFAULT '',
+  remark TEXT DEFAULT '',
+  ts TEXT DEFAULT '',
+  PRIMARY KEY(key,row_no)
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_type ON ledger_rows(type);
+CREATE INDEX IF NOT EXISTS idx_ledger_utr ON ledger_rows(utr) WHERE utr != '';
+CREATE INDEX IF NOT EXISTS idx_ledger_gambler ON ledger_rows(gambler) WHERE gambler != '';
+CREATE INDEX IF NOT EXISTS idx_ledger_sender ON ledger_rows(sender) WHERE sender != '';
+CREATE TABLE IF NOT EXISTS gateway_files(
+  key TEXT PRIMARY KEY,
+  etag TEXT DEFAULT '',
+  size INTEGER NOT NULL DEFAULT 0,
+  last_modified TEXT DEFAULT '',
+  kind TEXT DEFAULT '',
+  rows INTEGER NOT NULL DEFAULT 0,
+  test_rows INTEGER NOT NULL DEFAULT 0,
+  status TEXT DEFAULT '',
+  synced_utc TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS gateway_rows(
+  key TEXT NOT NULL,
+  row_no INTEGER NOT NULL DEFAULT 0,
+  kind TEXT DEFAULT '',
+  customer TEXT DEFAULT '',
+  amount REAL,
+  utr TEXT DEFAULT '',
+  website TEXT DEFAULT '',
+  client TEXT DEFAULT '',
+  actionby TEXT DEFAULT '',
+  receipt TEXT DEFAULT '',
+  holder TEXT DEFAULT '',
+  account TEXT DEFAULT '',
+  ifsc TEXT DEFAULT '',
+  txid TEXT DEFAULT '',
+  is_test INTEGER NOT NULL DEFAULT 0,
+  ts TEXT DEFAULT '',
+  PRIMARY KEY(key,row_no)
+);
+CREATE INDEX IF NOT EXISTS idx_gateway_kind ON gateway_rows(kind);
+CREATE INDEX IF NOT EXISTS idx_gateway_website ON gateway_rows(website) WHERE website != '';
+CREATE INDEX IF NOT EXISTS idx_gateway_utr ON gateway_rows(utr) WHERE utr != '';
+CREATE INDEX IF NOT EXISTS idx_gateway_account ON gateway_rows(account) WHERE account != '';
+CREATE INDEX IF NOT EXISTS idx_gateway_customer ON gateway_rows(customer) WHERE customer != '';
+CREATE TABLE IF NOT EXISTS prefix_stats_cache(
+  p TEXT PRIMARY KEY,
+  n INTEGER NOT NULL DEFAULT 0,
+  s INTEGER NOT NULL DEFAULT 0,
+  newest TEXT DEFAULT '',
+  refreshed_utc TEXT DEFAULT ''
+);
 """
 
 
@@ -407,6 +477,31 @@ def total_count() -> int:
 
 
 def prefix_stats() -> list[dict]:
+    cached = (
+        connect()
+        .execute("SELECT p,n,s,newest FROM prefix_stats_cache ORDER BY n DESC")
+        .fetchall()
+    )
+    if cached:
+        return [dict(r) for r in cached]
+    return _prefix_stats_live()
+
+
+def refresh_prefix_stats() -> int:
+    """Materialize per-prefix inventory (called ~minutely; served by prefix_stats)."""
+    with _writer_lock:
+        c = connect()
+        c.execute("DELETE FROM prefix_stats_cache")
+        c.execute(
+            "INSERT INTO prefix_stats_cache(p,n,s,newest,refreshed_utc)"
+            " SELECT top_prefix,COUNT(*),SUM(size),MAX(last_modified),"
+            " strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM objects GROUP BY top_prefix"
+        )
+        c.commit()
+        return c.execute("SELECT COUNT(*) n FROM prefix_stats_cache").fetchone()["n"]
+
+
+def _prefix_stats_live() -> list[dict]:
     rows = (
         connect()
         .execute(
@@ -420,6 +515,10 @@ def prefix_stats() -> list[dict]:
 
 def subfolders(prefix: str) -> list[dict]:
     """Immediate child 'folders' of a prefix with counts+bytes."""
+    now = time.monotonic()
+    hit = _tree_cache.get(prefix)
+    if hit is not None and now - hit[0] < _TREE_TTL:
+        return hit[1]
     plen = len(prefix)
     like = prefix.replace("%", r"\%").replace("_", r"\_") + "%"
     rows = (
@@ -437,7 +536,11 @@ def subfolders(prefix: str) -> list[dict]:
     dirs = [dict(seg=r["seg"], n=r["n"], size=r["s"] or 0) for r in rows if r["is_dir"]]
     files_n = sum(r["n"] for r in rows if not r["is_dir"])
     files_s = sum(r["s"] or 0 for r in rows if not r["is_dir"])
-    return {"dirs": dirs, "files_n": files_n, "files_size": files_s}
+    out = {"dirs": dirs, "files_n": files_n, "files_size": files_s}
+    if len(_tree_cache) > 500:
+        _tree_cache.clear()
+    _tree_cache[prefix] = (time.monotonic(), out)
+    return out
 
 
 # TTL cache for list totals: COUNT(*) over a 100K+ row prefix range is the
@@ -446,10 +549,15 @@ def subfolders(prefix: str) -> list[dict]:
 # invalidated on sync/verify/notice ingestion (2026-09-03 cache review).
 _LIST_TOTAL_TTL = 300.0
 _list_total_cache: dict = {}
+# Folder-tree cache: subfolders() substr-scans a whole prefix (1.3s on
+# deposit/). Trees drift slowly; 5-min TTL, cleared with list totals.
+_TREE_TTL = 300.0
+_tree_cache: dict = {}
 
 
 def invalidate_list_totals(prefix: str = ""):
     """Drop cached COUNTs for a top_prefix ('' = all) after new arrivals."""
+    _tree_cache.clear()
     if not prefix:
         _list_total_cache.clear()
         return
@@ -664,6 +772,43 @@ def pending_enrichment(limit: int = 20, full_scan: bool = False) -> list[str]:
         for r in c.execute(
             f"SELECT key FROM objects WHERE {where} LIMIT ?",
             args + [limit],
+        ).fetchall()
+    ]
+    seen = set(head)
+    return head + [k for k in fill if k not in seen][: limit - len(head)]
+
+
+def pending_slips(limit: int = 24) -> list[str]:
+    """Gambler-paid slip queue for the background slip_loop drain.
+
+    deposit/withdrawal/payment images, newest first — these carry the
+    receiving-rail VPAs/UTRs the QR-tier queue never sees. Same two-phase
+    pattern as pending_wallets: fresh-hour head, then unsorted bulk fill.
+    """
+    where = (
+        "(enriched=0 AND extract_json IS NULL) "
+        "AND (enrich_retry_utc IS NULL "
+        "OR enrich_retry_utc <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+        f"AND {_IMG_CLAUSE} "
+        "AND top_prefix IN ('deposit/','withdrawal/','payment/')"
+    )
+    c = connect()
+    fresh_cut = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
+    head = [
+        r["key"]
+        for r in c.execute(
+            f"SELECT key FROM objects WHERE {where} AND seen_utc >= ? "
+            "ORDER BY seen_utc DESC LIMIT ?",
+            (fresh_cut, limit),
+        ).fetchall()
+    ]
+    if len(head) >= limit:
+        return head
+    fill = [
+        r["key"]
+        for r in c.execute(
+            f"SELECT key FROM objects WHERE {where} LIMIT ?",
+            (limit,),
         ).fetchall()
     ]
     seen = set(head)
@@ -951,6 +1096,32 @@ def type_census() -> dict:
         ],
         "extensions": sorted_exts,
     }
+
+
+def flow_kind_totals() -> dict:
+    """Deposit+withdrawal slip totals in ONE JSON scan     (stats endpoint was
+    running the same 1M-row json_extract scan twice)."""
+    rows = (
+        connect()
+        .execute(
+            "SELECT json_extract(extract_json,'$.kind') k,COUNT(*) c,"
+            " SUM(CASE WHEN json_extract(extract_json,'$.amount_inr') BETWEEN 0.01 AND ?"
+            " THEN json_extract(extract_json,'$.amount_inr') END) amt"
+            " FROM objects WHERE extract_json IS NOT NULL"
+            " AND json_extract(extract_json,'$.kind') IN ('deposit','withdrawal')"
+            " GROUP BY k",
+            (MAX_AMOUNT_INR,),
+        )
+        .fetchall()
+    )
+    out = {
+        "deposit": {"total": 0, "sum_amount_inr": 0},
+        "withdrawal": {"total": 0, "sum_amount_inr": 0},
+    }
+    for r in rows:
+        if r["k"] in out:
+            out[r["k"]] = {"total": r["c"], "sum_amount_inr": r["amt"] or 0}
+    return out
 
 
 def deposits(limit: int = 300, offset: int = 0, kind: str = "deposit") -> dict:
@@ -1481,12 +1652,22 @@ def money_flows(
     q: str = "",
     limit: int = 200,
     offset: int = 0,
+    source: str = "",
+    since: str = "",
 ) -> dict:
     conds = ["direction=?"]
     args: list = [direction]
     if rail_type:
         conds.append("rail_type=?")
         args.append(rail_type)
+    if source == "object":
+        conds.append("source_key NOT LIKE 'reference:%'")
+    elif source == "reference":
+        conds.append("source_key LIKE 'reference:%'")
+    if since:
+        # UTC ISO cutoff, e.g. last-24h briefing window. last_modified is ISO Z.
+        conds.append("last_modified>=?")
+        args.append(since)
     if q:
         like = "%" + q.replace("%", r"\%").replace("_", r"\_") + "%"
         conds.append(
@@ -1513,7 +1694,7 @@ def money_flows(
             args.extend([q] * 5)
             where = " AND ".join(conds)
     materialized = None
-    if not q:
+    if not q and not source and not since:
         materialized = c.execute(
             "SELECT * FROM payment_flow_totals WHERE direction=? AND rail_filter=?",
             (direction, rail_type),
@@ -1562,6 +1743,7 @@ def money_flows(
         items.append(item)
     return {
         "direction": direction,
+        "source": source,
         "transactions": (
             materialized["transactions"] if materialized else tx["transactions"]
         )
@@ -1598,7 +1780,12 @@ def money_flows(
 
 
 def mule_rails(
-    rail_type: str = "", q: str = "", limit: int = 200, offset: int = 0
+    rail_type: str = "",
+    q: str = "",
+    limit: int = 200,
+    offset: int = 0,
+    source: str = "",
+    new_since: str = "",
 ) -> dict:
     """Aggregate observed gambler↔rail flows for analyst triage.
 
@@ -1607,6 +1794,10 @@ def mule_rails(
     """
     conds = ["rail_id!=''", "rail_type!='unknown'"]
     args: list = []
+    if source == "object":
+        conds.append("source_key NOT LIKE 'reference:%'")
+    elif source == "reference":
+        conds.append("source_key LIKE 'reference:%'")
     if rail_type:
         conds.append("rail_type=?")
         args.append(rail_type)
@@ -1640,11 +1831,13 @@ def mule_rails(
           MAX(last_modified) last_seen
         FROM payment_transactions WHERE {where}
         GROUP BY rail_type,rail_id
+        {("HAVING MIN(last_modified)>=?" if new_since else "")}
     """
+    qargs = args + ([new_since] if new_since else [])
     c = connect()
     # One grouped scan supplies rows and totals. The old implementation ran the
     # same aggregate three times, causing avoidable multi-second API latency.
-    all_items = [dict(row) for row in c.execute(aggregate, args).fetchall()]
+    all_items = [dict(row) for row in c.execute(aggregate, qargs).fetchall()]
     all_items.sort(
         key=lambda row: (
             row["transactions"],
@@ -1707,7 +1900,10 @@ def wallet_feed(limit: int = 300) -> list[dict]:
             """
         SELECT o.key, o.last_modified, o.seen_utc, je.value AS w,
                json_extract(o.extract_json,'$.kind') AS kind,
-               json_extract(o.extract_json,'$.amount_inr') AS amount_inr
+               json_extract(o.extract_json,'$.amount_inr') AS amount_inr,
+               json_extract(o.extract_json,'$.amount_value') AS amount_value,
+               json_extract(o.extract_json,'$.amount_currency') AS amount_currency,
+               json_extract(o.extract_json,'$.txids') AS txids
         FROM objects o, json_each(o.extract_json,'$.wallets') je
         WHERE o.extract_json IS NOT NULL
         ORDER BY o.last_modified DESC LIMIT ?

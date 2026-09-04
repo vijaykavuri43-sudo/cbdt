@@ -16,6 +16,17 @@ export function fmtINR(n?: number | null): string {
   return '₹ ' + n.toLocaleString('en-IN', { maximumFractionDigits: 0 })
 }
 
+/** Currency-aware money: crypto principals must never render as ₹. */
+export function fmtMoney(n?: number | null, ccy?: string | null): string {
+  if (n === undefined || n === null) return '—'
+  const c = (ccy || 'INR').toUpperCase()
+  if (c === 'INR') return fmtINR(n)
+  if (c === 'USD') return '$ ' + n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  // Crypto: trim to significant decimals (69.5 USDT, 0.0023 BTC)
+  const s = n.toFixed(8).replace(/\.?0+$/, '')
+  return `${s} ${c}`
+}
+
 export function fmtTime(ts?: string | null): string {
   if (!ts) return '—'
   return ts.replace('T', ' ').replace('Z', '')

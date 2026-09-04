@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, post } from '../lib/api'
+import { api, post, tabHidden } from '../lib/api'
 import { fmtBytes, fmtTime } from '../lib/format'
 
 interface Job {
@@ -20,7 +20,7 @@ export function Evidence() {
     api<any>('/api/evidence/log', { tail: 30 }).then((d) => setLog(d.tail ?? [])).catch(() => {})
   }, [])
   useEffect(refresh, [refresh])
-  useEffect(() => { const t = setInterval(refresh, 3000); return () => clearInterval(t) }, [refresh])
+  useEffect(() => { const t = setInterval(() => { if (!tabHidden()) refresh() }, 3000); return () => clearInterval(t) }, [refresh])
 
   async function queue() {
     const keys = keysText.split('\n').map((s) => s.trim()).filter(Boolean)

@@ -45,16 +45,31 @@ MASTER_UPI_LIST = (
     / "extracted"
     / "unique-upi-list-full.txt"
 )
+
+
 # Known operator/hawala wallets (LE submission master, CASE-2026-102).
 # Optional: absence is harmless — known_operator badging simply degrades to off.
-# Production (git-deployed VM) intentionally ships no reference data; point
-# S3LM_MASTER_WALLET_CSV at a mounted copy if officer workflow requires badging.
-MASTER_WALLET_CSV = Path(
-    os.environ.get(
-        "S3LM_MASTER_WALLET_CSV",
-        str(REPO_ROOT / "LE-SUBMISSION-MASTER" / "17-CRYPTO-WALLETS.csv"),
-    )
-)
+# Resolution order: explicit S3LM_MASTER_WALLET_CSV env, repo-bundled copy,
+# then the production reference dir on the persistent volume (production
+# git deploys intentionally ship no reference data — ship.sh/scp places the
+# CSV at <data-dir>/reference/ so badging survives redeploys).
+def _resolve_master_wallet_csv() -> Path:
+    candidates = []
+    env = os.environ.get("S3LM_MASTER_WALLET_CSV")
+    if env:
+        candidates.append(Path(env))
+    candidates.append(REPO_ROOT / "LE-SUBMISSION-MASTER" / "17-CRYPTO-WALLETS.csv")
+    candidates.append(DATA_DIR / "reference" / "17-CRYPTO-WALLETS.csv")
+    for c in candidates:
+        try:
+            if c.is_file():
+                return c
+        except OSError:
+            continue
+    return candidates[0]
+
+
+MASTER_WALLET_CSV = _resolve_master_wallet_csv()
 
 # chat_file images whose filename hints at crypto/wallet content get OCR'd for
 # wallet addresses without dragging the whole ~700K chat backlog in.
@@ -120,6 +135,13 @@ ENRICH_BATCH = max(ENRICH_WORKERS, int(os.environ.get("S3LM_ENRICH_BATCH", "48")
 # Full-bucket wallet scan: when set, the pending queue also includes every chat_file image
 # (not just hint-named). Keep live default False for latency; POST /api/wallets/full-scan enables it.
 WALLET_FULL_SCAN = os.environ.get("S3LM_WALLET_FULL_SCAN", "0").strip() == "1"
+# Gambler-paid slip OCR (deposit/withdrawal/payment images): dedicated drain
+# loop surfacing receiving-rail VPAs/UTRs the QR-tier queue never sees.
+# Default OFF — 500k+ slip backlog would compete with live QR decoding;
+# enable on the VM once the QR backlog drains (S3LM_SLIP_OCR=1).
+SLIP_OCR = os.environ.get("S3LM_SLIP_OCR", "0").strip() == "1"
+SLIP_BATCH = max(1, int(os.environ.get("S3LM_SLIP_BATCH", "24")))
+SLIP_INTERVAL_SEC = max(5.0, float(os.environ.get("S3LM_SLIP_INTERVAL_SEC", "30")))
 
 # Single-slip / single-QR amount plausibility bound (₹1 crore). UPI/IMPS and even
 # large crypto deposits never land remotely near this on one object; OCR/QR

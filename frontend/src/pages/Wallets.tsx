@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, eventsUrl, objectUrl, post } from '../lib/api'
-import { fmtINR, fmtTime } from '../lib/format'
+import { api, eventsUrl, objectUrl, post, tabHidden } from '../lib/api'
+import { fmtMoney, fmtTime } from '../lib/format'
 
 interface WalletRow {
   key: string
@@ -10,6 +10,9 @@ interface WalletRow {
   standard?: string
   confidence?: string
   amount_inr?: number | null
+  amount_value?: number | null
+  amount_currency?: string | null
+  txids?: string[] | string | null
   known_operator?: boolean
   kind?: string | null
 }
@@ -66,7 +69,7 @@ export function Wallets() {
   useEffect(refresh, [refresh])
   useEffect(() => {
     refreshScan()
-    const id = setInterval(refreshScan, 3000)
+    const id = setInterval(() => { if (!tabHidden()) refreshScan() }, 3000)
     // live updates via SSE wallet_scan_progress
     let es: EventSource | null = null
     try {
@@ -100,14 +103,16 @@ export function Wallets() {
   const items = (data?.items ?? []).filter((i) => (onlyNew ? !i.known_operator : true))
 
   function exportTsv() {
-    const header = 'Address\tNetwork\tStandard\tAmount (INR)\tStatus\tSource File\tUploaded\n'
+    const header = 'Address\tNetwork\tStandard\tAmount\tCurrency\tTxid\tStatus\tSource File\tUploaded\n'
     const rows = items
       .map((r) =>
         [
           r.address,
           r.network ?? '',
           r.standard ?? '',
-          r.amount_inr ?? '',
+          r.amount_value ?? r.amount_inr ?? '',
+          r.amount_currency ?? (r.amount_inr != null ? 'INR' : ''),
+          Array.isArray(r.txids) ? r.txids.join(',') : (r.txids ?? ''),
           r.known_operator ? 'known-operator' : 'NEW',
           r.key,
           r.last_modified,
@@ -237,7 +242,7 @@ export function Wallets() {
               </tr>
             ))}
             {(!data || (data.master_rows?.length ?? 0) === 0) && (
-              <tr><td colSpan={6} className="dp-empty small dim">No master rows — check LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv on this host.</td></tr>
+              <tr><td colSpan={6} className="dp-empty small dim">No master rows — place 17-CRYPTO-WALLETS.csv in LE-SUBMISSION-MASTER/ or &lt;data-dir&gt;/reference/ on this host.</td></tr>
             )}
           </tbody>
         </table>
@@ -275,7 +280,7 @@ export function Wallets() {
                 <td className="mono" style={{ fontWeight: r.known_operator ? 400 : 700 }}>{r.address}</td>
                 <td>{r.network ?? '—'}</td>
                 <td className="small dim">{r.standard ?? '—'}</td>
-                <td className="num">{r.amount_inr != null ? fmtINR(r.amount_inr) : '—'}</td>
+                <td className="num">{fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency ?? (r.amount_inr != null ? 'INR' : null))}</td>
                 <td>
                   {r.known_operator ? (
                     <span className="ex-badge" style={{ borderColor: 'var(--accent2)', color: 'var(--accent2)' }}>known operator</span>

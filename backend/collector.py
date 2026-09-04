@@ -482,10 +482,31 @@ class Collector:
             try:
                 keys = db.pending_wallets(96)
                 if keys:
-                    self.enricher.drain_specific(keys, workers=config.ENRICH_WORKERS)
+                    self.enricher.drain_specific(
+                        keys, workers=max(1, config.ENRICH_WORKERS // 2)
+                    )
             except Exception:
                 pass
             self._stop.wait(20.0)
+
+    def slip_loop(self):
+        """Gambler-slip drain: deposit/withdrawal/payment images newest-first.
+
+        Surfaces receiving-rail VPAs/UTRs the QR-tier queue never reaches.
+        Gated by S3LM_SLIP_OCR (default off — slip backlog is 500k+).
+        """
+        if not self.enricher or not config.SLIP_OCR:
+            return
+        while not self._stop.is_set():
+            try:
+                keys = db.pending_slips(config.SLIP_BATCH)
+                if keys:
+                    self.enricher.drain_specific(
+                        keys, workers=max(1, config.ENRICH_WORKERS // 2)
+                    )
+            except Exception:
+                pass
+            self._stop.wait(config.SLIP_INTERVAL_SEC)
 
     def start_background(self):
         master = evidence.load_master_vpas()
@@ -515,6 +536,7 @@ class Collector:
         threading.Thread(target=self.poll_loop, daemon=True, name="poll").start()
         threading.Thread(target=self.enrich_loop, daemon=True, name="enrich").start()
         threading.Thread(target=self.wallet_loop, daemon=True, name="wallet").start()
+        threading.Thread(target=self.slip_loop, daemon=True, name="slip").start()
 
         def payment_index():
             try:
@@ -546,6 +568,10 @@ class Collector:
             while not self._stop.is_set():
                 try:
                     db.refresh_payment_summaries()
+                except Exception:
+                    pass
+                try:
+                    db.refresh_prefix_stats()
                 except Exception:
                     pass
                 self._stop.wait(60)

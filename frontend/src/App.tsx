@@ -8,6 +8,8 @@ import { Explorer } from './pages/Explorer'
 import { LiveFeed } from './pages/LiveFeed'
 import { Chat } from './pages/Chat'
 import { Deposits } from './pages/Deposits'
+import { Ledger } from './pages/Ledger'
+import { Cashflow } from './pages/Cashflow'
 import { Upis } from './pages/Upis'
 import { Wallets } from './pages/Wallets'
 import { Evidence } from './pages/Evidence'
@@ -21,6 +23,8 @@ const TABS = [
   { id: 'search', label: 'Search', icon: '⌕' },
   { id: 'live', label: 'Live Feed', icon: '⚡' },
   { id: 'deposits', label: 'Mule Money Flows', icon: '₹' },
+  { id: 'ledger', label: 'Ledger (XLSX/CSV)', icon: '▦' },
+  { id: 'cashflow', label: 'Cash Flow', icon: '⇄' },
   { id: 'upis', label: 'UPI / Mules', icon: '@' },
   { id: 'wallets', label: 'Crypto Wallets', icon: '₿' },
   { id: 'evidence', label: 'Evidence', icon: '⛨' },
@@ -130,6 +134,12 @@ export default function App() {
         </div>
         <div style={{ display: tab === 'deposits' ? 'block' : 'none' }}>
           <ErrorBoundary><Deposits /></ErrorBoundary>
+        </div>
+        <div style={{ display: tab === 'ledger' ? 'block' : 'none' }}>
+          <ErrorBoundary><Ledger /></ErrorBoundary>
+        </div>
+        <div style={{ display: tab === 'cashflow' ? 'block' : 'none' }}>
+          <ErrorBoundary><Cashflow /></ErrorBoundary>
         </div>
         <div style={{ display: tab === 'upis' ? 'block' : 'none' }}>
           <ErrorBoundary><Upis /></ErrorBoundary>

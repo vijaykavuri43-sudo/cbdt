@@ -77,6 +77,18 @@ TRON_RE = re.compile(r"\b(T[1-9A-HJ-NP-Za-km-z]{33})\b")
 ETH_RE = re.compile(r"\b(0x[a-fA-F0-9]{40})\b")
 # Bitcoin: legacy 1/3 or bech32 bc1
 BTC_RE = re.compile(r"\b((?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{11,71}))\b")
+# Blockchain transaction hash (TRON/EVM txid: 64 hex). Verified 2026-09-04:
+# a Binance receipt's wrapped TRON txid "144fdabb…baa6b|c0fde…" had its first
+# 28-char line falsely match BTC_RE (starts with '1', all base58 chars) and
+# was shown as a BITCOIN wallet with ₹70. Txids are evidence, never wallets.
+TXID_RE = re.compile(r"\b([0-9a-fA-F]{64})\b")
+_CRYPTO_CCY_RE = re.compile(
+    r"\b(usdt|usdc|tusd|dai|btc|xbt|eth|trx|bnb|matic|sol)\b", re.IGNORECASE
+)
+_FIAT_CCY_RE = re.compile(r"(₹|rs\.?|inr|\$)", re.IGNORECASE)
+# Plausibility bounds per currency (crypto bounds are generous — on-chain
+# verification, not OCR, is the authority for large crypto moves).
+CRYPTO_MAX_AMOUNT = 50_000_000.0
 CRYPTO_HINT_RE = re.compile(
     r"usdt|trc.?20|erc.?20|tron|trust\s*wallet|binance|coinbase|wallet", re.IGNORECASE
 )
@@ -89,6 +101,55 @@ _SENDER_ROLE_RE = re.compile(
     r"(?:paid\s+by|payer|sender|remitter|debited\s+from|received\s+from|transfer(?:red)?\s+from|from)\s*[:=\-]?",
     re.IGNORECASE,
 )
+
+
+# Join whitespace ONLY where a wrapped txid was split mid-run: 20+ hex chars
+# on each side. A plain nospace-join glues words to hashes ("Txid 144f…" →
+# "…d144f…"), shifting the 64-window by one ("d144…f34a", seen live).
+_TXID_WRAP_JOIN_RE = re.compile(r"(?<=[0-9a-fA-F]{20})\s+(?=[0-9a-fA-F]{20})")
+
+
+def extract_txids(text: str) -> list[str]:
+    """Pull 64-hex blockchain transaction hashes (evidence, never wallets).
+
+    Reassembles OCR line-wrapped txids ("…baa6b\\nc0fde…", verified on a
+    Binance receipt 2026-09-04) via _TXID_WRAP_JOIN_RE, then matches exact
+    64-hex tokens — no offset drift, no word-glued prefixes.
+    """
+    if not text:
+        return []
+    joined = _TXID_WRAP_JOIN_RE.sub("", text)
+    out: list[str] = []
+    seen: set[str] = set()
+    for m in TXID_RE.finditer(joined):
+        h = m.group(1).lower()
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return out
+
+
+def _in_long_hex_run(text: str, start: int, end: int, min_run: int = 40) -> bool:
+    """True if the [start:end) token is a fragment of a longer hex run.
+
+    Whitespace-tolerant: OCR wraps 64-hex txids across lines, so each wrapped
+    line looks like a standalone token. Joins a ±40-char window and checks
+    whether the candidate sits inside a hex run of >= min_run chars.
+    """
+    window = text[max(0, start - 40) : end + 40]
+    nospace = re.sub(r"\s+", "", window)
+    frag = re.sub(r"\s+", "", text[start:end])
+    if not frag:
+        return False
+    idx = nospace.find(frag)
+    if idx < 0:
+        return False
+    run_start, run_end = idx, idx
+    while run_start > 0 and nospace[run_start - 1] in "0123456789abcdefABCDEF":
+        run_start -= 1
+    while run_end < len(nospace) and nospace[run_end] in "0123456789abcdefABCDEF":
+        run_end += 1
+    return (run_end - run_start) >= min_run
 
 
 def infer_rail_role(text: str, start: int, end: int) -> tuple[str, str]:
@@ -169,6 +230,11 @@ def extract_wallets(text: str) -> list[dict]:
     for m in BTC_RE.finditer(text):
         addr = m.group(1)
         if addr in seen:
+            continue
+        # Txids are not wallets: a wrapped 64-hex TRON txid starting with '1'
+        # matches BTC_RE on its first line (verified 2026-09-04). Suppress any
+        # candidate that is a fragment of a longer hex run.
+        if _in_long_hex_run(text, m.start(), m.end()):
             continue
         if addr.lower().startswith("bc1") and not (14 <= len(addr) <= 90):
             continue
@@ -336,23 +402,34 @@ def extract_vpa_details(text: str) -> list[dict]:
     return details
 
 
-def extract_amount(text: str) -> Optional[float]:
-    """Context-aware amount extraction — principal transaction only.
+def detect_amount_currency(text: str, start: int, end: int) -> str:
+    """Currency of an amount match from its ±30-char window.
 
-    Collects every candidate, scores it, and blacklists promo/balance amounts.
-    Fixes the ₹200 vs ₹31,785 promo bug (withdrawal/1788262500581.jpeg):
-      - "Balance: ₹355" and "You have spent ₹31,785 less than Aug" must NOT win
-      - The large centered amount under "Payment successful" wins.
-    Ranking: label weight + payment-proximity boost - blacklist penalty.
+    Crypto tokens win over fiat glyphs ("Amount 69.5 USDT" → USDT, verified
+    2026-09-04: was stored as amount_inr and shown as ₹70). Default INR —
+    this bucket is overwhelmingly UPI rupee slips.
     """
-    if not text:
-        return None
-    # Preserve original for context windows; also normalize whitespace
-    flat = " ".join(text.split())
-    lower = flat.lower()
-    candidates: list[
-        tuple[float, int, int, str]
-    ] = []  # (value, score, start, raw_with_prefix)
+    window = text[max(0, start - 30) : end + 30]
+    mc = _CRYPTO_CCY_RE.search(window)
+    if mc:
+        tok = mc.group(1).upper()
+        return {"XBT": "BTC"}.get(tok, tok)
+    mf = _FIAT_CCY_RE.search(window)
+    if mf:
+        return "USD" if mf.group(1) == "$" else "INR"
+    return "INR"
+
+
+def _collect_amount_candidates(
+    flat: str,
+) -> list[tuple[float, int, int, int, str, str]]:
+    """Score every amount candidate in flattened text.
+
+    Returns (value, score, start, end, raw, currency) best-first. Currency is
+    detected per-match; crypto amounts use CRYPTO_MAX_AMOUNT so a "69.5 USDT"
+    principal is never killed by the INR bound.
+    """
+    candidates: list[tuple[float, int, int, int, str, str]] = []
     # Pre-compute payment keyword positions for proximity scoring
     pay_positions = [m.start() for m in _PAYMENT_CTX.finditer(flat)]
     for pi, pattern in enumerate(AMOUNT_PATTERNS):
@@ -377,11 +454,17 @@ def extract_amount(text: str) -> Optional[float]:
                 value = float(raw)
             except ValueError:
                 continue
-            if not (0 < value <= config.MAX_AMOUNT_INR):
+            s, e = m.start(), m.end()
+            ccy = detect_amount_currency(flat, s, e)
+            bound = (
+                CRYPTO_MAX_AMOUNT
+                if ccy not in ("INR", "USD")
+                else config.MAX_AMOUNT_INR
+            )
+            if not (0 < value <= bound):
                 continue
             if len(raw.split(".", 1)[0]) > 9:
                 continue
-            s, e = m.start(), m.end()
             ctx_before = flat[max(0, s - 60) : s]
             ctx_after = flat[e : e + 60]
             ctx_before_low = ctx_before.lower()
@@ -454,12 +537,44 @@ def extract_amount(text: str) -> Optional[float]:
             if m.group(0).strip().startswith("%"):
                 score -= 8
             # Prefer amounts with ₹/Rs prefix over bare numbers, but pattern already encodes that
-            candidates.append((value, score, s, m.group(0)))
-    if not candidates:
-        return None
-    # Pick highest score, break ties by earliest position (closest to payment header) then smallest
+            candidates.append((value, score, s, e, m.group(0), ccy))
+    # Best-first: highest score, ties by earliest position then smallest value
     candidates.sort(key=lambda x: (-x[1], x[2], x[0]))
-    return candidates[0][0]
+    return candidates
+
+
+def _pick_principal(
+    cands: list[tuple[float, int, int, int, str, str]],
+) -> Optional[tuple[float, str]]:
+    """Best candidate as (value, currency); None when nothing qualifies."""
+    if not cands:
+        return None
+    return (cands[0][0], cands[0][5])
+
+
+def extract_amount(text: str) -> Optional[float]:
+    """Context-aware amount extraction — principal transaction only.
+
+    Collects every candidate, scores it, and blacklists promo/balance amounts.
+    Fixes the ₹200 vs ₹31,785 promo bug (withdrawal/1788262500581.jpeg):
+      - "Balance: ₹355" and "You have spent ₹31,785 less than Aug" must NOT win
+      - The large centered amount under "Payment successful" wins.
+    Ranking: label weight + payment-proximity boost - blacklist penalty.
+    Currency-blind legacy entry point (kept for QR/UPI paths and tests);
+    prefer extract_amount_with_currency for new code.
+    """
+    if not text:
+        return None
+    picked = _pick_principal(_collect_amount_candidates(" ".join(text.split())))
+    return picked[0] if picked else None
+
+
+def extract_amount_with_currency(text: str) -> tuple[Optional[float], str]:
+    """Principal amount + currency code (INR default; USDT/BTC/ETH/TRX…)."""
+    if not text:
+        return (None, "INR")
+    picked = _pick_principal(_collect_amount_candidates(" ".join(text.split())))
+    return picked if picked else (None, "INR")
 
 
 def detect_glyph_collision(text: str) -> Optional[dict]:
@@ -826,6 +941,8 @@ def decode_qr_image(data: bytes, allow_gemini: bool = True) -> dict:
         "vpa": None,
         "payee_name": None,
         "amount_inr": None,
+        "amount_value": None,
+        "amount_currency": "INR",
     }
     try:
         import zxingcpp
@@ -872,6 +989,8 @@ def decode_qr_image(data: bytes, allow_gemini: bool = True) -> dict:
             # same plausibility rule as OCR so one bad QR can't skew totals.
             if am_value is not None and 0 < am_value <= config.MAX_AMOUNT_INR:
                 out["amount_inr"] = am_value
+                out["amount_value"] = am_value
+                out["amount_currency"] = "INR"
         wallets = extract_wallets(text)
         if wallets:
             out["wallets"] = [
@@ -1169,7 +1288,8 @@ def _gemini_extract(
     """Call Gemini Vision if a key is configured; return parsed JSON or None.
 
     mode='slip' (default): strict prompt — principal transaction amount ONLY,
-    ignore Balance / promo. Returns amount_inr, utr, vpa, names, ifsc, account.
+    ignore Balance / promo. Returns amount_value + amount_currency, utr/txid,
+    vpa, wallet_address, names, ifsc, account.
     mode='qr': the QR was unreadable by zxing — transcribe ANY machine-readable
     payment payload visible (QR URI, UPI id, wallet address) VERBATIM into
     qr_text; the caller re-parses it through the normal QR field extractors.
@@ -1201,11 +1321,15 @@ def _gemini_extract(
             )
         else:
             prompt = (
-                "You are a forensic payment-slip extractor for Indian UPI/bank screenshots. "
-                "Extract ONLY the principal transaction amount — the large centered amount under 'Payment successful' / 'Transaction Successful' (e.g. ₹200). "
+                "You are a forensic payment-slip extractor. Two receipt kinds exist: "
+                "(A) Indian UPI/bank screenshots (amounts in ₹/Rs/INR). "
+                "(B) Crypto exchange/wallet receipts (Binance/Trust Wallet: amounts in USDT/BTC/ETH/TRX, a 64-hex Txid, a wallet Address). "
+                "For kind A: extract ONLY the principal transaction amount — the large centered amount under 'Payment successful' / 'Transaction Successful' (e.g. ₹200). "
                 "IGNORE: Balance (e.g. Balance: ₹355), promo 'You have spent ₹31,785 less than Aug', sponsored products, fees, or any other secondary amount. "
-                "Return JSON only with keys: amount_inr (number or null), utr (12-digit string or null), vpa (string or null), "
-                "beneficiary_name (string or null), sender_name (string or null), ifsc (string or null), bank_account (string or null). "
+                "For kind B: extract the crypto Amount with its token (e.g. 69.5 USDT — NOT the network fee), the full 64-hex Txid, and the destination wallet Address. "
+                "Return JSON only with keys: amount_value (number or null), amount_currency (string like INR, USDT, BTC, ETH, TRX — default INR for kind A), "
+                "utr (12-digit string or null, kind A only), txid (64-hex string or null, kind B only), wallet_address (string or null, kind B only), "
+                "vpa (string or null), beneficiary_name (string or null), sender_name (string or null), ifsc (string or null), bank_account (string or null). "
                 "If unsure, use null. Do not invent. Text sample for reference: "
                 + (text_sample[:300] if text_sample else "")
             )
@@ -1294,15 +1418,47 @@ def _gemini_extract(
             if not m:
                 raise
             parsed = _json.loads(m.group(0))
-        # Sanitize amount via same bound as OCR
-        amt = parsed.get("amount_inr")
+        # Sanitize amount via same bounds as OCR (legacy amount_inr or new
+        # amount_value + amount_currency pair).
+        amt = parsed.get("amount_value", parsed.get("amount_inr"))
+        ccy = str(parsed.get("amount_currency") or "INR").upper()[:8]
+        if ccy not in (
+            "INR",
+            "USD",
+            "USDT",
+            "USDC",
+            "TUSD",
+            "DAI",
+            "BTC",
+            "XBT",
+            "ETH",
+            "TRX",
+            "BNB",
+            "MATIC",
+            "SOL",
+        ):
+            ccy = "INR"
+        if ccy == "XBT":
+            ccy = "BTC"
         try:
             amt_f = float(amt) if amt is not None else None
         except Exception:
             amt_f = None
-        if amt_f is not None and not (0 < amt_f <= config.MAX_AMOUNT_INR):
+        bound = (
+            CRYPTO_MAX_AMOUNT if ccy not in ("INR", "USD") else config.MAX_AMOUNT_INR
+        )
+        if amt_f is not None and not (0 < amt_f <= bound):
             amt_f = None
-        parsed["amount_inr"] = amt_f
+        parsed["amount_value"] = amt_f
+        parsed["amount_currency"] = ccy
+        parsed["amount_inr"] = amt_f if ccy == "INR" else None
+        # Normalise txid: exact 64-hex only (a Txid label with wrapping is
+        # joined the same way as the tesseract path).
+        txid = parsed.get("txid")
+        if txid is not None:
+            joined_tx = _TXID_WRAP_JOIN_RE.sub("", str(txid))
+            m_tx = re.search(r"\b([0-9a-fA-F]{64})\b", joined_tx)
+            parsed["txid"] = m_tx.group(1).lower() if m_tx else None
         # Normalise strings
         for k in (
             "utr",
@@ -1324,15 +1480,47 @@ def _gemini_extract(
         return {"_gemini_error": str(e)[:300]}
 
 
+def _merge_gemini_wallet(out: dict, addr: str) -> None:
+    """Append a Gemini-spotted wallet address if tesseract missed it.
+
+    Reuses extract_wallets for network classification + txid-fragment guard,
+    so a model-echoed Txid can never become a BITCOIN row either.
+    """
+    try:
+        for w in extract_wallets(str(addr)):
+            existing = {x.get("address") for x in out.get("wallets", [])}
+            if w["address"] not in existing:
+                out.setdefault("wallets", []).append(
+                    {**w, "role": "beneficiary", "role_confidence": "medium"}
+                )
+    except Exception:
+        pass
+
+
 def _merge_gemini(out: dict, g: dict) -> None:
     """Merge a successful Gemini extraction into a tesseract payload (in place)."""
-    if g.get("amount_inr") is not None:
-        if out.get("amount_inr") != g["amount_inr"]:
-            out["amount_tesseract"] = out.get("amount_inr")
-            out["amount_inr"] = g["amount_inr"]
+    if g.get("amount_value") is not None:
+        if out.get("amount_value") != g["amount_value"]:
+            out["amount_tesseract"] = out.get("amount_value")
+            out["amount_value"] = g["amount_value"]
+            out["amount_currency"] = g.get("amount_currency", "INR")
+            out["amount_inr"] = (
+                g["amount_value"] if out["amount_currency"] == "INR" else None
+            )
             out["engine"] = "tesseract+gemini"
         else:
             out["engine"] = "tesseract+gemini"
+    elif g.get("amount_inr") is not None and out.get("amount_value") is None:
+        # Legacy-shaped model reply (prompt asked for amount_inr).
+        out["amount_tesseract"] = None
+        out["amount_value"] = g["amount_inr"]
+        out["amount_currency"] = "INR"
+        out["amount_inr"] = g["amount_inr"]
+        out["engine"] = "tesseract+gemini"
+    if g.get("txid") and not out.get("txids"):
+        out["txids"] = [g["txid"]]
+    if g.get("wallet_address"):
+        _merge_gemini_wallet(out, g["wallet_address"])
     for k in ("utr", "vpa", "beneficiary_name", "sender_name", "ifsc"):
         if not out.get(k) and g.get(k):
             out[k] = g[k]
@@ -1457,9 +1645,11 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
                 w, h = img.size
             except Exception:
                 pass
-        # Always upscale small phone screenshots; phone slips are ~1080×2400 but
-        # thumbnailed GCS variants can be <800px. 2× LANCZOS preserves ₹ glyph.
-        if max(w, h) < 1600:
+        # Slips read fine at native phone resolution (~1080px): cap the long
+        # side at 2000px and upscale only tiny thumbnails (<1000px). The old
+        # always-2x upscale turned a 1080×2400 slip into 10MP (~2-3x tesseract
+        # CPU for no accuracy gain on 12-digit UTRs/VPAs).
+        if max(w, h) < 1000:
             try:
                 resample = getattr(Image, "LANCZOS", None) or getattr(
                     Image.Resampling, "LANCZOS", 1
@@ -1516,8 +1706,15 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
         wallets = extract_wallets(text)
         if wallets:
             out["wallets"] = wallets
-        tesseract_amount = extract_amount(text)
-        out["amount_inr"] = tesseract_amount
+        tesseract_amount, tesseract_ccy = extract_amount_with_currency(text)
+        out["amount_value"] = tesseract_amount
+        out["amount_currency"] = tesseract_ccy
+        # amount_inr feeds ₹ totals — set ONLY when the principal really is
+        # rupees, so a "69.5 USDT" crypto receipt never pollutes INR sums.
+        out["amount_inr"] = tesseract_amount if tesseract_ccy == "INR" else None
+        txids = extract_txids(text)
+        if txids:
+            out["txids"] = txids
         # Audit: keep ignored promo/balance candidates for dashboard transparency
         try:
             cands = extract_amount_candidates(text)
@@ -1601,6 +1798,7 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
         if collision:
             out["glyph_collision"] = collision
             tesseract_amount = None
+            out["amount_value"] = None
             out["amount_inr"] = None
         # Twin-misread (verified 2026-09-03: both ₹1,000 copies read as
         # '71,000', Debited row correct '1,000'): identical 5-digit repeats
@@ -1609,13 +1807,16 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
         # must equal paid) is the true amount. Applied locally so the fix
         # works even with Gemini quota-dead; Vision re-adjudicates when live.
         try:
-            twin = detect_twin_artifact(text, out.get("amount_inr"))
+            twin = detect_twin_artifact(text, out.get("amount_value"))
         except Exception:
             twin = None
         if twin:
             out["twin_artifact"] = twin
-            out["amount_tesseract_raw"] = out.get("amount_inr")
-            out["amount_inr"] = twin["true_amount"]
+            out["amount_tesseract_raw"] = out.get("amount_value")
+            out["amount_value"] = twin["true_amount"]
+            out["amount_inr"] = (
+                twin["true_amount"] if out.get("amount_currency") == "INR" else None
+            )
         use_gemini = False
         if config.GEMINI_ENABLED:
             has_rejected = bool(out.get("amount_ignored"))
@@ -1646,10 +1847,11 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
                     out["_gemini_error"] = g["_gemini_error"]
 
         if (
-            out["amount_inr"] is None
+            out.get("amount_value") is None
             and out["utr"] is None
             and out["vpa"] is None
             and not wallets
+            and not out.get("txids")
         ):
             out["confidence"] = "low"
         else:
@@ -1670,11 +1872,9 @@ def gemini_ocr_slip(data: bytes) -> dict:
     # spends when any quota remains (free-tier 20/day/model, 2026-09-03).
     if config.GEMINI_ENABLED and base.get("engine") == "tesseract":
         g = _gemini_extract(data, base.get("text_sample") or "", manual=True)
-        if g and not g.get("_gemini_error") and g.get("amount_inr") is not None:
-            base["amount_tesseract"] = base.get("amount_inr")
-            base["amount_inr"] = g["amount_inr"]
+        if g and not g.get("_gemini_error") and g.get("amount_value") is not None:
+            _merge_gemini(base, g)
             base["engine"] = "gemini"
-            base["_gemini"] = g
             base["confidence"] = "high"
         elif g and g.get("_gemini_error"):
             base["_gemini_error"] = g["_gemini_error"]
@@ -1722,7 +1922,17 @@ def _extract_payload_from_bytes(
         data, allow_gemini=allow_gemini
     )  # slips often embed payment QR too
     if q.get("amount_inr") is not None or q.get("vpa"):
-        payload.update({k: v for k, v in q.items() if v and not payload.get(k)})
+        for k, v in q.items():
+            if not v or payload.get(k):
+                continue
+            if (
+                k in ("amount_inr", "amount_value", "amount_currency")
+                and payload.get("amount_value") is not None
+            ):
+                # Never let an embedded-QR rupee amount overwrite an OCR
+                # crypto principal (e.g. USDT receipt with a UPI QR sticker).
+                continue
+            payload[k] = v
     if q.get("vpas"):
         payload["vpas"] = list(dict.fromkeys((payload.get("vpas") or []) + q["vpas"]))
         payload["vpa"] = payload.get("vpa") or payload["vpas"][0]
@@ -1770,6 +1980,10 @@ class EnrichmentWorker:
         self.on_result = on_result
         self.enabled = True
         self._drain_lock = threading.Lock()
+        # Specific (wallet/slip) drains run on their own lock so a minutes-long
+        # full-scan batch never blocks the 2s live pending drain. They share
+        # _cpu_pool (thread-safe) with halved workers (see callers).
+        self._specific_lock = threading.Lock()
         self._cpu_pool = None
 
     def _persist_payload(self, key: str, payload: Optional[dict]):
@@ -1827,20 +2041,20 @@ class EnrichmentWorker:
             self._drain_lock.release()
 
     def drain_specific(self, keys: list, workers: int = 1):
-        """Wallet-priority drain over caller-picked keys (wallet_loop).
+        """Wallet/slip-priority drain over caller-picked keys.
 
-        Same lock/pool/verify/persist body as drain_pending — the two drains
-        alternate on _drain_lock and share _cpu_pool.
+        Own lock (never blocks the live pending drain); shares _cpu_pool.
+        Callers pass halved workers so concurrent drains fit the core count.
         """
         if not keys:
             return
-        if not self._drain_lock.acquire(blocking=False):
+        if not self._specific_lock.acquire(blocking=False):
             _note_lock_skip("specific")
             return
         try:
             self._drain_keys(list(keys), workers, False, "specific")
         finally:
-            self._drain_lock.release()
+            self._specific_lock.release()
 
     def _drain_keys(
         self, keys: list, workers: int, full_scan: bool, source: str = "pending"

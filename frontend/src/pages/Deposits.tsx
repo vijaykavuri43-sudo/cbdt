@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, eventsUrl, objectUrl } from '../lib/api'
+import { api, eventsUrl, objectUrl, tabHidden } from '../lib/api'
 import { fmtINR, fmtTime, shortKey } from '../lib/format'
 
 type Direction = 'deposit' | 'withdrawal'
 type RailType = '' | 'upi' | 'bank_account' | 'crypto_wallet' | 'unknown'
+type SourceFilter = '' | 'object' | 'reference'
 
 interface FlowRow { source_key: string; direction: Direction; gambler: string; amount_inr?: number | null; utr: string; rail_type: string; rail_id: string; account_holder: string; ifsc: string; network: string; confidence: string; rail_role: string; role_confidence: string; last_modified: string; has_object: boolean }
 interface TopRail { rail_type: string; rail_id: string; account_holder: string; ifsc: string; network: string; transactions: number; amount_inr: number; gamblers: number }
@@ -16,6 +17,7 @@ const railLabels: Record<string, string> = { '': 'All rails', upi: 'UPI IDs', ba
 export function Deposits() {
   const [direction, setDirection] = useState<Direction>('deposit')
   const [railType, setRailType] = useState<RailType>('')
+  const [source, setSource] = useState<SourceFilter>('')
   const [query, setQuery] = useState('')
   const [queryInput, setQueryInput] = useState('')
   const [data, setData] = useState<FlowResp | null>(null)
@@ -29,17 +31,17 @@ export function Deposits() {
   const refresh = useCallback(() => {
     setError('')
     Promise.all([
-      api<FlowResp>('/api/money-flows', { direction, rail_type: railType, q: query, limit, offset: page * limit }),
-      api<MuleResp>('/api/mule-rails', { rail_type: railType === 'unknown' ? '' : railType, q: query, limit: 200, offset: 0 }),
+      api<FlowResp>('/api/money-flows', { direction, rail_type: railType, q: query, limit, offset: page * limit, ...(source ? { source } : {}) }),
+      api<MuleResp>('/api/mule-rails', { rail_type: railType === 'unknown' ? '' : railType, q: query, limit: 200, offset: 0, ...(source ? { source } : {}) }),
     ])
       .then(([flows, muleRails]) => { setData(flows); setMules(muleRails); setUpdated(new Date().toLocaleTimeString()) })
       .catch((e) => setError(String(e)))
-  }, [direction, railType, query, page])
+  }, [direction, railType, source, query, page])
   useEffect(refresh, [refresh])
   // Fresh OCR/QR extraction lands continuously — re-pull every 12s + instantly on SSE push
   useEffect(() => {
     if (!auto) return
-    const t = setInterval(refresh, 12000)
+    const t = setInterval(() => { if (!tabHidden()) refresh() }, 12000)
     return () => clearInterval(t)
   }, [auto, refresh])
   useEffect(() => {
@@ -66,6 +68,7 @@ export function Deposits() {
 
   function setMode(next: Direction) { setDirection(next); setPage(0); setData(null) }
   function setRail(next: RailType) { setRailType(next); setPage(0); setData(null) }
+  function setSourceFilter(next: SourceFilter) { setSource(next); setPage(0); setData(null) }
   function exportTsv() {
     const header = ['Time (UTC)', 'Direction', 'Gambler', 'Amount INR', 'UTR', 'Rail type', 'UPI / account / wallet', 'Holder', 'IFSC / network', 'Confidence', 'Evidence key'].join('\t') + '\n'
     const rows = exportRows.map((r) => [r.last_modified, r.direction, r.gambler, r.amount_inr ?? '', r.utr, r.rail_type, r.rail_id, r.account_holder, r.ifsc || r.network, r.confidence, r.source_key].join('\t')).join('\n')
@@ -97,6 +100,7 @@ export function Deposits() {
     </div>
 
     <div className="money-rail-tabs">{(Object.keys(railLabels) as RailType[]).map((r) => <button key={r || 'all'} className={`ex-toggle ${railType === r ? 'ex-toggle-on' : ''}`} onClick={() => setRail(r)}>{railLabels[r]}</button>)}</div>
+    <div className="money-rail-tabs" title="Live bucket evidence vs 5-day reference join"><button className={`ex-toggle ${source === '' ? 'ex-toggle-on' : ''}`} onClick={() => setSourceFilter('')}>All sources</button><button className={`ex-toggle ${source === 'object' ? 'ex-toggle-on' : ''}`} onClick={() => setSourceFilter('object')}>◉ Live evidence</button><button className={`ex-toggle ${source === 'reference' ? 'ex-toggle-on' : ''}`} onClick={() => setSourceFilter('reference')}>5-day reference</button></div>
     <div className="st-cards money-cards">
       <div className="st-card st-card-accent"><div className="st-card-label">Transactions</div><div className="st-card-value accent">{(data?.transactions ?? 0).toLocaleString()}</div></div>
       <div className="st-card st-card-money"><div className="st-card-label">Amount linked</div><div className="st-card-value money">{fmtINR(data?.sum_amount_inr)}</div></div>
