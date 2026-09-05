@@ -2008,9 +2008,10 @@ class EnrichmentWorker:
         self._specific_lock = threading.Lock()
         self._cpu_pool = None
 
-    def _persist_payload(self, key: str, payload: Optional[dict]):
+    def _prepare_payload(self, key: str, payload: Optional[dict]):
+        """Mule/wallet flag enrichment (pure: mutates payload, no IO)."""
         if payload is None:
-            return
+            return payload
         if payload.get("vpa"):
             v = payload["vpa"]
             payload["known_mule"] = v.lower() in self.master_vpas
@@ -2023,6 +2024,12 @@ class EnrichmentWorker:
             payload["has_new_wallet"] = any(
                 w.get("new_operator") for w in payload["wallets"]
             )
+        return payload
+
+    def _persist_payload(self, key: str, payload: Optional[dict]):
+        if payload is None:
+            return
+        self._prepare_payload(key, payload)
         db.mark_enriched(key, payload)
         if self.on_result:
             self.on_result({"type": "enriched", "key": key, "payload": payload})
@@ -2182,13 +2189,37 @@ class EnrichmentWorker:
                 pass
             t_per = _t.monotonic()
             done = errs = 0
+            ok = []
             for key, payload, error in results:
                 if error:
                     db.mark_enrichment_error(key, error)
                     errs += 1
                 else:
-                    self._persist_payload(key, payload)
-                    done += 1
+                    ok.append((key, self._prepare_payload(key, payload)))
+            # One commit per drain: per-key commits made persist take
+            # 167-280s live (2026-09-05). Falls back to per-key on any error.
+            try:
+                done = db.persist_enriched_batch(ok)
+                if self.on_result:
+                    for key, payload in ok:
+                        try:
+                            self.on_result(
+                                {
+                                    "type": "enriched",
+                                    "key": key,
+                                    "payload": payload,
+                                }
+                            )
+                        except Exception:
+                            pass
+            except Exception:
+                done = 0
+                for key, payload in ok:
+                    try:
+                        self._persist_payload(key, payload)
+                        done += 1
+                    except Exception:
+                        errs += 1
             persist_ms = int((_t.monotonic() - t_per) * 1000)
             # Keep the WAL small: a 4.2GB uncheckpointed WAL made this phase
             # take 60-76s live (2026-09-05). PASSIVE never blocks readers.

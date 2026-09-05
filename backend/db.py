@@ -748,6 +748,46 @@ def mark_enriched(key: str, payload: dict | None):
         c.commit()
 
 
+def persist_enriched_batch(items: list[tuple[str, dict | None]]) -> int:
+    """Persist a whole drain's payloads in ONE transaction (2026-09-05).
+
+    Live measurement on the 8-vCPU burn: per-key mark_enriched commits made
+    the persist phase take 167-280s per ~100-row drain (lock convoy +
+    per-commit fsync on balanced PD). One commit per drain cuts that to ~s.
+    Same writes as mark_enriched, minus the per-row commit. Returns rows done.
+    """
+    if not items:
+        return 0
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    done = 0
+    with _writer_lock:
+        c = connect()
+        for key, payload in items:
+            if payload and payload.get("amount_inr") is not None:
+                raw = payload.get("amount_inr")
+                clean = _sanitize_amount(raw)
+                if clean is None:
+                    payload["amount_rejected_inr"] = raw
+                    payload["amount_inr"] = None
+                else:
+                    payload["amount_inr"] = clean
+                    payload.pop("amount_rejected_inr", None)
+            c.execute(
+                "UPDATE objects SET enriched=1,extract_json=?,enrich_error=NULL,"
+                "enrich_retry_utc=NULL,enriched_utc=? WHERE key=?",
+                (
+                    json.dumps(payload, ensure_ascii=False) if payload else None,
+                    now,
+                    key,
+                ),
+            )
+            if payload:
+                _replace_payment_rows(c, key, payload)
+            done += 1
+        c.commit()
+    return done
+
+
 def mark_enrichment_error(key: str, error: str):
     """Retry transient fetch failures with bounded exponential backoff."""
     with _writer_lock:
