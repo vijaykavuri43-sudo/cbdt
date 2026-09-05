@@ -297,12 +297,33 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
     // Client page cache (60s): Back / re-click / Next-then-Prev answers instantly
   // without re-querying; server totals are cached 300s so this stays coherent.
   const ck = `${prefix}|${order}|${limit}|${page}|${debouncedQ}|${ext}|${since}|${flat ? 1 : ''}`
+  // Folder tree is independent of the file-list page cache: a cache-hit
+  // revisit must still (re)load the sidebar that resetFolderView cleared
+  // (2026-09-05: Up-to-root showed files but an empty sidebar on cache hit).
+  const fetchTree = () => {
+    if (source !== 'manifest' || debouncedQ || flat) return
+    if (treePrefixRef.current === prefix) return
+    // Mark attempted up-front: page turns must not hammer a failing tree;
+    // folder change or the Retry button resets the ref to force refetch.
+    treePrefixRef.current = prefix
+    api<any>('/api/tree', { prefix }).then((t) => {
+      if (rid !== reqIdRef.current) return
+      setDirs(t.dirs ?? [])
+      setDirsPrefix(t.prefix || prefix)
+    }).catch((e) => {
+      // Folder-list failure is sidebar-local: it must never blank the file
+      // grid's error state or masquerade as "no subfolders" (2026-09-05).
+      console.error('[Explorer] tree failed:', e)
+      if (rid === reqIdRef.current && !(e instanceof AuthError)) setTreeErr(String(e?.message || e))
+    })
+  }
   const cached = pageCache.current.get(ck)
   if (cached && Date.now() - cached.at < 60000) {
     setData(cached.data)
     window.clearTimeout(loadTimer)
     setLoading(false); setInitialLoad(false)
     prefetchNext(ck, cached.data)
+    fetchTree()
     return
   }
   api<any>('/api/list', { prefix, q: debouncedQ, order, limit, offset: page * limit, ext, since, flat: flat ? 1 : '' })
@@ -319,23 +340,10 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
         onListError(e)
       })
       .finally(() => { if (rid === reqIdRef.current) { window.clearTimeout(loadTimer); setLoading(false); setInitialLoad(false) } })
-    if (source === 'manifest' && !debouncedQ && !flat && treePrefixRef.current !== prefix) {
-      // Mark attempted up-front: page turns must not hammer a failing tree;
-      // folder change or the Retry button resets the ref to force refetch.
-      treePrefixRef.current = prefix
-      api<any>('/api/tree', { prefix }).then((t) => {
-        if (rid !== reqIdRef.current) return
-        setDirs(t.dirs ?? [])
-        setDirsPrefix(t.prefix || prefix)
-      }).catch((e) => {
-        // Folder-list failure is sidebar-local: it must never blank the file
-        // grid's error state or masquerade as "no subfolders" (2026-09-05).
-        console.error('[Explorer] tree failed:', e)
-        if (rid === reqIdRef.current && !(e instanceof AuthError)) setTreeErr(String(e?.message || e))
-      })
-    } else if (source !== 'manifest' || debouncedQ || flat) {
-      // Searching / recursing / live mode hides (not clears) the folder
-      // sidebar cards via render guards; keep dirs so un-searching is instant.
+    fetchTree()
+    if (source === 'manifest' && (debouncedQ || flat)) {
+      // Searching / recursing hides (not clears) the folder sidebar cards
+      // via render guards; dirs stay so un-searching is instant.
     }
   }, [source, prefix, debouncedQ, order, limit, page, ext, since, flat, liveCursor])
 
