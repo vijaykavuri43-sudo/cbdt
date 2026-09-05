@@ -17,7 +17,16 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
   const [geminiEnabled, setGeminiEnabled] = useState<boolean | null>(null)
   const [zoom, setZoom] = useState(1)
   const [copied, setCopied] = useState('')
+  // Full-size media can 404 while the object is still landing in the mirror
+  // (thumb cached earlier) — never show a bare broken-image icon.
+  const [imgErr, setImgErr] = useState(false)
+  const [imgRetry, setImgRetry] = useState(0)
+  const [mediaErr, setMediaErr] = useState(false)
   const kind = kindOf(obj.key)
+
+  useEffect(() => {
+    setImgErr(false); setImgRetry(0); setMediaErr(false); setZoom(1)
+  }, [obj.key])
 
   useEffect(() => {
     api<any>('/api/status').then((s) => setGeminiEnabled(!!s.gemini_enabled)).catch(()=>{})
@@ -190,22 +199,55 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
                 <SheetViewer obj={obj} />
               </div>
             ) : kind === 'image' ? (
-              <img
-                src={objectUrl(obj.key)}
-                alt={obj.key}
-                style={{
-                  maxWidth: '100%',
-                  maxHeight: zoom === 1 ? '68vh' : undefined,
-                  transform: `scale(${zoom})`,
-                  transformOrigin: 'center top',
-                  display: 'block',
-                  transition: 'transform .14s',
-                }}
-              />
+              imgErr ? (
+                <div style={{ textAlign: 'center', padding: '48px 24px', maxWidth: 420 }}>
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>🖼️</div>
+                  <div className="small" style={{ marginBottom: 4 }}>Couldn't load the full image</div>
+                  <div className="tiny dim" style={{ marginBottom: 16, lineHeight: 1.6 }}>
+                    The file may still be landing in the evidence mirror (listings and thumbnails can appear first). Retry, or Download — downloads are sha256-verified.
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                    <button className="btn" onClick={() => { setImgErr(false); setImgRetry((r) => r + 1) }}>
+                      ↻ Retry
+                    </button>
+                    <a className="btn btn-primary" href={objectUrl(obj.key, true)} download>
+                      Download
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <img
+                  src={objectUrl(obj.key) + (imgRetry ? `&_r=${imgRetry}` : '')}
+                  alt={obj.key}
+                  onError={() => setImgErr(true)}
+                  style={{
+                    maxWidth: '100%',
+                    maxHeight: zoom === 1 ? '68vh' : undefined,
+                    transform: `scale(${zoom})`,
+                    transformOrigin: 'center top',
+                    display: 'block',
+                    transition: 'transform .14s',
+                  }}
+                />
+              )
             ) : kind === 'audio' ? (
-              <audio controls autoPlay src={objectUrl(obj.key)} style={{ width: '100%' }} />
+              mediaErr ? (
+                <div style={{ textAlign: 'center', padding: '32px 16px', width: '100%' }}>
+                  <div className="small" style={{ marginBottom: 12 }}>browser can't preview this clip</div>
+                  <a className="btn btn-primary" href={objectUrl(obj.key, true)} download>⛨ Download</a>
+                </div>
+              ) : (
+                <audio controls autoPlay src={objectUrl(obj.key)} style={{ width: '100%' }} onError={() => setMediaErr(true)} />
+              )
             ) : kind === 'video' ? (
-              <video controls src={objectUrl(obj.key)} style={{ maxWidth: '100%', maxHeight: '68vh' }} />
+              mediaErr ? (
+                <div style={{ textAlign: 'center', padding: '32px 16px', width: '100%' }}>
+                  <div className="small" style={{ marginBottom: 12 }}>browser can't preview this video</div>
+                  <a className="btn btn-primary" href={objectUrl(obj.key, true)} download>⛨ Download</a>
+                </div>
+              ) : (
+                <video controls src={objectUrl(obj.key)} style={{ maxWidth: '100%', maxHeight: '68vh' }} onError={() => setMediaErr(true)} />
+              )
             ) : kind === 'text' ? (
               <pre className="preview-text" style={{ width: '100%' }}>
                 {text}

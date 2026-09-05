@@ -182,6 +182,7 @@ function prefixBadge(prefix: string) {
 }
 
 function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen: () => void }) {
+  const [imgErr, setImgErr] = useState(false)
   const kind = kindOf(evt.key)
   const icon = fileIcon(evt.key)
   const color = fileColor(evt.key)
@@ -194,8 +195,13 @@ function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen
 
   return (
     <div className={`lf-card ${flash ? 'flash' : ''}`}>
-      {kind === 'image' && (
-        <img className="lf-thumb" src={objectUrl(evt.key, false, 320)} loading="lazy" onClick={onOpen} alt="" />
+      {kind === 'image' && !imgErr && (
+        <img className="lf-thumb" src={objectUrl(evt.key, false, 320)} loading="lazy" onClick={onOpen} alt="" onError={() => setImgErr(true)} />
+      )}
+      {kind === 'image' && imgErr && (
+        <div style={{ padding: '20px 0', textAlign: 'center', background: `${color}08` }} className="tiny dim" onClick={onOpen} title="Open preview">
+          🖼️ preview unavailable — click to retry
+        </div>
       )}
       {kind === 'audio' && (
         <div className="lf-audio-wrap">

@@ -21,6 +21,15 @@ GOOD_WEBM = bytes.fromhex(
 ) + bytes(4000)
 GARBAGE = b"\x00\x01\x02\x03not-a-real-media-file" * 200
 WAV_KEY = "chat_file/spcbtfvip_hanumanjii_1788577293122.wav"
+GOOD_PNG = bytes.fromhex("89504e470d0a1a0a") + bytes(5000)
+PNG_KEY = "chat_file/hanumanjii_1_Account_Summary_Report_1.png"
+
+
+class _FakeGCSMissing:
+    """Pretends the GCS mirror copy hasn't landed yet (mirror lag)."""
+
+    def get_object_stream(self, key, chunk_size=65536):
+        raise RuntimeError(f"GetObject {key} -> not found in GCS mirror")
 
 
 def _req():
@@ -56,6 +65,10 @@ class _FakeGCS:
 
 
 def _body_of(resp):
+    if not hasattr(resp, "body_iterator"):
+        # FileResponse (cache-write path): read the served file
+        return Path(resp.path).read_bytes()
+
     async def _collect():
         return b"".join([c async for c in resp.body_iterator])
 
@@ -165,6 +178,38 @@ class RepairRouteTests(unittest.TestCase):
         self.assertEqual(resp.media_type, "application/octet-stream")
         self.assertIn("attachment", resp.headers.get("Content-Disposition", ""))
         self.assertEqual(_body_of(resp), GOOD_WEBM)
+
+    def test_mirror_miss_served_from_s3(self):
+        app.object_store = _FakeGCSMissing()
+        app._fetch_repair_bytes = lambda key: (GOOD_PNG, "")  # noqa: E731
+        resp = app.get_object(PNG_KEY, _req(), download=0, thumb=0, _=None)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.media_type, "image/png")
+        self.assertEqual(resp.headers.get("X-Object-Source"), "s3-repair")
+        self.assertEqual(_body_of(resp), GOOD_PNG)
+        # repaired bytes are cached: repeat is a disk HIT, still marked
+        resp2 = app.get_object(PNG_KEY, _req(), download=0, thumb=0, _=None)
+        self.assertEqual(resp2.headers.get("X-Cache-Status"), "HIT-disk")
+        self.assertEqual(resp2.media_type, "image/png")
+
+    def test_mirror_miss_download_served_from_s3(self):
+        app.object_store = _FakeGCSMissing()
+        app._fetch_repair_bytes = lambda key: (GOOD_PNG, "")  # noqa: E731
+        resp = app.get_object(PNG_KEY, _req(), download=1, thumb=0, _=None)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.media_type, "application/octet-stream")
+        self.assertIn("attachment", resp.headers.get("Content-Disposition", ""))
+        self.assertEqual(resp.headers.get("X-Object-Source"), "s3-repair")
+        self.assertEqual(_body_of(resp), GOOD_PNG)
+
+    def test_mirror_and_s3_miss_stays_404(self):
+        from fastapi import HTTPException
+
+        app.object_store = _FakeGCSMissing()
+        app._fetch_repair_bytes = lambda key: (None, "s3 404")  # noqa: E731
+        with self.assertRaises(HTTPException) as ctx:
+            app.get_object(PNG_KEY, _req(), download=0, thumb=0, _=None)
+        self.assertEqual(ctx.exception.status_code, 404)
 
 
 if __name__ == "__main__":

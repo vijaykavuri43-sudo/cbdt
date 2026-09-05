@@ -960,19 +960,24 @@ def _ram_put(cetag: str, media: str, body: bytes):
         _ram_cache_bytes -= len(b)
 
 
-def _serve_cached(path, media, filename, etag, download, cache_status="HIT-disk"):
+def _serve_cached(
+    path, media, filename, etag, download, cache_status="HIT-disk", extra=None
+):
     disp = f'{"attachment" if download else "inline"}; filename="{filename}"'
+    headers = {
+        "Content-Disposition": disp,
+        "Cache-Control": "private, max-age=3600",
+        "ETag": f'"{etag}"',
+        "X-Cache-Status": cache_status,
+        "X-Content-Type-Options": "nosniff",
+    }
+    if extra:
+        headers.update(extra)
     return FileResponse(
         str(path),
         media_type=media,
         filename=filename,
-        headers={
-            "Content-Disposition": disp,
-            "Cache-Control": "private, max-age=3600",
-            "ETag": f'"{etag}"',
-            "X-Cache-Status": cache_status,
-            "X-Content-Type-Options": "nosniff",
-        },
+        headers=headers,
     )
 
 
@@ -1217,10 +1222,47 @@ def get_object(
             except Exception:
                 pass
         _objcache_miss += 1
+    mirror_src: dict = {}
     try:
         resp, headers = object_store.get_object_stream(key)
     except RuntimeError as e:
-        raise HTTPException(404, str(e))
+        # Mirror-lag fallback (chat PNG broken-preview, 2026-09-05): a key can
+        # be listed (manifest/live) before the GCS mirror copy lands, so the
+        # primary fetch 404s while public S3 already serves the bytes. Try S3
+        # before 404ing so new uploads preview instead of broken-img.
+        if _actual_source() == "gcs":
+            alt, alt_err = _fetch_repair_bytes(key)
+            if alt is not None and not verify_object_bytes(
+                key, alt, "", manifest_size or len(alt)
+            ):
+                print(f"[object] {key}: GCS mirror miss; serving ({len(alt)}B) from S3")
+
+                class _BufStream:
+                    def __init__(self, payload):
+                        self._p = payload
+
+                    def iter_bytes(self, _chunk=65536):
+                        yield self._p
+
+                    def close(self):
+                        pass
+
+                resp = _BufStream(alt)
+                headers = {
+                    "content_length": str(len(alt)),
+                    "sha256": hashlib.sha256(alt).hexdigest(),
+                    "content_type": mimetypes.guess_type(key)[0] or "",
+                }
+                mirror_src = {"X-Object-Source": "s3-repair"}
+            else:
+                raise HTTPException(
+                    404,
+                    f"{e} (S3 fallback "
+                    f"{'failed: ' + alt_err if alt is None else 'also failed verify'}"
+                    " — new uploads can lag the mirror; retry shortly)",
+                )
+        else:
+            raise HTTPException(404, str(e))
     mt = (
         mimetypes.guess_type(key)[0]
         or headers.get("content_type")
@@ -1326,6 +1368,7 @@ def get_object(
                     cache_etag,
                     download,
                     cache_status="MISS",
+                    extra=mirror_src or None,
                 )
             except OSError:
                 pass
@@ -1336,6 +1379,7 @@ def get_object(
             "ETag": f'"{cache_etag}"',
             "X-Cache-Status": "MISS",
             "X-Content-Type-Options": "nosniff",
+            **mirror_src,
         }
         if integrity_reason:
             _mem_headers["X-Object-Integrity"] = integrity_reason
@@ -1352,6 +1396,7 @@ def get_object(
             "Cache-Control": "private, max-age=300",
             "X-Cache-Status": "BYPASS-download",
             "X-Content-Type-Options": "nosniff",
+            **mirror_src,
         }
         if integrity_reason:
             _dl_headers["X-Object-Integrity"] = integrity_reason
@@ -1370,6 +1415,7 @@ def get_object(
                 "Cache-Control": "private, max-age=300",
                 "X-Cache-Status": "BYPASS-too-big",
                 "X-Content-Type-Options": "nosniff",
+                **mirror_src,
             },
         )
     return StreamingResponse(
@@ -1380,6 +1426,7 @@ def get_object(
             "Cache-Control": "private, max-age=300",
             "X-Cache-Status": "BYPASS-stream",
             "X-Content-Type-Options": "nosniff",
+            **mirror_src,
         },
     )
 

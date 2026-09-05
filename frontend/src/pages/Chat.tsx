@@ -56,6 +56,9 @@ export function Chat() {
   // Keys whose <audio> element fired onError (codec the browser can't decode,
   // e.g. AMR, or a stale-cache wrong content-type) -> render download fallback.
   const [audioErr, setAudioErr] = useState<Record<string, boolean>>({})
+  // Keys whose thumbnail failed to load (object still landing in the mirror,
+  // deleted upstream, etc.) -> show an explicit note instead of broken-img.
+  const [imgErr, setImgErr] = useState<Record<string, boolean>>({})
   const limit = 50
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -170,7 +173,14 @@ export function Chat() {
                   )}
                   <div style={{ marginTop: sameSender ? 0 : 6 }}>
                     {isImg ? (
-                      <img className="ch-img" src={objectUrl(o.key, false, 320)} alt="" loading="lazy" onClick={() => setPreview(o)} />
+                      imgErr[o.key] ? (
+                        <div className="tiny dim" style={{ padding: '10px 0', cursor: 'pointer' }} onClick={() => setPreview(o)} title="Open preview (Retry inside if the mirror has caught up)">
+                          🖼️ preview unavailable — click to retry / download
+                        </div>
+                      ) : (
+                        <img className="ch-img" src={objectUrl(o.key, false, 320)} alt="" loading="lazy" onClick={() => setPreview(o)}
+                          onError={() => setImgErr((m) => (m[o.key] ? m : { ...m, [o.key]: true }))} />
+                      )
                     ) : isVoice ? (
                       audioErr[o.key] ? (
                         <div className="ch-audio-wrap ch-audio-err">
