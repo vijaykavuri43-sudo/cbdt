@@ -388,7 +388,10 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   // Back-navigation instant, so clearing here costs nothing.
   function resetFolderView() {
     setDirs([]); setDirsPrefix('')
-    treePrefixRef.current = ''
+    // Sentinel, never a real prefix (root itself is ''): guarantees the next
+    // refresh refetches the folder tree — 2026-09-05: resetting to '' skipped
+    // the root tree, leaving "No subfolders here" at bucket root.
+    treePrefixRef.current = '@@none@@'
     setData({ total: 0, items: [] })
     setLiveItems([])
     setNextCursor(null)
@@ -485,7 +488,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
           onNavigate={(seg) => { openDir(seg); setQ(''); setExt(''); setSinceDays(''); setFlat(false) }}
           loading={loading}
           error={treeErr}
-          onRetry={() => { treePrefixRef.current = ''; refresh() }}
+          onRetry={() => { treePrefixRef.current = '@@none@@'; refresh() }}
         />
       )}
 
