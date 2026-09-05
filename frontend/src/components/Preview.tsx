@@ -330,8 +330,3 @@ export function useObjUpdated(refresh: () => void) {
     return () => window.removeEventListener('obj-updated', h)
   }, [refresh])
 }
-
-export async function ensureRow(row: any): Promise<ObjRow> {
-  if ('extract' in row) return row as ObjRow
-  return api<ObjRow>(`/api/list`, {}).then(() => row as ObjRow)
-}

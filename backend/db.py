@@ -539,7 +539,7 @@ def _prefix_stats_live() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def subfolders(prefix: str) -> list[dict]:
+def subfolders(prefix: str) -> dict:
     """Immediate child 'folders' of a prefix with counts+bytes."""
     now = time.monotonic()
     hit = _tree_cache.get(prefix)
