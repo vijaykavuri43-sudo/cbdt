@@ -1025,6 +1025,92 @@ def _sniff_media(head: bytes) -> str | None:
     return None
 
 
+# Extensions whose bytes MUST match a known magic to be servable. A media file
+# that sniffs to None is not an exotic codec — it is corrupt/truncated mirror
+# bytes (chat voice-note 0:00, 2026-09-05: valid Opus/WebM on the S3 source,
+# unplayable bytes served from the GCS-mirror/cache path).
+_VERIFY_MEDIA_EXTS = frozenset(
+    set(config.AUDIO_EXTS)
+    | set(config.IMAGE_EXTS)
+    | {
+        ".mp4",
+        ".m4v",
+        ".mov",
+        ".3gp",
+        ".3g2",
+        ".avi",
+        ".mkv",
+        ".m4a",
+        ".oga",
+        ".opus",
+        ".flac",
+        ".webm",
+    }
+)
+
+
+def _ext_of_key(key: str) -> str:
+    base = (key or "").rsplit("/", 1)[-1]
+    return ("." + base.rsplit(".", 1)[-1].lower()) if "." in base else ""
+
+
+def verify_object_bytes(
+    key: str, data: bytes, sha256_hex: str = "", expected_size: int = 0
+) -> str:
+    """Integrity gate for bytes fetched from the object store.
+
+    Returns "" when the bytes look trustworthy, else a short reason:
+    "empty" | "hash-mismatch" | "size-mismatch" | "magic-mismatch".
+    Only runs checks for which evidence is available (no sha metadata ->
+    no hash check; non-media extensions -> no magic check).
+    """
+    if not data:
+        return "empty"
+    if sha256_hex:
+        try:
+            if hashlib.sha256(data).hexdigest() != sha256_hex.strip().lower():
+                return "hash-mismatch"
+        except Exception:
+            pass
+    if expected_size and len(data) != expected_size:
+        return "size-mismatch"
+    if _ext_of_key(key) in _VERIFY_MEDIA_EXTS and _sniff_media(data[:32]) is None:
+        return "magic-mismatch"
+    return ""
+
+
+_s3_repair_client = None
+
+
+def _s3_repair_store():
+    """Public-S3 client used ONLY to repair corrupt GCS-mirror bytes (2026-09-05).
+
+    The evidence bucket is publicly readable; the GCS mirror stays primary.
+    Read-only GETs, rate-limited like the main S3 client.
+    """
+    global _s3_repair_client
+    if _s3_repair_client is None:
+        _s3_repair_client = S3PublicClient(
+            config.BUCKET_URL, max_rate_per_sec=config.MAX_GET_RATE_PER_SEC
+        )
+    return _s3_repair_client
+
+
+def _fetch_repair_bytes(key: str) -> tuple[bytes | None, str]:
+    """Fetch key from public S3. Returns (bytes|None, error)."""
+    try:
+        resp, _h = _s3_repair_store().get_object_stream(key)
+        try:
+            return b"".join(resp.iter_bytes(65536)), ""
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+    except Exception as e:
+        return None, str(e)[:160]
+
+
 @app.get("/api/object")
 def get_object(
     key: str,
@@ -1039,15 +1125,20 @@ def get_object(
     filename = key.rsplit("/", 1)[-1] or "object"
     # Manifest row gives a fast etag for cache key + 304 handling (PK lookup).
     manifest_etag = ""
+    manifest_size = 0
     if not download:
         try:
             row = (
                 db.connect()
-                .execute("SELECT etag FROM objects WHERE key=?", (key,))
+                .execute("SELECT etag, size FROM objects WHERE key=?", (key,))
                 .fetchone()
             )
             if row:
                 manifest_etag = row["etag"] or ""
+                try:
+                    manifest_size = int(row["size"] or 0)
+                except (TypeError, ValueError):
+                    manifest_size = 0
         except Exception:
             pass
     cache_etag = hashlib.sha1(
@@ -1081,6 +1172,7 @@ def get_object(
                 )
         hit = _objcache_entry(key, manifest_etag, thumb)
         if hit.exists():
+            refetch = False
             try:
                 meta = json.loads(hit.with_suffix(".json").read_text())
                 _objcache_hits_disk += 1
@@ -1088,21 +1180,40 @@ def get_object(
                 # heal wrongly-cached media (text/plain JPEG etc.): one 32B read
                 try:
                     with open(hit, "rb") as _hf:
-                        hit_media = _sniff_media(_hf.read(32)) or hit_media
+                        _head = _hf.read(32)
+                    _healed = _sniff_media(_head)
+                    if _healed is None and _ext_of_key(key) in _VERIFY_MEDIA_EXTS:
+                        # Corrupt-bytes eviction (voice-note 0:00, 2026-09-05):
+                        # a cached media file matching NO known magic is mirror
+                        # garbage, not an exotic codec — drop it so the MISS
+                        # path below refetches (with S3 repair) instead of
+                        # serving 0:00 forever.
+                        try:
+                            hit.unlink()
+                            hit.with_suffix(".json").unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                        print(
+                            f"[object] {key}: evicted corrupt cache entry (magic-mismatch)"
+                        )
+                        refetch = True
+                    else:
+                        hit_media = _healed or hit_media
                 except OSError:
                     pass
-                if thumb and hit_media.startswith("image/"):
-                    try:
-                        _ram_put(cache_etag, hit_media, hit.read_bytes())
-                    except OSError:
-                        pass
-                return _serve_cached(
-                    hit,
-                    hit_media,
-                    filename,
-                    cache_etag,
-                    download,
-                )
+                if not refetch:
+                    if thumb and hit_media.startswith("image/"):
+                        try:
+                            _ram_put(cache_etag, hit_media, hit.read_bytes())
+                        except OSError:
+                            pass
+                    return _serve_cached(
+                        hit,
+                        hit_media,
+                        filename,
+                        cache_etag,
+                        download,
+                    )
             except Exception:
                 pass
         _objcache_miss += 1
@@ -1129,8 +1240,11 @@ def get_object(
     cacheable = not download and (
         size_hint <= _OBJ_CACHE_FILE_CAP if size_hint else True
     )
+    # Small evidence downloads are buffered too so their bytes can be
+    # integrity-checked (never served corrupt); cache write stays inline-only.
+    small_download = bool(download) and 0 < size_hint <= _OBJ_CACHE_FILE_CAP
     data = None
-    if cacheable or (thumb and media.startswith("image/")):
+    if cacheable or small_download or (thumb and media.startswith("image/")):
         try:
             data = b"".join(resp.iter_bytes(65536))
         except Exception:
@@ -1139,7 +1253,40 @@ def get_object(
             resp.close()
         except Exception:
             pass
-    if data is not None and len(data) <= _OBJ_CACHE_FILE_CAP:
+    integrity_reason = ""
+    if (
+        data is not None
+        and len(data) <= _OBJ_CACHE_FILE_CAP
+        and (not download or small_download)
+        and _actual_source() == "gcs"
+    ):
+        # Integrity gate (voice-note 0:00, 2026-09-05): corrupt GCS-mirror
+        # bytes must never be cached or served when public S3 holds good ones.
+        integrity_reason = verify_object_bytes(
+            key, data, headers.get("sha256") or "", manifest_size or size_hint
+        )
+        if integrity_reason:
+            alt, alt_err = _fetch_repair_bytes(key)
+            if alt is not None and not verify_object_bytes(
+                key, alt, "", manifest_size or len(alt)
+            ):
+                print(
+                    f"[object] {key}: mirror bytes failed ({integrity_reason}); "
+                    f"repaired from S3 ({len(alt)}B)"
+                )
+                data = alt
+                size_hint = len(alt)
+                if download:
+                    media = "application/octet-stream"
+                else:
+                    media = _sniff_media(alt[:32]) or media
+                integrity_reason = ""
+            else:
+                print(
+                    f"[object] {key}: mirror bytes failed ({integrity_reason}); "
+                    f"S3 repair {'failed: ' + alt_err if alt is None else 'also failed verify'}"
+                )
+    if data is not None and len(data) <= _OBJ_CACHE_FILE_CAP and not download:
         # bytes in hand: magic wins over any stored/ext guess (fixes QR-as-text)
         out_media = _sniff_media(data[:32]) or media
         body = data
@@ -1160,36 +1307,58 @@ def get_object(
                 body = data
                 out_media = media
         dest = _objcache_entry(key, manifest_etag, thumb)
-        try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(body)
-            dest.with_suffix(".json").write_text(json.dumps({"media": out_media}))
-            _objcache_writes += 1
-            if thumb and out_media.startswith("image/"):
-                _ram_put(cache_etag, out_media, body)
-            if _objcache_writes % 50 == 0:
-                _objcache_trim(thumb)
-            return _serve_cached(
-                dest,
-                out_media,
-                filename,
-                cache_etag,
-                download,
-                cache_status="MISS",
-            )
-        except OSError:
-            pass
-        # cache write failed: serve bytes directly from memory
+        # Never poison the cache with bytes that failed the integrity gate,
+        # and never cache downloads under the inline key (empty-etag orphan).
+        if not integrity_reason and not download:
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(body)
+                dest.with_suffix(".json").write_text(json.dumps({"media": out_media}))
+                _objcache_writes += 1
+                if thumb and out_media.startswith("image/"):
+                    _ram_put(cache_etag, out_media, body)
+                if _objcache_writes % 50 == 0:
+                    _objcache_trim(thumb)
+                return _serve_cached(
+                    dest,
+                    out_media,
+                    filename,
+                    cache_etag,
+                    download,
+                    cache_status="MISS",
+                )
+            except OSError:
+                pass
+        # cache write failed/skipped: serve bytes directly from memory
+        _mem_headers = {
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "private, max-age=300",
+            "ETag": f'"{cache_etag}"',
+            "X-Cache-Status": "MISS",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if integrity_reason:
+            _mem_headers["X-Object-Integrity"] = integrity_reason
         return StreamingResponse(
             [body].__iter__(),
             media_type=out_media,
-            headers={
-                "Content-Disposition": f'inline; filename="{filename}"',
-                "Cache-Control": "private, max-age=300",
-                "ETag": f'"{cache_etag}"',
-                "X-Cache-Status": "MISS",
-                "X-Content-Type-Options": "nosniff",
-            },
+            headers=_mem_headers,
+        )
+    if small_download and data is not None:
+        # Buffered small download: verified (or unrepairable-source) bytes with
+        # the exact pre-change download semantics (attachment + octet-stream).
+        _dl_headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, max-age=300",
+            "X-Cache-Status": "BYPASS-download",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if integrity_reason:
+            _dl_headers["X-Object-Integrity"] = integrity_reason
+        return StreamingResponse(
+            [data].__iter__(),
+            media_type="application/octet-stream",
+            headers=_dl_headers,
         )
     if data is not None:
         # too big to cache: serve from memory, keep stream semantics
