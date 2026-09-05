@@ -265,7 +265,7 @@ def summary() -> dict:
     ]
     cov = c.execute(
         "SELECT COUNT(DISTINCT l.utr) matched FROM ledger_rows l"
-        " WHERE l.utr!='' AND EXISTS (SELECT 1 FROM payment_transactions p WHERE p.utr=l.utr)"
+        " WHERE l.utr!='' AND EXISTS (SELECT 1 FROM payment_transactions p WHERE p.utr=l.utr AND p.utr!='')"
     ).fetchone()
     luts = c.execute(
         "SELECT COUNT(DISTINCT utr) n FROM ledger_rows WHERE utr!=''"

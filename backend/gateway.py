@@ -291,7 +291,7 @@ def summary() -> dict:
     cov = c.execute(
         "SELECT COUNT(DISTINCT g.utr) matched FROM gateway_rows g"
         " WHERE g.utr!='' AND g.is_test=0"
-        " AND EXISTS (SELECT 1 FROM payment_transactions p WHERE p.utr=g.utr)"
+        " AND EXISTS (SELECT 1 FROM payment_transactions p WHERE p.utr=g.utr AND p.utr!='')"
     ).fetchone()
     guts = c.execute(
         "SELECT COUNT(DISTINCT utr) n FROM gateway_rows WHERE utr!='' AND is_test=0"
