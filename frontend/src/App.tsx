@@ -93,8 +93,8 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-foot">
-          <div className={`conn ${status?.bucket_live ? 'ok' : 'bad'}`}>
-            {status?.bucket_live ? 'BUCKET REACHABLE' : 'BUCKET UNREACHABLE'}
+          <div className={`conn ${status?.bucket_live ? 'ok' : (status && status.bucket_live === false ? 'bad' : '')}`}>
+            {status?.bucket_live ? 'BUCKET REACHABLE' : (status && status.bucket_live === false ? 'BUCKET UNREACHABLE' : 'CHECKING…')}
           </div>
           <div className="small dim">{status?.objects_total.toLocaleString() ?? '—'} objects indexed</div>
           <div className="mono tiny dim" style={{ marginTop: 8 }}>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, objectUrl, post, type ObjRow } from '../lib/api'
+import { AuthError, api, objectUrl, post, type ObjRow } from '../lib/api'
 import { extOf, fileColor, fileIcon, fmtBytes, fmtTime, folderInfo, shortKey } from '../lib/format'
 import { Preview } from '../components/Preview'
 
@@ -15,17 +15,41 @@ function normPrefix(p: string) {
   return p.replace(/^\/+/, '')
 }
 
-// ---- Folder sidebar tree ----
+// Display name: never let a stale/mismatched prefix eat the start of the
+// filename (2026-09-05: root files rendered as "og"/"t_hour.log" under a
+// currency/ breadcrumb after a failed navigation fetch left stale rows).
+function displayName(key: string, prefix: string) {
+  if (prefix && key.startsWith(prefix)) {
+    const tail = key.slice(prefix.length)
+    if (tail) return tail
+  } else if (!prefix) {
+    return key
+  }
+  return key.split('/').pop() || key
+}
+
+// Transient network failure? (connection reset, GCS wobble, api() timeout.
+// Never auth/4xx: those must surface, not spin.) Eligible for one auto-retry.
+function isTransientErr(e: any) {
+  if (!e || e.name === 'AuthError') return false
+  const s = String(e.message || e)
+  if (/^4\d\d/.test(s) || /locked/i.test(s)) return false
+  return e instanceof TypeError || /timed out/i.test(s) || /^5\d\d/.test(s)
+}
 function FolderTree({
   dirs,
   prefix,
   onNavigate,
   loading,
+  error,
+  onRetry,
 }: {
   dirs: { seg: string; n: number; size: number }[]
   prefix: string
   onNavigate: (seg: string) => void
   loading: boolean
+  error: string
+  onRetry: () => void
 }) {
   return (
     <div className="ex-sidebar">
@@ -34,10 +58,17 @@ function FolderTree({
         <span className="ex-sidebar-count">{dirs.length}</span>
       </div>
       <div className="ex-sidebar-list">
-        {loading && dirs.length === 0 && (
+        {loading && dirs.length === 0 && !error && (
           <div className="ex-sidebar-empty">Loading…</div>
         )}
-        {!loading && dirs.length === 0 && (
+        {error && dirs.length === 0 && (
+          <div className="ex-sidebar-empty">
+            <span style={{ color: 'var(--bad)' }}>Folders failed to load</span>
+            <div className="tiny dim" style={{ marginTop: 4, wordBreak: 'break-word' }}>{error}</div>
+            <button className="btn tiny" style={{ marginTop: 8 }} onClick={onRetry}>Retry folders</button>
+          </div>
+        )}
+        {!loading && !error && dirs.length === 0 && (
           <div className="ex-sidebar-empty">
             No subfolders here
             <div className="tiny dim" style={{ marginTop: 4 }}>Files only in this directory</div>
@@ -85,7 +116,7 @@ function FileCard({
 }) {
   const img = isImg(obj.key)
   const ext = extOf(obj.key)
-  const name = obj.key.slice(prefix.length) || obj.key.split('/').pop() || obj.key
+  const name = displayName(obj.key, prefix)
   const color = fileColor(obj.key)
   const icon = fileIcon(obj.key)
   const hasExtract = obj.extract?.amount_inr != null || obj.extract?.vpa || obj.extract?.new_mule
@@ -176,8 +207,15 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   const [loading, setLoading] = useState(false)
   const [initialLoad, setInitialLoad] = useState(true)
   const [errMsg, setErrMsg] = useState('')
+  const [treeErr, setTreeErr] = useState('')
   const [filterOpen, setFilterOpen] = useState(false)
   const reqIdRef = useRef(0)
+  // rid already given its one automatic retry (transient-blip recovery).
+  const retryRef = useRef(0)
+  // Prefix the sidebar tree was last loaded for. Page turns / sort / search
+  // must NOT refetch /api/tree (heavy GROUP BY over ~1.4M rows) — only an
+  // actual folder change does (2026-09-05 efficiency pass).
+  const treePrefixRef = useRef('@@none@@')
   const pageCache = useRef(new Map<string, { at: number; data: any }>())
   // Warm page N+1 in the background so Next feels instant; failures are
   // silent — the real navigation fetch remains the source of truth.
@@ -213,6 +251,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   const refresh = useCallback(() => {
     setLoading(true)
     setErrMsg('')
+    setTreeErr('')
     const rid = ++reqIdRef.current
     // Absolute backstop: even if a fetch never settles, never skeleton forever.
     // (api() also aborts at 25s — this covers any other hang path.)
@@ -221,6 +260,21 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
       setLoading(false); setInitialLoad(false)
       setErrMsg((prev) => prev || `Still loading after 20s (folder: /${prefix || ''}) — backend may be busy. Press Retry.`)
     }, 20000)
+    // Transient network blips (connection reset, GCS wobble — seen 2026-09-05
+    // across several endpoints) get ONE automatic retry so officers don't have
+    // to. Auth/4xx errors never retry.
+    const onListError = (e: any) => {
+      if (rid !== reqIdRef.current) return
+      console.error('[Explorer] list failed:', e)
+      if (isTransientErr(e) && retryRef.current !== rid) {
+        retryRef.current = rid
+        window.clearTimeout(loadTimer)
+        setErrMsg('Connection blip — retrying automatically…')
+        window.setTimeout(() => { if (reqIdRef.current === rid) refresh() }, 1200)
+        return
+      }
+      setErrMsg(String(e?.message || e))
+    }
     if (source === 'live') {
       api<any>('/api/live/list', { prefix, flat: flat ? 1 : '', q: debouncedQ, limit, cursor: liveCursor })
         .then((d) => {
@@ -231,7 +285,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
         .catch((e) => {
           if (rid !== reqIdRef.current) return
           console.error('[Explorer] live list failed:', e)
-          setErrMsg(String(e))
+          onListError(e)
         })
         .finally(() => {
           if (rid !== reqIdRef.current) return
@@ -262,18 +316,26 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
       .catch((e) => {
         if (rid !== reqIdRef.current) return
         console.error('[Explorer] list failed:', e)
-        setErrMsg(String(e))
+        onListError(e)
       })
       .finally(() => { if (rid === reqIdRef.current) { window.clearTimeout(loadTimer); setLoading(false); setInitialLoad(false) } })
-    if (source === 'manifest' && !debouncedQ && !flat) {
+    if (source === 'manifest' && !debouncedQ && !flat && treePrefixRef.current !== prefix) {
+      // Mark attempted up-front: page turns must not hammer a failing tree;
+      // folder change or the Retry button resets the ref to force refetch.
+      treePrefixRef.current = prefix
       api<any>('/api/tree', { prefix }).then((t) => {
         if (rid !== reqIdRef.current) return
         setDirs(t.dirs ?? [])
         setDirsPrefix(t.prefix || prefix)
-      }).catch((e) => { console.error('[Explorer] tree failed:', e); if (rid === reqIdRef.current) setErrMsg((prev) => prev || String(e)) })
-    } else {
-      setDirs([])
-      setDirsPrefix('')
+      }).catch((e) => {
+        // Folder-list failure is sidebar-local: it must never blank the file
+        // grid's error state or masquerade as "no subfolders" (2026-09-05).
+        console.error('[Explorer] tree failed:', e)
+        if (rid === reqIdRef.current && !(e instanceof AuthError)) setTreeErr(String(e?.message || e))
+      })
+    } else if (source !== 'manifest' || debouncedQ || flat) {
+      // Searching / recursing / live mode hides (not clears) the folder
+      // sidebar cards via render guards; keep dirs so un-searching is instant.
     }
   }, [source, prefix, debouncedQ, order, limit, page, ext, since, flat, liveCursor])
 
@@ -301,14 +363,37 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   function openDir(seg: string) {
     const s = seg.replace(/^\/+|\/+$/g, '')
     if (!s) return
-    setDirs([]); setDirsPrefix('')
+    resetFolderView()
     const base = normPrefix(prefix)
     setPrefix((base ? base + '/' : '') + s + '/')
   }
 
   function goPrefix(p: string) {
-    setDirs([]); setDirsPrefix('')
+    resetFolderView()
     setPrefix(normPrefix(p)); setQ('')
+  }
+
+  function goParent() {
+    const parts = normPrefix(prefix).replace(/\/$/, '').split('/').filter(Boolean)
+    if (!parts.length) return
+    parts.pop()
+    resetFolderView()
+    setPrefix(parts.length ? parts.join('/') + '/' : '')
+    setQ('')
+  }
+
+  // Switching folders must never show the previous folder's files/folders
+  // under the new breadcrumb (2026-09-05: stale root files + "No subfolders"
+  // rendered under currency/ after a failed fetch). The page cache keeps
+  // Back-navigation instant, so clearing here costs nothing.
+  function resetFolderView() {
+    setDirs([]); setDirsPrefix('')
+    treePrefixRef.current = ''
+    setData({ total: 0, items: [] })
+    setLiveItems([])
+    setNextCursor(null)
+    setSel(new Set())
+    setErrMsg(''); setTreeErr('')
   }
 
   async function downloadSelected() {
@@ -399,6 +484,8 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
           prefix={prefix}
           onNavigate={(seg) => { openDir(seg); setQ(''); setExt(''); setSinceDays(''); setFlat(false) }}
           loading={loading}
+          error={treeErr}
+          onRetry={() => { treePrefixRef.current = ''; refresh() }}
         />
       )}
 
@@ -422,6 +509,11 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
               </span>
             )
           })}
+          {prefix && (
+            <button className="ex-crumb ex-crumb-up" onClick={goParent} title="Up one folder">
+              ⬆ Up
+            </button>
+          )}
         </div>
 
         {/* Toolbar — compact single row */}
@@ -662,7 +754,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
                   })}
                   {/* File rows */}
                   {rows().map((o) => {
-                    const name = o.key.slice(prefix.length)
+                    const name = displayName(o.key, prefix)
                     const icon = fileIcon(o.key)
                     return (
                       <tr key={o.key}>

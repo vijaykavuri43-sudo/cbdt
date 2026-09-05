@@ -51,8 +51,13 @@ class Collector:
             "new_since_start": 0,
             "last_poll_utc": None,
             "bucket_live": None,
+            "bucket_live_fails": 0,
+            "bucket_live_ok_utc": None,
             "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
+        # Consecutive liveness-probe failures (debounce counter — see
+        # record_liveness). Not part of state: exposed as bucket_live_fails.
+        self._live_fails = 0
         self._stop = threading.Event()
         # Monotonic timestamp of the last full COUNT(*) — hot paths use the
         # incrementally bumped counter and recount at most every 10 min
@@ -64,6 +69,28 @@ class Collector:
         # (crawl_once) — see comment there for why the watermark poll alone
         # cannot see new uploads whose keys sort before the watermark.
         self._crawl_cursor: dict[str, Optional[str]] = {}
+
+    def record_liveness(self, ok: bool) -> bool:
+        """Debounced bucket-liveness recorder (bucket-blip review 2026-09-05).
+
+        A single transient list failure (connection reset, brief GCS wobble)
+        must NOT flip the sidebar to red "BUCKET UNREACHABLE" for a full
+        minute while every other probe stays green. Declare down only after
+        3 consecutive failures (~30s at the 10s poll cadence); any success
+        resets the counter immediately. Returns the published bucket_live.
+        """
+        if ok:
+            self._live_fails = 0
+            self.state["bucket_live"] = True
+            self.state["bucket_live_ok_utc"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+            )
+        else:
+            self._live_fails += 1
+            if self._live_fails >= 3:
+                self.state["bucket_live"] = False
+        self.state["bucket_live_fails"] = self._live_fails
+        return bool(self.state["bucket_live"])
 
     def bump_total(self, n: int):
         """Add freshly inserted objects to the cached total (exact: upsert
@@ -454,9 +481,9 @@ class Collector:
             self.bump_total(total_new)
             self.state["objects_total"] = self.total_objects()
             try:
-                self.state["bucket_live"] = self.s3.head_bucket_ok()
+                self.record_liveness(bool(self.s3.head_bucket_ok()))
             except Exception:
-                self.state["bucket_live"] = False
+                self.record_liveness(False)
             # adaptive: if we just found new objects, don't wait full interval — re-poll quickly
             if total_new > 0:
                 self._stop.wait(min(3.0, config.POLL_INTERVAL_SEC))

@@ -360,6 +360,42 @@ class CollectorAccuracyTests(unittest.TestCase):
         self.assertEqual(db.get_meta("crawl:chat_file/"), "chat_file/user_0999.png")
 
 
+class LivenessDebounceTests(unittest.TestCase):
+    """record_liveness 3-strike rule (bucket-blip review 2026-09-05)."""
+
+    def test_success_resets_and_publishes_true(self):
+        c = Collector(_PagedStore([]))
+        c.record_liveness(False)
+        self.assertTrue(c.record_liveness(True))
+        self.assertTrue(c.state["bucket_live"])
+        self.assertEqual(c.state["bucket_live_fails"], 0)
+        self.assertTrue(c.state["bucket_live_ok_utc"])
+
+    def test_single_blip_keeps_true(self):
+        c = Collector(_PagedStore([]))
+        c.record_liveness(True)
+        self.assertTrue(c.record_liveness(False))
+        self.assertTrue(c.record_liveness(False))
+        self.assertTrue(c.state["bucket_live"])
+        self.assertEqual(c.state["bucket_live_fails"], 2)
+
+    def test_three_strikes_declares_down(self):
+        c = Collector(_PagedStore([]))
+        c.record_liveness(True)
+        c.record_liveness(False)
+        c.record_liveness(False)
+        self.assertFalse(c.record_liveness(False))
+        self.assertEqual(c.state["bucket_live_fails"], 3)
+
+    def test_recovery_after_down(self):
+        c = Collector(_PagedStore([]))
+        for _ in range(3):
+            c.record_liveness(False)
+        self.assertFalse(c.state["bucket_live"])
+        self.assertTrue(c.record_liveness(True))
+        self.assertEqual(c.state["bucket_live_fails"], 0)
+
+
 class SourceFilterTests(unittest.TestCase):
     """P0: live-evidence vs 5-day-reference split + since/new_since windows."""
 

@@ -108,6 +108,8 @@ export interface Status {
   new_since_start: number
   last_poll_utc: string | null
   bucket_live: boolean | null
+  bucket_live_fails?: number
+  bucket_live_ok_utc?: string | null
   started_utc: string
   bucket_url: string
   object_source?: string
