@@ -968,6 +968,13 @@ def _pending_where(full_scan: bool = False) -> tuple[str, list]:
       old objects stay browsable and can be enriched on demand via POST /api/enrich)
     """
     prefixes = list(config.QR_PREFIXES + config.OCR_PREFIXES)
+    if getattr(config, "SLIP_OCR", False):
+        # Burn mode: the dedicated slip_loop owns deposit/withdrawal OCR.
+        # Keeping them in the live pending queue too made all three loops
+        # fetch the same keys (live: ~35/384 fresh per batch, pool idle at
+        # load 2 on 8 vCPU). Pending keeps QR prefixes + fresh chat; slips
+        # drain via slip_loop newest-first.
+        prefixes = [p for p in prefixes if p not in config.OCR_PREFIXES]
     if full_scan or config.WALLET_FULL_SCAN:
         prefixes = list(dict.fromkeys(prefixes + ["chat_file/"]))
     prefix_clause = "top_prefix IN (" + ",".join(["?"] * len(prefixes)) + ")"
