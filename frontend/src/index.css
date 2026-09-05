@@ -457,7 +457,10 @@ input[type="text"]::placeholder { color: var(--dim); }
   border-bottom: 1px solid var(--border); position: sticky; top: 0;
   background: var(--panel); z-index: 1;
 }
-.dp-table td { padding: 9px 12px; border-bottom: 1px solid rgba(34,48,77,.35); vertical-align: middle; transition: background .12s; }
+.dp-table td { padding: 9px 12px; border-bottom: 1px solid rgba(34,48,77,.35); vertical-align: middle; transition: background .12s; white-space: nowrap; }
+.dp-table th { white-space: nowrap; }
+/* opt-out for long free-text cells that should wrap */
+.dp-table td.wrap, .dp-table th.wrap { white-space: normal; }
 .dp-table tr:hover td { background: rgba(56,189,248,.06); }
 .dp-table tr:nth-child(even) td { background: rgba(255,255,255,.012); }
 .dp-table a { color: var(--accent); text-decoration: none; cursor: pointer; font-weight: 500; }

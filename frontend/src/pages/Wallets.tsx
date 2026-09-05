@@ -244,7 +244,7 @@ export function Wallets() {
                 <td>{r.network}</td>
                 <td>{r.label || '—'}</td>
                 <td className="small mono">{r.case_ids || '—'}</td>
-                <td className="small" style={{ maxWidth: 420 }}>{r.notes || '—'}</td>
+                <td className="small wrap" style={{ maxWidth: 420 }}>{r.notes || '—'}</td>
                 <td><span className="ex-badge" style={{ fontSize: 10 }}>{r.confidence} · {r.fact_type}</span></td>
                 <td className="small" style={{ whiteSpace: 'nowrap' }}><a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(r.address) ?? '#'} target="_blank" rel="noreferrer">Tronscan ↗</a></td>
               </tr>
