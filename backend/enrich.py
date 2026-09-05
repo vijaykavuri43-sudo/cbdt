@@ -2190,6 +2190,14 @@ class EnrichmentWorker:
                     self._persist_payload(key, payload)
                     done += 1
             persist_ms = int((_t.monotonic() - t_per) * 1000)
+            # Keep the WAL small: a 4.2GB uncheckpointed WAL made this phase
+            # take 60-76s live (2026-09-05). PASSIVE never blocks readers.
+            try:
+                from . import db as _db
+
+                _db.checkpoint()
+            except Exception:
+                pass
             _note_drain(source, len(keys), fetch_ms, decode_ms, persist_ms, done, errs)
         except Exception:
             pass

@@ -60,10 +60,36 @@ def connect() -> sqlite3.Connection:
         conn.execute("PRAGMA cache_size=-262144")  # 256MB page cache
         conn.execute("PRAGMA mmap_size=1073741824")  # 1GB mmap for index scans
         conn.execute("PRAGMA temp_store=MEMORY")  # ORDER BY spill goes to RAM
+        # 2026-09-05: cap WAL growth — an uncheckpointed multi-GB WAL made
+        # every drain's persist phase take 60-76s (live measurement). Persistent
+        # setting; passive checkpoints after each drain do the rest.
+        try:
+            conn.execute("PRAGMA journal_size_limit=134217728")  # 128MB
+        except Exception:
+            pass
         conn.executescript(SCHEMA)
         _migrate(conn)
         _local.conn = conn
     return conn
+
+
+def checkpoint(truncate: bool = False) -> dict:
+    """Checkpoint the WAL so it cannot grow into the multi-GB drag seen live.
+
+    PASSIVE (default): never blocks readers/writers; back-pressures the WAL
+    file as long as no connection holds old frames. Called after every drain
+    persist — ~ms when the WAL is small. TRUNCATE: maintenance path (deploy/
+    manual) that reclaims the file down to zero; briefly takes the writer lock.
+    """
+    mode = "TRUNCATE" if truncate else "PASSIVE"
+    try:
+        with _writer_lock:
+            row = connect().execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
+        if row:
+            return {"mode": mode, "busy": row[0], "frames": row[1], "done": row[2]}
+    except Exception as e:
+        return {"mode": mode, "error": str(e)[:120]}
+    return {"mode": mode}
 
 
 def _migrate(conn: sqlite3.Connection):

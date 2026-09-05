@@ -15,7 +15,7 @@ services:
       - S3LM_GCS_BUCKET=cbtf-case-evidence-991096649643
       - S3LM_GCS_PREFIX=s3-mirror/
       - S3LM_ENRICH_MAX_AGE_HOURS=0
-      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-8}
+      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-4}
       - S3LM_ENRICH_BATCH=${S3LM_ENRICH_BATCH:-96}
       - OMP_THREAD_LIMIT=1
       # Gemini Vision verify (key lives ONLY in the VM .env, never in git)
@@ -33,11 +33,13 @@ services:
       - S3LM_AIASK_PER_MIN=${S3LM_AIASK_PER_MIN:-10}
       - S3LM_COLD_SEC=${S3LM_COLD_SEC:-1800}
       - S3LM_CRAWL_CAP=${S3LM_CRAWL_CAP:-5000}
-      # Gambler-slip OCR loop (deposit/withdrawal VPAs/UTRs). Default off:
-      # 500k+ slip backlog would compete with live QR decoding. Enable with
-      # S3LM_SLIP_OCR=1 once the QR backlog drains.
-      - S3LM_SLIP_OCR=${S3LM_SLIP_OCR:-}
-      - S3LM_SLIP_BATCH=${S3LM_SLIP_BATCH:-24}
+      # Gambler-slip OCR loop (deposit/withdrawal VPAs/UTRs). Enabled
+      # 2026-09-05 (was default-off): 667K slips unenriched, QR tier no longer
+      # starved now the WAL/persist bottleneck is fixed. Batch sized so one
+      # drain (~25-30s at 2 specific workers) finishes inside the interval.
+      - S3LM_SLIP_OCR=${S3LM_SLIP_OCR:-1}
+      - S3LM_SLIP_BATCH=${S3LM_SLIP_BATCH:-192}
+      - S3LM_SLIP_INTERVAL_SEC=${S3LM_SLIP_INTERVAL_SEC:-30}
       - S3LM_INTELLIGENCE_ROOT=/app/intelligence
       - S3LM_REFERENCE_ROOT=/app/intelligence
     volumes:
