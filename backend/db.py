@@ -1991,14 +1991,21 @@ def wallet_feed(limit: int = 300) -> list[dict]:
             w = json.loads(r["w"])
         except Exception:
             continue
+        try:
+            txids = json.loads(r["txids"]) if r["txids"] else None
+        except Exception:
+            txids = r["txids"]
         out.append(
             {
                 "key": r["key"],
                 "last_modified": r["last_modified"],
                 "seen_utc": r["seen_utc"],
                 "kind": r["kind"],
-                "amount_inr": r["amount_inr"],
                 **w,
+                "amount_inr": r["amount_inr"],
+                "amount_value": r["amount_value"],
+                "amount_currency": r["amount_currency"],
+                "txids": txids,
             }
         )
     return out

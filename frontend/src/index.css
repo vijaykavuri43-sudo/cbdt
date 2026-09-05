@@ -412,7 +412,17 @@ input[type="text"]::placeholder { color: var(--dim); }
   transition: background .12s; margin-top: 4px;
 }
 .ch-msg:hover { background: var(--panel-hover); }
-.ch-msg.grouped { margin-top: 2px; opacity: .97; }
+.ch-msg.grouped { margin-top: 2px; opacity: .97; padding: 4px 12px; }
+.ch-msg.grouped .ch-audio-wrap, .ch-msg.grouped .ch-img { margin-top: 2px; }
+/* Slim per-message timestamp in the avatar gutter of grouped rows. */
+.ch-time-gutter {
+  font-size: 9px; font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--dim); opacity: .55; text-align: center; padding-top: 10px;
+  white-space: nowrap;
+}
+.ch-msg:hover .ch-time-gutter { opacity: 1; }
+/* Voice note the browser refused to decode: explicit fallback, not dead 0:00. */
+.ch-audio-err { border-color: var(--bad); }
 .ch-way { color: var(--accent); font-weight: 700; font-size: 12px; }
 .ch-sender.to { color: var(--accent); }
 .ch-avatar {

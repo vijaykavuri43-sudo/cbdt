@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, eventsUrl, objectUrl, post, tabHidden } from '../lib/api'
+import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { fmtMoney, fmtTime } from '../lib/format'
 
 interface WalletRow {
@@ -103,21 +104,26 @@ export function Wallets() {
   const items = (data?.items ?? []).filter((i) => (onlyNew ? !i.known_operator : true))
 
   function exportTsv() {
-    const header = 'Address\tNetwork\tStandard\tAmount\tCurrency\tTxid\tStatus\tSource File\tUploaded\n'
+    const header = 'Address\tNetwork\tStandard\tAmount\tCurrency\tTxid\tArkham\tTronscan\tStatus\tSource File\tUploaded\n'
     const rows = items
-      .map((r) =>
-        [
+      .map((r) => {
+        const tx = Array.isArray(r.txids) ? r.txids.join(',') : (r.txids ?? '')
+        const tron = bestTronscanUrl(r.address, r.txids) ?? ''
+        const arkham = r.address ? arkhamAddressUrl(r.address) : ''
+        return [
           r.address,
           r.network ?? '',
           r.standard ?? '',
           r.amount_value ?? r.amount_inr ?? '',
           r.amount_currency ?? (r.amount_inr != null ? 'INR' : ''),
-          Array.isArray(r.txids) ? r.txids.join(',') : (r.txids ?? ''),
+          tx,
+          arkham,
+          tron,
           r.known_operator ? 'known-operator' : 'NEW',
           r.key,
           r.last_modified,
         ].join('\t')
-      )
+      })
       .join('\n')
     const blob = new Blob([header + rows], { type: 'text/tab-separated-values' })
     const a = document.createElement('a')
@@ -127,10 +133,10 @@ export function Wallets() {
   }
   function exportMasterTsv() {
     if (!data?.master_rows?.length) return
-    const header = 'Entity\tNetwork\tAddress\tLabel\tCase\tConfidence\tFact type\tNotes\tSource CSV\n'
+    const header = 'Entity\tNetwork\tAddress\tArkham\tTronscan\tLabel\tCase\tConfidence\tFact type\tNotes\tSource CSV\n'
     const rows = data.master_rows
       .map((r) =>
-        [r.entity_id, r.network, r.address, r.label, r.case_ids, r.confidence, r.fact_type, '"' + r.notes.replace(/"/g, '""') + '"', data.master_source].join('\t')
+        [r.entity_id, r.network, r.address, arkhamAddressUrl(r.address), bestTronscanUrl(r.address) ?? '', r.label, r.case_ids, r.confidence, r.fact_type, '"' + r.notes.replace(/"/g, '""') + '"', data.master_source].join('\t')
       )
       .join('\n')
     const blob = new Blob([header + rows], { type: 'text/tab-separated-values' })
@@ -228,6 +234,7 @@ export function Wallets() {
               <th>Case</th>
               <th>Notes / source of screenshot</th>
               <th>Fact</th>
+              <th>Links</th>
             </tr>
           </thead>
           <tbody>
@@ -239,10 +246,11 @@ export function Wallets() {
                 <td className="small mono">{r.case_ids || '—'}</td>
                 <td className="small" style={{ maxWidth: 420 }}>{r.notes || '—'}</td>
                 <td><span className="ex-badge" style={{ fontSize: 10 }}>{r.confidence} · {r.fact_type}</span></td>
+                <td className="small" style={{ whiteSpace: 'nowrap' }}><a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(r.address) ?? '#'} target="_blank" rel="noreferrer">Tronscan ↗</a></td>
               </tr>
             ))}
             {(!data || (data.master_rows?.length ?? 0) === 0) && (
-              <tr><td colSpan={6} className="dp-empty small dim">No master rows — place 17-CRYPTO-WALLETS.csv in LE-SUBMISSION-MASTER/ or &lt;data-dir&gt;/reference/ on this host.</td></tr>
+              <tr><td colSpan={7} className="dp-empty small dim">No master rows — place 17-CRYPTO-WALLETS.csv in LE-SUBMISSION-MASTER/ or &lt;data-dir&gt;/reference/ on this host.</td></tr>
             )}
           </tbody>
         </table>
@@ -290,7 +298,7 @@ export function Wallets() {
                 </td>
                 <td className="small dim mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}>{r.key}</td>
                 <td className="small dim">{fmtTime(r.last_modified)}</td>
-                <td><a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view proof</a></td>
+                <td><a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view proof</a>{r.address && <>{' · '}<a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(r.address, r.txids) ?? '#'} target="_blank" rel="noreferrer" className="small">{tronscanLabel(r.txids)}</a></>}</td>
               </tr>
             ))}
             {items.length === 0 && (

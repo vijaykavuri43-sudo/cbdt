@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { eventsUrl, objectUrl } from '../lib/api'
+import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { fileColor, fileIcon, fmtBytes, fmtTime, kindOf } from '../lib/format'
 import { Preview } from '../components/Preview'
 
@@ -198,7 +199,7 @@ function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen
       )}
       {kind === 'audio' && (
         <div className="lf-audio-wrap">
-          <audio className="lf-audio" controls src={objectUrl(evt.key)} />
+          <audio className="lf-audio" controls preload="metadata" src={objectUrl(evt.key)} />
         </div>
       )}
       {kind !== 'image' && kind !== 'audio' && (
@@ -230,6 +231,11 @@ function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen
               {w.network ?? '?'}{w.known_operator ? ' · known' : ' · NEW'}
             </span>
             {String(w.address).slice(0, 28)}
+            <span style={{ marginLeft: 8 }}>
+              <a href={arkhamAddressUrl(String(w.address))} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 10 }}>Arkham ↗</a>
+              {' · '}
+              <a href={bestTronscanUrl(String(w.address), (w as any).txids) ?? '#'} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 10 }}>{tronscanLabel((w as any).txids)}</a>
+            </span>
           </div>
         ))}
         {evt.payload?.vpa && (

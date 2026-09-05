@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, objectUrl, type ExtractPayload, type ObjRow } from '../lib/api'
+import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { extOf, fmtBytes, fmtTime, kindOf, shortKey } from '../lib/format'
 import { SheetViewer } from './SheetViewer'
 
@@ -157,6 +158,22 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
               </span>
             )}
             {obj.extract.payee_name && <span className="badge">{obj.extract.payee_name}</span>}
+            {(obj.extract.wallets ?? []).map((w: any) => {
+              const addr = String(w?.address ?? '').trim()
+              if (!addr) return null
+              const txids = (obj.extract as any)?.txids
+              const tron = bestTronscanUrl(addr, txids)
+              return (
+                <span key={addr} className="badge" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  ₿ {addr.slice(0, 20)}{addr.length > 20 ? '…' : ''} ({w.network ?? '?'})
+                  <button className="btn" style={{ padding: '1px 6px', fontSize: 10 }} onClick={() => copy(addr, `w-${addr}`)}>
+                    {copied === `w-${addr}` ? '✓' : 'Copy'}
+                  </button>
+                  <a href={arkhamAddressUrl(addr)} target="_blank" rel="noreferrer" style={{ fontSize: 10 }}>Arkham ↗</a>
+                  {tron && <a href={tron} target="_blank" rel="noreferrer" style={{ fontSize: 10 }}>{tronscanLabel(txids)}</a>}
+                </span>
+              )
+            })}
             {(obj.extract as any).beneficiary_name && <span className="badge">beneficiary {(obj.extract as any).beneficiary_name}</span>}
             {obj.extract.confidence && <span className="badge badge-warn">confidence: {obj.extract.confidence}</span>}
             {(obj.extract as any)._gemini_error && <span className="badge badge-warn">gemini error: {(obj.extract as any)._gemini_error}</span>}

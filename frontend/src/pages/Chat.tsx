@@ -53,6 +53,9 @@ export function Chat() {
   const [preview, setPreview] = useState<ObjRow | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [liveCount, setLiveCount] = useState(0)
+  // Keys whose <audio> element fired onError (codec the browser can't decode,
+  // e.g. AMR, or a stale-cache wrong content-type) -> render download fallback.
+  const [audioErr, setAudioErr] = useState<Record<string, boolean>>({})
   const limit = 50
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -149,7 +152,7 @@ export function Chat() {
                 {!sameSender ? (
                   <div className="ch-avatar" title={convKey}>{from.slice(0, 2).toUpperCase()}</div>
                 ) : (
-                  <div className="ch-avatar-placeholder" />
+                  <div className="ch-avatar-placeholder ch-time-gutter" title={fmtTime(o.last_modified)}>{fmtTime(o.last_modified).slice(11, 16)}</div>
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {!sameSender && (
@@ -169,11 +172,20 @@ export function Chat() {
                     {isImg ? (
                       <img className="ch-img" src={objectUrl(o.key, false, 320)} alt="" loading="lazy" onClick={() => setPreview(o)} />
                     ) : isVoice ? (
-                      <div className="ch-audio-wrap">
-                        <span style={{ fontSize: 14 }}>🎙️</span>
-                        <audio controls src={objectUrl(o.key)} className="ch-audio" preload="none" />
-                        <span className="tiny dim mono">{fmtBytes(o.size)}</span>
-                      </div>
+                      audioErr[o.key] ? (
+                        <div className="ch-audio-wrap ch-audio-err">
+                          <span style={{ fontSize: 12 }}>⚠</span>
+                          <span className="tiny dim">browser can't preview this clip</span>
+                          <a className="btn" style={{ padding: '2px 8px', fontSize: 11, height: 24 }} href={objectUrl(o.key, true)} download title="Download with evidence hash">⛨ Download</a>
+                        </div>
+                      ) : (
+                        <div className="ch-audio-wrap">
+                          <span style={{ fontSize: 14 }}>🎙️</span>
+                          <audio controls src={objectUrl(o.key)} className="ch-audio" preload="metadata"
+                            onError={() => setAudioErr((m) => (m[o.key] ? m : { ...m, [o.key]: true }))} />
+                          <span className="tiny dim mono">{fmtBytes(o.size)}</span>
+                        </div>
+                      )
                     ) : (
                       <a onClick={() => setPreview(o)} style={{ color: 'var(--accent)', cursor: 'pointer', fontSize: 12 }}>
                         Open file ({fmtBytes(o.size)})
