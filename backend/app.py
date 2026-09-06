@@ -22,17 +22,75 @@ from .s3client import S3PublicClient
 from .gcsclient import GCSMirrorClient
 
 _stats_cache: dict[str, tuple[float, dict]] = {}
+_stats_locks: dict[str, threading.Lock] = {}
+_stats_locks_guard = threading.Lock()
+_stats_rebuilding: set[str] = set()
 
 
-def cached(key: str, ttl: float, builder):
+def _key_lock(key: str) -> threading.Lock:
+    with _stats_locks_guard:
+        lk = _stats_locks.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _stats_locks[key] = lk
+        return lk
+
+
+def cached(key: str, ttl: float, builder, stale_grace: float = 600.0):
+    """TTL cache with stampede protection (singleflight + stale-while-rebuild).
+
+    Why: heavy aggregates (ledger/gateway summaries ~100s at current data
+    scale) expire mid-morning when several tabs are open; without this, every
+    tab fires its own rebuild concurrently — N x 100s queries hammer SQLite +
+    CPU, the threadpool fills, and ALL tabs time out ("app not accessible").
+    With this: at most one rebuild per key runs at a time; requests arriving
+    mid-rebuild get the previous (stale) value instantly; expiry triggers one
+    background rebuild while callers keep served-stale. First-ever miss still
+    builds inline (unavoidable, once per deploy).
+    """
     global _stats_cache
     now = time.monotonic()
     ent = _stats_cache.get(key)
     if ent and now - ent[0] < ttl:
         return ent[1]
-    val = builder()
-    _stats_cache[key] = (now, val)
-    return val
+    lk = _key_lock(key)
+    acquired = lk.acquire(blocking=False)
+    if not acquired:
+        # Another thread is (re)building: serve stale rather than pile on.
+        ent = _stats_cache.get(key)
+        if ent:
+            return ent[1]
+        lk.acquire()  # no value at all — wait for the in-flight build
+        acquired = True
+    try:
+        now = time.monotonic()
+        ent = _stats_cache.get(key)
+        if ent and now - ent[0] < ttl:
+            return ent[1]
+        if ent and key not in _stats_rebuilding and now - ent[0] < ttl + stale_grace:
+            _stats_rebuilding.add(key)
+
+            def _rebuild():
+                try:
+                    val = builder()
+                    _stats_cache[key] = (time.monotonic(), val)
+                except Exception:
+                    pass
+                finally:
+                    _stats_rebuilding.discard(key)
+
+            threading.Thread(
+                target=_rebuild, daemon=True, name=f"cache-rebuild-{key}"
+            ).start()
+            return ent[1]
+        if key in _stats_rebuilding and ent:
+            return ent[1]
+        val = builder()
+        _stats_cache[key] = (time.monotonic(), val)
+        return val
+    finally:
+        if acquired:
+            lk.release()
 
 
 def _invalidate_prefix(prefix: str):
@@ -796,7 +854,7 @@ def ledger_summary(_=Depends(auth)):
     """Officer ledger totals: corrected ex-bonus cash from csv-files/ exports."""
     from . import ledger
 
-    return cached("ledger:summary", 60.0, ledger.summary)
+    return cached("ledger:summary", 300.0, ledger.summary)
 
 
 @app.post("/api/ledger/sync")
@@ -814,7 +872,7 @@ def gateway_summary(_=Depends(auth)):
     """Officer gateway totals: real deposits by brand + payout mule accounts."""
     from . import gateway
 
-    return cached("gateway:summary", 60.0, gateway.summary)
+    return cached("gateway:summary", 300.0, gateway.summary)
 
 
 @app.post("/api/gateway/sync")

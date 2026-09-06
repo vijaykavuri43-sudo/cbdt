@@ -15,6 +15,7 @@ export function Cashflow() {
   const [data, setData] = useState<Summary | null>(null)
   const [error, setError] = useState('')
   const refresh = useCallback(() => {
+    setError('')
     api<Summary>('/api/ledger/summary').then(setData).catch((e) => setError(String(e)))
   }, [])
   useEffect(refresh, [refresh])

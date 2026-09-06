@@ -38,6 +38,7 @@ export function Ledger() {
   const [error, setError] = useState('')
 
   const refresh = useCallback(() => {
+    setError('')
     api<Summary>('/api/ledger/summary').then(setData).catch((e) => setError(String(e)))
     api<Gateway>('/api/gateway/summary').then(setGw).catch(() => {})
   }, [])
