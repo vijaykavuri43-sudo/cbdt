@@ -1107,8 +1107,42 @@ _drain_stats = {
     "done": 0,
     "errors": 0,
     "lock_skips": 0,
+    "claim_skips": 0,
     "last": [],
 }
+
+
+# ---- cross-drain claim registry (duplicate-OCR guard 2026-09-07) ----
+# enrich_loop (pending), wallet_loop, slip_loop, the poll_loop inline drain,
+# the wallet full-scan worker pool and on-demand POST /api/enrich ALL pick
+# from overlapping queues (pending covers bankingqr/qrcode/paymentgateway AND
+# payment/, which the wallet/slip queues also select). Without coordination
+# the same object was GCS-fetched + OCR'd 2-4x concurrently, and any batch
+# that died mid-flight left its keys pending so every loop re-OCR'd them.
+# Claims are process-wide: a key is fetched/decoded by at most one drain at
+# a time; everyone else skips it (counted as claim_skips, not errors).
+_claims_lock = _th.Lock()
+_claimed: set[str] = set()
+
+
+def claim_keys(keys: list) -> list:
+    """Return the subset of keys not already in flight; claim them."""
+    if not keys:
+        return []
+    with _claims_lock:
+        fresh = [k for k in keys if k not in _claimed]
+        _claimed.update(fresh)
+        with _drain_lock2:
+            _drain_stats["claim_skips"] += len(keys) - len(fresh)
+        return fresh
+
+
+def release_keys(keys: list):
+    if not keys:
+        return
+    with _claims_lock:
+        for k in keys:
+            _claimed.discard(k)
 
 
 def _note_lock_skip(source: str):
@@ -2034,7 +2068,21 @@ class EnrichmentWorker:
         if self.on_result:
             self.on_result({"type": "enriched", "key": key, "payload": payload})
 
-    def process_key(self, key: str, full_scan: bool = False):
+    def process_key(self, key: str, full_scan: bool = False, _claim: bool = True):
+        # _claim=False when the caller (drain_pending/drain_specific batch
+        # path) already owns the claim for this key. Standalone callers
+        # (wallet full-scan pool, POST /api/enrich) claim here so two paths
+        # never OCR the same object concurrently.
+        if _claim:
+            if not claim_keys([key]):
+                return
+        try:
+            self._process_key_inner(key, full_scan=full_scan)
+        finally:
+            if _claim:
+                release_keys([key])
+
+    def _process_key_inner(self, key: str, full_scan: bool = False):
         row = db.get_object_row(key)
         if not row or row.get("enriched"):
             return
@@ -2064,8 +2112,11 @@ class EnrichmentWorker:
             _note_lock_skip("pending")
             return
         try:
-            keys = db.pending_enrichment(batch, full_scan=full_scan)
-            self._drain_keys(keys, workers, full_scan, "pending")
+            keys = claim_keys(db.pending_enrichment(batch, full_scan=full_scan))
+            try:
+                self._drain_keys(keys, workers, full_scan, "pending")
+            finally:
+                release_keys(keys)
         finally:
             self._drain_lock.release()
 
@@ -2074,6 +2125,8 @@ class EnrichmentWorker:
 
         Own lock (never blocks the live pending drain); shares _cpu_pool.
         Callers pass halved workers so concurrent drains fit the core count.
+        Keys already in flight in another drain are skipped via the claim
+        registry (duplicate-OCR guard) instead of being re-fetched/re-OCR'd.
         """
         if not keys:
             return
@@ -2081,17 +2134,33 @@ class EnrichmentWorker:
             _note_lock_skip("specific")
             return
         try:
-            self._drain_keys(list(keys), workers, False, "specific")
+            fresh = claim_keys(list(keys))
+            try:
+                self._drain_keys(fresh, workers, False, "specific")
+            finally:
+                release_keys(fresh)
         finally:
             self._specific_lock.release()
 
     def _drain_keys(
         self, keys: list, workers: int, full_scan: bool, source: str = "pending"
     ):
+        """Drain one claimed batch. Callers own the claims (see claim_keys).
+
+        No-silent-drop rule (hang review 2026-09-07): EVERY key that enters
+        this method leaves either persisted (enriched=1) or error-counted via
+        mark_enrichment_error (bounded retries, then skipped with the error
+        recorded). The old `except: pass` let crashed batches recycle the
+        same keys through fetch+OCR on every loop forever.
+        """
         import time as _t
 
         if not keys:
             return
+        # Keys fetched/decoded but never settled (pool crash, timeout, bug).
+        # The abort handler error-counts exactly these — nothing is silently
+        # re-queued, nothing is double-counted.
+        unsettled: set = set(keys)
         try:
             if workers <= 1:
                 t0 = _t.monotonic()
@@ -2099,8 +2168,16 @@ class EnrichmentWorker:
                 for k in keys:
                     if not self.enabled:
                         break
-                    self.process_key(k, full_scan=full_scan)
-                    done += 1
+                    try:
+                        self.process_key(k, full_scan=full_scan, _claim=False)
+                        done += 1
+                    except Exception as e:
+                        try:
+                            db.mark_enrichment_error(k, f"drain: {e}"[:500])
+                        except Exception:
+                            pass
+                    finally:
+                        unsettled.discard(k)
                 _note_drain(
                     source, len(keys), 0, int((_t.monotonic() - t0) * 1000), 0, done, 0
                 )
@@ -2121,19 +2198,36 @@ class EnrichmentWorker:
             # Fetch is GCS-latency-bound, not CPU-bound: run it wider than the
             # decode worker count so tesseract procs never starve for bytes.
             t_fetch = _t.monotonic()
-            with ThreadPoolExecutor(
-                max_workers=min(16, len(keys) or 1),
-                thread_name_prefix="evidence-fetch",
-            ) as fetch_pool:
-                fetched = list(fetch_pool.map(fetch_one, keys))
+            try:
+                with ThreadPoolExecutor(
+                    max_workers=min(16, len(keys) or 1),
+                    thread_name_prefix="evidence-fetch",
+                ) as fetch_pool:
+                    fetched = list(fetch_pool.map(fetch_one, keys))
+            except Exception as e:
+                for k in keys:
+                    try:
+                        db.mark_enrichment_error(k, f"fetch-pool: {e}"[:500])
+                    except Exception:
+                        pass
+                    unsettled.discard(k)
+                _note_drain(source, len(keys), 0, 0, 0, 0, len(keys))
+                return
             fetch_ms = int((_t.monotonic() - t_fetch) * 1000)
 
             tasks = []
             for key, data, error in fetched:
                 if error:
-                    db.mark_enrichment_error(key, error)
+                    try:
+                        db.mark_enrichment_error(key, error)
+                    except Exception:
+                        pass
+                    unsettled.discard(key)
                 elif data is not None:
                     tasks.append((key, data, full_scan))
+                else:
+                    # already enriched between selection and fetch — settled.
+                    unsettled.discard(key)
             if not tasks:
                 _note_drain(
                     source, len(keys), fetch_ms, 0, 0, 0, len(fetched) - len(tasks)
@@ -2144,8 +2238,42 @@ class EnrichmentWorker:
                     max_workers=workers,
                     mp_context=multiprocessing.get_context("spawn"),
                 )
+            # Deadlock insurance: in-child tesseract already caps at 60s per
+            # image, so a batch exceeding this bound is wedged, not slow.
+            # Generous on purpose — aborting only error-counts keys for a
+            # later bounded retry, it never drops them silently.
+            per_worker = (len(tasks) + max(1, workers) - 1) // max(1, workers)
+            decode_timeout = max(3600.0, 150.0 * per_worker)
             t_dec = _t.monotonic()
-            results = list(self._cpu_pool.map(_decode_task, tasks))
+            try:
+                results = list(
+                    self._cpu_pool.map(_decode_task, tasks, timeout=decode_timeout)
+                )
+            except Exception as e:
+                # Pool wedged or a child crashed (BrokenProcessPool): the pool
+                # object is unusable afterwards — drop it so the next drain
+                # rebuilds a fresh one instead of failing the same way.
+                try:
+                    self._cpu_pool.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
+                self._cpu_pool = None
+                for key, _d, _fs in tasks:
+                    try:
+                        db.mark_enrichment_error(key, f"decode-abort: {e}"[:500])
+                    except Exception:
+                        pass
+                    unsettled.discard(key)
+                _note_drain(
+                    source,
+                    len(keys),
+                    fetch_ms,
+                    int((_t.monotonic() - t_dec) * 1000),
+                    0,
+                    0,
+                    len(tasks),
+                )
+                return
             decode_ms = int((_t.monotonic() - t_dec) * 1000)
             by_key = {k: d for k, d, _fs in tasks}
             try:
@@ -2192,10 +2320,14 @@ class EnrichmentWorker:
             ok = []
             for key, payload, error in results:
                 if error:
-                    db.mark_enrichment_error(key, error)
+                    try:
+                        db.mark_enrichment_error(key, error)
+                    except Exception:
+                        pass
                     errs += 1
                 else:
                     ok.append((key, self._prepare_payload(key, payload)))
+                unsettled.discard(key)
             # One commit per drain: per-key commits made persist take
             # 167-280s live (2026-09-05). Falls back to per-key on any error.
             try:
@@ -2218,7 +2350,15 @@ class EnrichmentWorker:
                     try:
                         self._persist_payload(key, payload)
                         done += 1
-                    except Exception:
+                    except Exception as e:
+                        # Poison-pill guard (2026-09-07): a payload that can
+                        # never persist used to stay enriched=0 forever, so
+                        # every loop re-OCR'd it. Error-count it instead —
+                        # bounded retries, then skipped with error recorded.
+                        try:
+                            db.mark_enrichment_error(key, f"persist: {e}"[:500])
+                        except Exception:
+                            pass
                         errs += 1
             persist_ms = int((_t.monotonic() - t_per) * 1000)
             # Keep the WAL small: a 4.2GB uncheckpointed WAL made this phase
@@ -2230,8 +2370,19 @@ class EnrichmentWorker:
             except Exception:
                 pass
             _note_drain(source, len(keys), fetch_ms, decode_ms, persist_ms, done, errs)
-        except Exception:
-            pass
+        except Exception as e:
+            # Last-resort settlement: anything not persisted or error-counted
+            # above gets a bounded retry count, never a silent re-queue.
+            for k in list(unsettled):
+                try:
+                    db.mark_enrichment_error(k, f"drain-abort: {e}"[:500])
+                except Exception:
+                    pass
+                unsettled.discard(k)
+            try:
+                _note_drain(source, len(keys), 0, 0, 0, 0, len(keys))
+            except Exception:
+                pass
 
     def close(self):
         self.enabled = False

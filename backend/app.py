@@ -2169,6 +2169,76 @@ def healthz():
     return {"ok": True}
 
 
+class _CheckpointState(dict):
+    pass
+
+
+_checkpoint_state: dict = {"running": False, "last": None}
+
+
+@app.post("/api/maintenance/checkpoint")
+def maintenance_checkpoint(truncate: int = Query(1, ge=0, le=1), _=Depends(auth)):
+    """Reclaim the SQLite WAL (hang fix 2026-09-07).
+
+    A reader-pinned 128MB WAL made every drain persist + every dashboard
+    read slower and slower until the app hung. PASSIVE checkpoints run after
+    every drain but cannot proceed while readers hold old frames; a TRUNCATE
+    checkpoint under paused drains resets the file to zero. Runs in a
+    background thread (never blocks the HTTP worker): pauses the drain loops
+    by holding their locks, checkpoints, resumes. Safe to call anytime.
+    """
+    if _checkpoint_state.get("running"):
+        return {"accepted": False, "reason": "already running"}
+    _checkpoint_state["running"] = True
+
+    def _bg():
+        locks = []
+        try:
+            try:
+                w = collector_holder["collector"].enricher
+                if w is not None:
+                    locks = [w._drain_lock, w._specific_lock]
+            except Exception:
+                locks = []
+            for lk in locks:
+                lk.acquire()
+            try:
+                res = db.checkpoint(truncate=bool(truncate))
+            finally:
+                for lk in reversed(locks):
+                    try:
+                        lk.release()
+                    except Exception:
+                        pass
+            _checkpoint_state["last"] = res
+            try:
+                append_collection_log(
+                    {
+                        "event": "monitor_wal_checkpoint",
+                        "method": "TRUNCATE checkpoint under paused drains",
+                        "counts": res if isinstance(res, dict) else {"raw": res},
+                    }
+                )
+            except Exception:
+                pass
+            print(f"[maintenance] checkpoint done: {res}", flush=True)
+        except Exception as e:
+            _checkpoint_state["last"] = {"error": str(e)[:200]}
+        finally:
+            _checkpoint_state["running"] = False
+
+    threading.Thread(target=_bg, daemon=True, name="wal-checkpoint").start()
+    return {"accepted": True}
+
+
+@app.get("/api/maintenance/checkpoint/status")
+def maintenance_checkpoint_status(_=Depends(auth)):
+    return {
+        "running": bool(_checkpoint_state.get("running")),
+        "last": _checkpoint_state.get("last"),
+    }
+
+
 # ---- SPA fallback: serve index.html for any non-/api route when dist exists ----
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str):

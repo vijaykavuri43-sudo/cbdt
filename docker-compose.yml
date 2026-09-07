@@ -37,8 +37,12 @@ services:
       # 2026-09-05 (was default-off): 667K slips unenriched, QR tier no longer
       # starved now the WAL/persist bottleneck is fixed. Batch sized so one
       # drain (~25-30s at 2 specific workers) finishes inside the interval.
+      # 2026-09-07: 192 -> 64. A 192-row slip batch holds the writer lock for
+      # the whole decode+persist (tesseract is ~5-15s/image at 2 workers),
+      # starving sync notifies + dashboard reads until the app hangs. Smaller
+      # batches bound the lock hold; the claim registry dedups overlap.
       - S3LM_SLIP_OCR=${S3LM_SLIP_OCR:-1}
-      - S3LM_SLIP_BATCH=${S3LM_SLIP_BATCH:-192}
+      - S3LM_SLIP_BATCH=${S3LM_SLIP_BATCH:-64}
       - S3LM_SLIP_INTERVAL_SEC=${S3LM_SLIP_INTERVAL_SEC:-30}
       - S3LM_INTELLIGENCE_ROOT=/app/intelligence
       - S3LM_REFERENCE_ROOT=/app/intelligence

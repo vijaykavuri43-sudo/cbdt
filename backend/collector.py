@@ -446,10 +446,14 @@ class Collector:
                         break
                     total_new += self.poll_once(p) or 0
             if total_new and self.enricher:
-                # drain once for the batch, not per-prefix (efficiency)
-                self.enricher.drain_pending(
-                    batch=config.ENRICH_BATCH, workers=config.ENRICH_WORKERS
-                )
+                # drain once for the batch, not per-prefix (efficiency).
+                # Guarded: an inline drain exception must never kill poll_loop.
+                try:
+                    self.enricher.drain_pending(
+                        batch=config.ENRICH_BATCH, workers=config.ENRICH_WORKERS
+                    )
+                except Exception as e:
+                    print(f"[poll-loop] inline drain error: {e}"[:200], flush=True)
             tick += 1
             cold_every = max(
                 1, int(config.COLD_RECHECK_SEC / max(1.0, config.POLL_INTERVAL_SEC))
@@ -470,8 +474,12 @@ class Collector:
                 # being missed).
                 crawl_targets = [p for p in all_p if p.strip("/")]
                 if crawl_targets:
-                    with _TPE(max_workers=2, thread_name_prefix="cold-poll") as ex:
-                        list(ex.map(self.crawl_once, crawl_targets))
+                    # Guarded: a cold-crawl exception must never kill poll_loop.
+                    try:
+                        with _TPE(max_workers=2, thread_name_prefix="cold-poll") as ex:
+                            list(ex.map(self.crawl_once, crawl_targets))
+                    except Exception as e:
+                        print(f"[poll-loop] cold crawl error: {e}"[:200], flush=True)
             self.state["last_poll_utc"] = time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
             )
@@ -494,9 +502,15 @@ class Collector:
         if not self.enricher:
             return
         while not self._stop.is_set():
-            self.enricher.drain_pending(
-                batch=config.ENRICH_BATCH, workers=config.ENRICH_WORKERS
-            )
+            # Hang review 2026-09-07: this loop had NO try/except, so one
+            # unhandled persist/decode error killed the 2s live drain thread
+            # silently and forever. Never let the loop die.
+            try:
+                self.enricher.drain_pending(
+                    batch=config.ENRICH_BATCH, workers=config.ENRICH_WORKERS
+                )
+            except Exception as e:
+                print(f"[enrich-loop] error (loop survives): {e}"[:300], flush=True)
             self._stop.wait(2.0)
 
     def wallet_loop(self):
