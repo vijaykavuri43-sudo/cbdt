@@ -545,5 +545,77 @@ class LedgerParseTests(unittest.TestCase):
         self.assertEqual(rows[0]["utr"], "624439545802")
 
 
+class ExportRailsTests(unittest.TestCase):
+    """Unified LE CSV export: same rows + scores as /api/mule-rails, valid CSV."""
+
+    def setUp(self):
+        c = db.connect()
+        c.execute("DELETE FROM payment_transactions")
+        c.execute("DELETE FROM payment_flow_totals")
+        c.execute("DELETE FROM payment_rail_summary")
+        c.execute("DELETE FROM objects")
+        c.execute("DELETE FROM utr_identity")
+        c.commit()
+        for key, direction, role, gambler in (
+            ("deposit/shared.png", "deposit", "beneficiary", "G6"),
+            ("withdrawal/shared.png", "withdrawal", "sender", "G7"),
+            ("deposit/solo.png", "deposit", "beneficiary", "G8"),
+        ):
+            vpa = "shared@okaxis" if "shared" in key else "solo@okaxis"
+            db.upsert_objects(
+                [
+                    {
+                        "key": key,
+                        "top_prefix": key.split("/")[0] + "/",
+                        "size": 100,
+                        "last_modified": "2026-09-01T10:00:00Z",
+                        "etag": "test",
+                    }
+                ]
+            )
+            db.mark_enriched(
+                key,
+                {
+                    "kind": direction,
+                    "gambler": gambler,
+                    "amount_inr": 1000,
+                    "vpa_details": [
+                        {"vpa": vpa, "role": role, "role_confidence": "high"}
+                    ],
+                },
+            )
+
+    def test_scored_csv_matches_mule_rails_triage(self):
+        import csv
+        import io as _io
+
+        from .app import (
+            _MULE_RAIL_CSV_COLUMNS,
+            _iter_mule_rail_csv,
+            _score_mule_rail_items,
+        )
+
+        raw = db.mule_rails(limit=10**9, offset=0)["items"]
+        self.assertEqual(len(raw), 2)
+        scored = _score_mule_rail_items(raw)
+        by_rail = {item["rail_id"]: item for item in scored}
+        # both-direction rail outranks the deposit-only rail
+        self.assertEqual(by_rail["shared@okaxis"]["priority"], "high")
+        self.assertEqual(by_rail["solo@okaxis"]["priority"], "lead")
+        self.assertEqual(
+            by_rail["shared@okaxis"]["assessment_fact_type"], "analyst_conclusion"
+        )
+        text = "".join(_iter_mule_rail_csv(scored))
+        rows = list(csv.reader(_io.StringIO(text)))
+        self.assertEqual(rows[0], list(_MULE_RAIL_CSV_COLUMNS))
+        self.assertEqual(len(rows), 3)  # header + 2 rails
+        idx = {name: pos for pos, name in enumerate(rows[0])}
+        data = {row[idx["rail_id"]]: row for row in rows[1:]}
+        self.assertEqual(data["shared@okaxis"][idx["priority"]], "high")
+        self.assertEqual(int(data["shared@okaxis"][idx["deposit_transactions"]]), 1)
+        self.assertEqual(int(data["shared@okaxis"][idx["withdrawal_transactions"]]), 1)
+        self.assertEqual(data["solo@okaxis"][idx["priority"]], "lead")
+
+
 if __name__ == "__main__":
     unittest.main()

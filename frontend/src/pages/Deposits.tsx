@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, eventsUrl, objectUrl, tabHidden } from '../lib/api'
+import { api, eventsUrl, exportRailsUrl, objectUrl, tabHidden } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl } from '../lib/explorers'
 import { fmtINR, fmtTime, shortKey } from '../lib/format'
 
@@ -82,6 +82,14 @@ export function Deposits() {
     const blob = new Blob([header + rows], { type: 'text/tab-separated-values' })
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `suspected-mule-rails-${new Date().toISOString().slice(0, 10)}.tsv`; a.click(); URL.revokeObjectURL(a.href)
   }
+  function exportFullRailsCsv() {
+    // Full LE exhibit: server streams every scored + master-badged rail as CSV
+    // (same aggregate as the on-screen triage — not limited to the 200-row page).
+    const a = document.createElement('a')
+    a.href = exportRailsUrl()
+    a.download = `suspected-mule-rails-full-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+  }
   function inspectRail(r: MuleRail) { setQueryInput(r.rail_id); setQuery(r.rail_id); setRailType(r.rail_type as RailType); setPage(0) }
 
   return <>
@@ -91,6 +99,7 @@ export function Deposits() {
         <button className={`ex-toggle ${auto ? 'ex-toggle-on' : ''}`} onClick={() => setAuto(!auto)} title="Re-pull every 12s + instantly on new evidence via SSE">{auto ? '⏸ Auto 12s+live' : '▶ Auto off'}</button>
         <button className="btn" onClick={refresh}>↻ Refresh</button>
         <button className="btn" onClick={exportMuleTsv}>⬇ Export mule candidates</button>
+        <button className="btn" onClick={exportFullRailsCsv} title="Full scored + master-badged rail CSV for LE exhibits (all rails, not just this page)">⬇ Export full CSV (LE)</button>
         <button className="btn" onClick={exportTsv}>⬇ Export current page</button>
       </div>
     </div>

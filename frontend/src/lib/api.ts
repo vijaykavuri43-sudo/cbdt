@@ -100,6 +100,11 @@ export function eventsUrl(): string {
   return `/api/events${at ? '?' + at : ''}`
 }
 
+export function exportRailsUrl(): string {
+  const at = authParams()
+  return `/api/export/rails${at ? '?' + at : ''}`
+}
+
 export interface Status {
   phase: string
   sweep_done: boolean

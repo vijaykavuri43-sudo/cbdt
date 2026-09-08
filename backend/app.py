@@ -2,7 +2,9 @@
 
 import asyncio
 from datetime import datetime, timedelta
+import csv
 import hashlib
+import io
 import json
 import mimetypes
 import os
@@ -14,6 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
+from typing import Any
 
 from . import config, db
 from .collector import Collector, bus, collector_holder
@@ -21,7 +24,7 @@ from .evidence import DownloadManager, append_collection_log
 from .s3client import S3PublicClient
 from .gcsclient import GCSMirrorClient
 
-_stats_cache: dict[str, tuple[float, dict]] = {}
+_stats_cache: dict[str, tuple[float, Any]] = {}
 _stats_locks: dict[str, threading.Lock] = {}
 _stats_locks_guard = threading.Lock()
 _stats_rebuilding: set[str] = set()
@@ -1832,6 +1835,104 @@ def money_flows_api(
     )
 
 
+def _score_mule_rail_items(items: list) -> list:
+    """Score + master-badge raw mule_rails() rows, highest-priority first.
+
+    Shared by /api/mule-rails (paginated JSON) and /api/export/rails (full
+    CSV) so the LE exhibit always matches on-screen triage exactly.
+    Scoring fields are analyst-conclusion triage — never criminal attribution.
+    """
+    from .evidence import load_master_vpas, load_master_wallets
+
+    master_vpas = load_master_vpas()
+    master_wallets = load_master_wallets()
+    for item in items:
+        rail_id = str(item.get("rail_id") or "")
+        known = (
+            rail_id.lower() in master_vpas
+            if item["rail_type"] == "upi"
+            else rail_id.lower() in master_wallets
+            if item["rail_type"] == "crypto_wallet"
+            else False
+        )
+        both = bool(item["deposit_transactions"] and item["withdrawal_transactions"])
+        role_evidence = int(item.get("high_role_evidence") or 0) + int(
+            item.get("medium_role_evidence") or 0
+        )
+        score = min(
+            100,
+            (
+                (30 if both else 0)
+                + min(25, int(item.get("gamblers") or 0) * 4)
+                + min(20, int(item.get("transactions") or 0) * 2)
+                + (10 if int(item.get("object_evidence_rows") or 0) else 0)
+                + (10 if role_evidence else 0)
+                + (20 if known else 0)
+            ),
+        )
+        item["known_indicator"] = known
+        item["candidate_score"] = score
+        item["priority"] = (
+            "high" if score >= 60 else "medium" if score >= 30 else "lead"
+        )
+        item["fact_type"] = "fact"
+        item["assessment_fact_type"] = "analyst_conclusion"
+    return sorted(
+        items,
+        key=lambda item: (
+            item["candidate_score"],
+            item["deposit_transactions"] > 0 and item["withdrawal_transactions"] > 0,
+            item["transactions"],
+            item.get("last_seen") or "",
+        ),
+        reverse=True,
+    )
+
+
+_MULE_RAIL_CSV_COLUMNS = (
+    "priority",
+    "candidate_score",
+    "rail_type",
+    "rail_id",
+    "account_holders",
+    "ifscs",
+    "networks",
+    "transactions",
+    "deposit_transactions",
+    "deposit_amount_inr",
+    "deposit_gamblers",
+    "withdrawal_transactions",
+    "withdrawal_amount_inr",
+    "withdrawal_gamblers",
+    "gamblers",
+    "object_evidence_rows",
+    "reference_rows",
+    "high_role_evidence",
+    "medium_role_evidence",
+    "low_role_evidence",
+    "known_indicator",
+    "first_seen",
+    "last_seen",
+    "fact_type",
+    "assessment_fact_type",
+)
+
+
+def _iter_mule_rail_csv(scored: list):
+    """Yield the full scored rail list as CSV text chunks (bounded memory)."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_MULE_RAIL_CSV_COLUMNS)
+    yield buf.getvalue()
+    buf.seek(0)
+    buf.truncate(0)
+    for item in scored:
+        writer.writerow([item.get(col, "") for col in _MULE_RAIL_CSV_COLUMNS])
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+
 @app.get("/api/mule-rails")
 def mule_rails_api(
     rail_type: str = Query("", pattern="^(|upi|bank_account|crypto_wallet)$"),
@@ -1844,8 +1945,6 @@ def mule_rails_api(
     _=Depends(auth),
 ):
     """Rank observed payment rails for corroboration—not automatic attribution."""
-    from .evidence import load_master_vpas, load_master_wallets
-
     cache_key = (
         f"mule-rails:{rail_type}:{q}:{priority}:{limit}:{offset}:{source}:{new_since}"
     )
@@ -1861,52 +1960,7 @@ def mule_rails_api(
             source=source,
             new_since=new_since,
         )
-        master_vpas = load_master_vpas()
-        master_wallets = load_master_wallets()
-        for item in raw["items"]:
-            rail_id = str(item.get("rail_id") or "")
-            known = (
-                rail_id.lower() in master_vpas
-                if item["rail_type"] == "upi"
-                else rail_id.lower() in master_wallets
-                if item["rail_type"] == "crypto_wallet"
-                else False
-            )
-            both = bool(
-                item["deposit_transactions"] and item["withdrawal_transactions"]
-            )
-            role_evidence = int(item.get("high_role_evidence") or 0) + int(
-                item.get("medium_role_evidence") or 0
-            )
-            score = min(
-                100,
-                (
-                    (30 if both else 0)
-                    + min(25, int(item.get("gamblers") or 0) * 4)
-                    + min(20, int(item.get("transactions") or 0) * 2)
-                    + (10 if int(item.get("object_evidence_rows") or 0) else 0)
-                    + (10 if role_evidence else 0)
-                    + (20 if known else 0)
-                ),
-            )
-            item["known_indicator"] = known
-            item["candidate_score"] = score
-            item["priority"] = (
-                "high" if score >= 60 else "medium" if score >= 30 else "lead"
-            )
-            item["fact_type"] = "fact"
-            item["assessment_fact_type"] = "analyst_conclusion"
-        all_items = sorted(
-            raw["items"],
-            key=lambda item: (
-                item["candidate_score"],
-                item["deposit_transactions"] > 0
-                and item["withdrawal_transactions"] > 0,
-                item["transactions"],
-                item.get("last_seen") or "",
-            ),
-            reverse=True,
-        )
+        all_items = _score_mule_rail_items(raw["items"])
         priority_counts = {
             name: sum(1 for item in all_items if item["priority"] == name)
             for name in ("high", "medium", "lead")
@@ -1923,6 +1977,34 @@ def mule_rails_api(
         return raw
 
     return cached(cache_key, 15.0, build)
+
+
+@app.get("/api/export/rails")
+def export_rails(_=Depends(auth)):
+    """Full suspected-mule-rail CSV for LE exhibits.
+
+    Same one-pass GROUP BY aggregate as /api/mule-rails (db.mule_rails does
+    the whole grouping in a single scan; pagination there is only slicing),
+    same scoring + master badging via _score_mule_rail_items, streamed as CSV
+    chunks so a 10k-rail exhibit never buffers the whole file in memory.
+    Scores are analyst-conclusion triage — not criminal attribution.
+    """
+
+    def build():
+        return _score_mule_rail_items(db.mule_rails(limit=10**9, offset=0)["items"])
+
+    scored = cached("export-rails:full", 60.0, build)
+    stamp = time.strftime("%Y-%m-%d", time.gmtime())
+    return StreamingResponse(
+        _iter_mule_rail_csv(scored),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="suspected-mule-rails-full-{stamp}.csv"'
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/api/extraction/status")
