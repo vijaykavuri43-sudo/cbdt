@@ -53,11 +53,12 @@ services:
       - ../intelligence:/app/intelligence
     restart: unless-stopped
     # 16GB host, ~15GB free (2026-09-03): room for SQLite page cache + RAM thumbs
-
+    # 2026-09-08: 8G limit OOM-killed s3lm 3x in 3 days (Sep 5/6/7 serial log);
+    # host is e2-standard-8 (32GB, ~20GB headroom) so allow 16G.
     deploy:
       resources:
         limits:
-          memory: 8G
+          memory: 16G
 
   # Continuous S3 -> GCS evidence mirror sync (Defect A fix, staleness review
   # 2026-09-02): the s3lm dashboard reads gs://cbtf…/s3-mirror/, which was
