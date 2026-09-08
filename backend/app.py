@@ -1283,7 +1283,10 @@ def get_object(
     mirror_src: dict = {}
     try:
         resp, headers = object_store.get_object_stream(key)
-    except RuntimeError as e:
+    except Exception as e:
+        # Never 500 on preview (UPI/Mules "view QR" internal-error, 2026-09-08):
+        # GCS raises google.api_core exceptions (NotFound/Forbidden/ServiceUnavailable),
+        # not just RuntimeError — all become a clean 404/502 with an S3-repair attempt.
         # Mirror-lag fallback (chat PNG broken-preview, 2026-09-05): a key can
         # be listed (manifest/live) before the GCS mirror copy lands, so the
         # primary fetch 404s while public S3 already serves the bytes. Try S3
@@ -1313,14 +1316,19 @@ def get_object(
                 }
                 mirror_src = {"X-Object-Source": "s3-repair"}
             else:
-                raise HTTPException(
-                    404,
-                    f"{e} (S3 fallback "
-                    f"{'failed: ' + alt_err if alt is None else 'also failed verify'}"
-                    " — new uploads can lag the mirror; retry shortly)",
-                )
+                # Missing in both stores -> 404; fetch itself blew up (non-404
+                # error) -> 502, never a bare 500 "Internal Server Error".
+                msg = str(e)[:200]
+                if "not found" in msg.lower() or "404" in msg or alt is None:
+                    raise HTTPException(
+                        404,
+                        f"{msg} (S3 fallback "
+                        f"{'failed: ' + alt_err if alt is None else 'also failed verify'}"
+                        " — new uploads can lag the mirror; retry shortly)",
+                    )
+                raise HTTPException(502, f"object fetch failed: {msg}")
         else:
-            raise HTTPException(404, str(e))
+            raise HTTPException(404, str(e)[:200])
     mt = (
         mimetypes.guess_type(key)[0]
         or headers.get("content_type")
@@ -1476,8 +1484,27 @@ def get_object(
                 **mirror_src,
             },
         )
+    # Unbuffered path: pull bytes NOW when bounded (clean 502 on mirror failure,
+    # never a truncated 200 the browser reports as "internal error" on view QR).
+    # Huge downloads (>file cap) keep true streaming to avoid memory blowup.
+    if size_hint and size_hint <= _OBJ_CACHE_FILE_CAP:
+        try:
+            _tail = b"".join(resp.iter_bytes(65536))
+        except Exception as e:
+            try:
+                resp.close()
+            except Exception:
+                pass
+            raise HTTPException(502, f"object stream failed: {str(e)[:160]}")
+        try:
+            resp.close()
+        except Exception:
+            pass
+        stream_body = [_tail].__iter__()
+    else:
+        stream_body = resp.iter_bytes(65536)
     return StreamingResponse(
-        resp.iter_bytes(65536),
+        stream_body,
         media_type=media,
         headers={
             "Content-Disposition": f'{"attachment" if download else "inline"}; filename="{filename}"',
