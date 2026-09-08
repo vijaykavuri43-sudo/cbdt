@@ -112,6 +112,32 @@ def log(msg: str):
         print(line, flush=True)
 
 
+# Degraded write-blocked mode (review 2026-09-08): when GCS writes fail
+# (e.g. project billing delinquent -> 403 on every upload), the daemon must
+# NOT die and docker-restart-loop. It keeps LISTing S3 + local inventory +
+# status publishes, pauses all downloads/uploads, and re-probes write
+# capability each cycle so it self-heals the moment billing is fixed.
+WRITE_STATE = {"blocked": False, "reason": ""}
+
+
+def probe_writes(bucket, hb) -> tuple:
+    """One tiny heartbeat upload. Returns (ok, err); never raises."""
+    try:
+        hb.metadata = {"case_id": CASE_ID, "authorization_ref": AUTH_REF}
+        hb.upload_from_string(
+            f"{utcnow()} alive case={CASE_ID}\n",
+            content_type="text/plain",
+        )
+        return True, ""
+    except Exception as e:
+        return False, str(e)[:200]
+
+
+def uploads_paused() -> bool:
+    """True while GCS writes are known-blocked (degraded read-only mode)."""
+    return WRITE_STATE["blocked"]
+
+
 def _audit(summary: str, fact_type: str = "fact", ref: str = ""):
     """Append a chain-of-custody fact to intelligence/audit/collection-log.jsonl.
 
@@ -735,18 +761,22 @@ def main():
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
-    # write-capability check early (VM SA must be able to create objects)
+    # write-capability check early (VM SA must be able to create objects).
+    # Degraded-mode review 2026-09-08: a failed probe (e.g. 403 billing
+    # delinquent) must NOT kill the daemon into a docker restart loop.
+    # Enter listing-only mode; the per-cycle probe below self-heals.
     hb = bucket.blob(SYNC_STATUS_PREFIX + "heartbeat.txt")
-    hb.metadata = {
-        "case_id": CASE_ID,
-        "authorization_ref": AUTH_REF,
-        "purpose": "sync-daemon heartbeat",
-    }
-    hb.upload_from_string(
-        f"{utcnow()} sync-daemon-started case={CASE_ID}\n",
-        content_type="text/plain",
-    )
-    log(f"started: S3 {S3_BUCKET_URL} -> gs://{GCS_BUCKET}/{GCS_PREFIX}")
+    ok, err = probe_writes(bucket, hb)
+    if ok:
+        log(f"started: S3 {S3_BUCKET_URL} -> gs://{GCS_BUCKET}/{GCS_PREFIX}")
+    else:
+        WRITE_STATE.update(blocked=True, reason=err)
+        log(f"STARTUP DEGRADED — GCS writes blocked: {err[:160]}")
+        log(
+            "listing-only mode: S3 inventory + status continue, "
+            "uploads paused until writes recover"
+        )
+        log(f"started (DEGRADED): S3 {S3_BUCKET_URL} -> gs://{GCS_BUCKET}/{GCS_PREFIX}")
     log(
         f"state={STATE_DB} get_rate={RATE_PER_SEC}/s list_rate={LIST_RATE_PER_SEC}/s "
         f"workers={WORKERS} cycle={CYCLE_SEC}s"
@@ -802,6 +832,21 @@ def main():
             cycle += 1
             t0 = time.monotonic()
             cycle_scanned = 0
+            # Write-capability probe (degraded-mode review 2026-09-08):
+            # one tiny upload per cycle; flips listing-only mode on/off so
+            # the daemon survives billing outages and self-heals after.
+            ok, err = probe_writes(bucket, hb)
+            if ok:
+                if WRITE_STATE["blocked"]:
+                    WRITE_STATE.update(blocked=False, reason="")
+                    log("GCS writes recovered — resuming uploads")
+            else:
+                if not WRITE_STATE["blocked"]:
+                    log(f"GCS writes blocked ({err[:120]}) — listing-only mode")
+                WRITE_STATE.update(blocked=True, reason=err)
+            degraded = uploads_paused()
+            if degraded:
+                log(f"cycle {cycle}: DEGRADED — listing only, uploads paused")
             # discover prefixes each cycle (operators add folders)
             try:
                 tops = lister.top_prefixes()
@@ -836,7 +881,7 @@ def main():
             except sqlite3.Error:
                 pending_retries = 0
                 terminal_tombstones = 0
-            if pending_retries:
+            if pending_retries and not degraded:
                 log(f"retrying {pending_retries:,} tombstoned object(s)…")
                 retried = 0
                 for rk, rsize, retag in state.execute(
@@ -859,6 +904,8 @@ def main():
                     for k2, s2, e2, l2 in diff_against_state(state, entries):
                         if s2 > MAX_SYNC_BYTES:
                             oversized += 1
+                            continue
+                        if degraded:
                             continue
                         rate_q.put((k2, s2, e2))
                         queued += 1
@@ -889,6 +936,8 @@ def main():
                                 if s2 > MAX_SYNC_BYTES:
                                     oversized += 1
                                     continue
+                                if degraded:
+                                    continue
                                 rate_q.put((k2, s2, e2))
                                 queued += 1
                             page_buf = []
@@ -896,6 +945,8 @@ def main():
                         for k2, s2, e2, _ in diff_against_state(state, page_buf):
                             if s2 > MAX_SYNC_BYTES:
                                 oversized += 1
+                                continue
+                            if degraded:
                                 continue
                             rate_q.put((k2, s2, e2))
                             queued += 1
@@ -938,6 +989,8 @@ def main():
                             "utc": utcnow(),
                             "cycle": cycle,
                             "state": "syncing" if queued else "idle",
+                            "writes_blocked": WRITE_STATE["blocked"],
+                            "writes_block_reason": WRITE_STATE["reason"][:160],
                             "queued_pending": queued,
                             "tombstones_pending": pending_retries,
                             "tombstones_terminal": terminal_tombstones,
@@ -1002,6 +1055,8 @@ def main():
                             "utc": utcnow(),
                             "cycle": cycle,
                             "state": "idle",
+                            "writes_blocked": WRITE_STATE["blocked"],
+                            "writes_block_reason": WRITE_STATE["reason"][:160],
                             "queued_pending": 0,
                             "tombstones_pending": pending_retries,
                             "tombstones_terminal": terminal_tombstones,
