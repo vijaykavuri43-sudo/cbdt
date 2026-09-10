@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Usage:  ./deploy/deploy.sh [vm-name]        (default: s3lm-budget)
 # Env:    DEPLOY_BRANCH=main  GCP_PROJECT  GCP_ZONE
-PROJECT="${GCP_PROJECT:-learn2earn-4f6a5}"
+PROJECT="${GCP_PROJECT:-project-9641a7b9-3759-4c98-9b8}"
 VM="${1:-s3lm-budget}"
 ZONE="${GCP_ZONE:-asia-south1-a}"
 BRANCH="${DEPLOY_BRANCH:-main}"

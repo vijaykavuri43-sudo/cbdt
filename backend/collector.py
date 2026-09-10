@@ -246,7 +246,9 @@ class Collector:
         v = db.get_meta(f"wm:{prefix}")
         return v or None
 
-    def poll_once(self, prefix: str, cold: bool = False) -> int:
+    def poll_once(
+        self, prefix: str, cold: bool = False, quiet: bool | None = None
+    ) -> int:
         start_after = None if cold else self._watermark(prefix)
         fresh: list[dict] = []
         max_key = None
@@ -276,10 +278,22 @@ class Collector:
             return 0
         inserted = 0
         if fresh:
+            # Quiet catch-up (review 2026-09-10): on a DB that never finished
+            # a full sweep every cold pass looks "new" and the oldest-2000
+            # keys per prefix flood the SSE feed as if freshly uploaded.
+            # Suppress publish until the first sweep completes; DB inserts
+            # and watermark advances still proceed normally.
+            if quiet is None:
+                try:
+                    quiet = not db.get_meta("sweep_complete_utc")
+                except Exception:
+                    quiet = False
             changed = self._changed_objects(fresh)
             inserted = db.upsert_objects(fresh)
             if max_key:
                 db.set_meta(f"wm:{prefix}", max_key)
+            if quiet:
+                return inserted
             for o in changed:
                 bus.publish(
                     {
@@ -295,7 +309,9 @@ class Collector:
         return inserted
 
     # ---------- wrapping key-order crawl ----------
-    def crawl_once(self, prefix: str, cap: int | None = None) -> int:
+    def crawl_once(
+        self, prefix: str, cap: int | None = None, quiet: bool | None = None
+    ) -> int:
         """Re-check a prefix in key order behind a rolling cursor that wraps.
 
         poll_once can only see keys lexicographically AFTER the stored
@@ -349,8 +365,15 @@ class Collector:
                 last_key = None  # exhausted keyspace -> wrap to start next call
                 break
         inserted = 0
+        if quiet is None:
+            try:
+                quiet = not db.get_meta("sweep_complete_utc")
+            except Exception:
+                quiet = False
         try:
             inserted = db.upsert_objects(changed)
+            if quiet:
+                return inserted
             for o in changed:
                 bus.publish(
                     {
@@ -376,7 +399,7 @@ class Collector:
                 self.state["crawl_skipped_pages"][prefix] = stale_pages
         return inserted
 
-    def poll_root_files(self) -> int:
+    def poll_root_files(self, quiet: bool | None = None) -> int:
         """Index objects sitting at bucket root (no folder) — missed by prefix sweeps."""
         fresh: list[dict] = []
         try:
@@ -396,6 +419,13 @@ class Collector:
         except Exception:
             return 0
         inserted = db.upsert_objects(fresh)
+        if quiet is None:
+            try:
+                quiet = not db.get_meta("sweep_complete_utc")
+            except Exception:
+                quiet = False
+        if quiet:
+            return inserted
         for o in fresh[:inserted]:
             bus.publish(
                 {

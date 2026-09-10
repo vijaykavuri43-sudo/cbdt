@@ -92,7 +92,7 @@ export function Wallets() {
   }, [refresh, refreshScan])
 
   async function startFullScan() {
-    if (!confirm('Full-bucket wallet scan: prioritized QR → slips → all chat_file images directly against GCS s3-mirror (gs://cbtf-case-evidence-991096649643/s3-mirror/). 50k objects ≈ 20–40 min at 6 workers. Continue?')) return
+    if (!confirm(`Full-bucket wallet scan: prioritized QR → slips → all chat_file images directly against GCS s3-mirror (${data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}). 50k objects ≈ 20–40 min at 6 workers. Continue?`)) return
     try {
       await post('/api/wallets/full-scan?limit=50000&concurrency=6')
       refreshScan()
@@ -154,7 +154,7 @@ export function Wallets() {
           <div>
             <h1 className="pg-header-title">Crypto Wallets</h1>
             <div className="pg-header-sub">
-              Live source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-991096649643/s3-mirror/'}</span> · TRON / EVM / BTC from QR · slips · all chat_file images (full-scan) · vs{' '}
+              Live source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}</span> · TRON / EVM / BTC from QR · slips · all chat_file images (full-scan) · vs{' '}
               {(data?.master_size ?? 0).toLocaleString()} known operator · master only for badge: <span className="mono">{data?.master_source ?? 'LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv'}</span>
             </div>
           </div>

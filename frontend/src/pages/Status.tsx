@@ -154,7 +154,7 @@ export function StatusPage() {
           <span className="pg-header-icon">◉</span>
           <div>
             <h1 className="pg-header-title">Overview</h1>
-            <div className="pg-header-sub">Read-only monitoring · {st?.auth_ref} · Source: {st?.effective_source ?? st?.object_source ?? 'gcs'}{st?.effective_source === 's3-fallback' ? ' (direct S3 — GCS creds absent)' : ''} · gcs_mirror: cbtf-case-evidence-991096649643/s3-mirror/</div>
+            <div className="pg-header-sub">Read-only monitoring · {st?.auth_ref} · Source: {st?.effective_source ?? st?.object_source ?? 'gcs'}{st?.effective_source === 's3-fallback' ? ' (direct S3 — GCS creds absent)' : ''} · gcs_mirror: {st?.bucket_url?.replace(/^gs:\/\//, '') ?? '…'}</div>
           </div>
         </div>
         <div className="pg-header-right">
@@ -251,7 +251,7 @@ export function StatusPage() {
           })()}
         </div>
         <div className="small dim" style={{ marginTop: 4 }}>
-          Live sync: <code className="mono">{st?.effective_source ?? st?.object_source ?? 'gcs'}</code> via <code className="mono">gs://cbtf-case-evidence-991096649643/s3-mirror/</code> · Watermarks <code className="mono">wm:&lt;prefix&gt;</code> + poll interval 10s hot / 900s cold-crawl (wrapping cursor) · Cold catch-up: <code className="mono">POST /api/verify</code> · Recon script: <code className="mono">scripts/reconcile_s3_gcs_shard.py</code>
+          Live sync: <code className="mono">{st?.effective_source ?? st?.object_source ?? 'gcs'}</code> via <code className="mono">{st?.bucket_url ?? 'gs://…'}</code> · Watermarks <code className="mono">wm:&lt;prefix&gt;</code> + poll interval 10s hot / 900s cold-crawl (wrapping cursor) · Cold catch-up: <code className="mono">POST /api/verify</code> · Recon script: <code className="mono">scripts/reconcile_s3_gcs_shard.py</code>
         </div>
       </div>
 
@@ -285,7 +285,7 @@ export function StatusPage() {
             </div>
             {mirrorSync.status?.source_inventory_oldest_scan_utc && <div className="tiny dim" style={{ marginTop: 7 }}>Inventory completeness: {mirrorSync.status.source_inventory_complete ? 'complete' : 'building'} · oldest prefix measurement {fmtTime(mirrorSync.status.source_inventory_oldest_scan_utc)} UTC</div>}
             <div className="tiny dim" style={{ marginTop: 6 }}>
-              Daemon container <code className="mono">s3sync</code> mirrors the live S3 evidence bucket into <code className="mono">gs://cbtf-case-evidence-991096649643/s3-mirror/</code> with ISO-8601 custody metadata (sha256 + etag), so this dashboard stays real-time.
+              Daemon container <code className="mono">s3sync</code> mirrors the live S3 evidence bucket into <code className="mono">{mirrorSync.status?.gcs_target ?? st?.bucket_url ?? '…'}</code> with ISO-8601 custody metadata (sha256 + etag), so this dashboard stays real-time.
               {' '}{mirrorSync.status?.oversized_skipped ? `· ${mirrorSync.status.oversized_skipped.toLocaleString()} oversized objects skipped (already preserved)` : ''}
             </div>
           </>

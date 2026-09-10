@@ -3,6 +3,9 @@ services:
     build: .
     image: s3lm:latest
     container_name: s3lm
+    # multi-worker uvicorn (review 2026-09-10): a single worker wedges the
+    # whole dashboard when one request blocks — 4 workers on 8-vCPU hosts.
+    command: ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8787", "--workers", "4"]
     ports:
       - "80:8787"
     environment:
@@ -12,10 +15,10 @@ services:
       - S3LM_HOST=0.0.0.0
       - S3LM_PORT=8787
       - S3LM_OBJECT_SOURCE=gcs
-      - S3LM_GCS_BUCKET=cbtf-case-evidence-991096649643
+      - S3LM_GCS_BUCKET=${S3LM_GCS_BUCKET:-cbtf-case-evidence-518405669914}
       - S3LM_GCS_PREFIX=s3-mirror/
       - S3LM_ENRICH_MAX_AGE_HOURS=0
-      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-4}
+      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-8}
       - S3LM_ENRICH_BATCH=${S3LM_ENRICH_BATCH:-96}
       - OMP_THREAD_LIMIT=1
       # Gemini Vision verify (key lives ONLY in the VM .env, never in git)
@@ -32,7 +35,10 @@ services:
       - S3LM_AIASK_DAILY_CAP=${S3LM_AIASK_DAILY_CAP:-500}
       - S3LM_AIASK_PER_MIN=${S3LM_AIASK_PER_MIN:-10}
       - S3LM_COLD_SEC=${S3LM_COLD_SEC:-1800}
-      - S3LM_CRAWL_CAP=${S3LM_CRAWL_CAP:-5000}
+      # 2026-09-10: 5000/cycle × 30min cold cadence wrapped 490K-key prefixes
+      # in ~49h, so uploads behind the key-watermark surfaced days late.
+      # 20000 cuts the worst wrap to ~12h; LIST cost is negligible.
+      - S3LM_CRAWL_CAP=${S3LM_CRAWL_CAP:-20000}
       # Gambler-slip OCR loop (deposit/withdrawal VPAs/UTRs). Enabled
       # 2026-09-05 (was default-off): 667K slips unenriched, QR tier no longer
       # starved now the WAL/persist bottleneck is fixed. Batch sized so one
@@ -77,11 +83,11 @@ services:
         condition: service_healthy
     environment:
       - S3SYNC_BUCKET_URL=${S3SYNC_BUCKET_URL:-https://bx-s3-dev-001.s3.ap-southeast-1.amazonaws.com}
-      - S3SYNC_GCS_BUCKET=${S3SYNC_GCS_BUCKET:-cbtf-case-evidence-991096649643}
+      - S3SYNC_GCS_BUCKET=${S3SYNC_GCS_BUCKET:-cbtf-case-evidence-518405669914}
       - S3SYNC_GCS_PREFIX=${S3SYNC_GCS_PREFIX:-s3-mirror/}
       - S3SYNC_STATE_DB=/root/.local/share/s3-sync/state.db
       - S3SYNC_RATE_PER_SEC=${S3SYNC_RATE_PER_SEC:-4}
-      - S3SYNC_WORKERS=${S3SYNC_WORKERS:-4}
+      - S3SYNC_WORKERS=${S3SYNC_WORKERS:-8}
       - S3SYNC_CYCLE_SEC=${S3SYNC_CYCLE_SEC:-60}
       - S3SYNC_CATCHUP_CYCLE_SEC=${S3SYNC_CATCHUP_CYCLE_SEC:-5}
       - S3SYNC_MAX_BYTES=${S3SYNC_MAX_BYTES:-536870912}

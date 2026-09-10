@@ -965,36 +965,49 @@ def main():
                 f"scanned_total={stats['scanned']:,} queued={queued:,} "
                 f"root_files={root_files} oversized_skipped={oversized}"
             )
+
             # Publish status BEFORE draining the queue (review 2026-09-02):
             # cycle 1 on a fresh state DB can drain for hours (3,595-object
             # catch-up took ~40 min). Publishing only after the drain left
             # status.json absent, and the dashboard reported "NO SYNC YET —
             # mirror may be frozen" during perfectly normal catch-up.
-            try:
-                (mirror_n,) = state.execute("SELECT COUNT(*) FROM synced").fetchone()
+            #
+            # Heartbeat refactor (review 2026-09-10): one builder serves the
+            # pre-drain publish, the in-drain heartbeat, and the post-drain
+            # snapshot, so status.json utc never goes stale during 30+ min
+            # drains (832K-object listings kept the dashboard at STALE).
+            def publish_cycle_status(state_label, queued_pending, took_sec):
+                (mirror_n2,) = state.execute("SELECT COUNT(*) FROM synced").fetchone()
+                (retr2,) = state.execute(
+                    "SELECT COUNT(*) FROM sync_failures "
+                    "WHERE fail_count>0 AND terminal=0"
+                ).fetchone()
+                (term2,) = state.execute(
+                    "SELECT COUNT(*) FROM sync_failures WHERE terminal=1"
+                ).fetchone()
                 hb.metadata = {"case_id": CASE_ID, "authorization_ref": AUTH_REF}
                 hb.upload_from_string(
                     f"{utcnow()} cycle={cycle} alive\n",
                     content_type="text/plain",
                 )
-                status_blob = bucket.blob(SYNC_STATUS_PREFIX + "status.json")
-                status_blob.metadata = {
+                sb = bucket.blob(SYNC_STATUS_PREFIX + "status.json")
+                sb.metadata = {
                     "case_id": CASE_ID,
                     "authorization_ref": AUTH_REF,
                 }
-                inventory = source_inventory_summary(state, tops or targets)
-                status_blob.upload_from_string(
+                inv = source_inventory_summary(state, tops or targets)
+                sb.upload_from_string(
                     json.dumps(
                         {
                             "utc": utcnow(),
                             "cycle": cycle,
-                            "state": "syncing" if queued else "idle",
+                            "state": state_label,
                             "writes_blocked": WRITE_STATE["blocked"],
                             "writes_block_reason": WRITE_STATE["reason"][:160],
-                            "queued_pending": queued,
-                            "tombstones_pending": pending_retries,
-                            "tombstones_terminal": terminal_tombstones,
-                            "cycle_took_sec": round(time.monotonic() - t0, 1),
+                            "queued_pending": queued_pending,
+                            "tombstones_pending": retr2,
+                            "tombstones_terminal": term2,
+                            "cycle_took_sec": round(took_sec, 1),
                             "scanned_this_cycle": cycle_scanned,
                             "scanned_total": stats["scanned"],
                             "queued": queued,
@@ -1004,14 +1017,14 @@ def main():
                             "dashboard_notified": stats["notified"],
                             "dashboard_notify_errors": stats["notify_errors"],
                             "oversized_skipped": oversized,
-                            "gcs_mirror_objects": mirror_n,
+                            "gcs_mirror_objects": mirror_n2,
                             "preserved_only_estimate": max(
                                 0,
-                                mirror_n - int(inventory["source_inventory_objects"]),
+                                mirror_n2 - int(inv["source_inventory_objects"]),
                             )
-                            if inventory["source_inventory_complete"]
+                            if inv["source_inventory_complete"]
                             else None,
-                            **inventory,
+                            **inv,
                             "s3_bucket": S3_BUCKET_URL,
                             "gcs_target": f"gs://{GCS_BUCKET}/{GCS_PREFIX}",
                             "case": CASE_ID,
@@ -1021,72 +1034,33 @@ def main():
                     ),
                     content_type="application/json",
                 )
+
+            try:
+                publish_cycle_status(
+                    "syncing" if queued else "idle", queued, time.monotonic() - t0
+                )
             except Exception as e:
                 log(f"status publish failed: {str(e)[:120]}")
-            # drain queue (join waits for task_done on every item)
-            while not stop_evt.is_set():
-                try:
-                    rate_q.join()
-                    break
-                except Exception:
-                    time.sleep(0.5)
+            # drain queue with a 60s heartbeat: join() alone blocks for the
+            # whole drain, so the loop polls unfinished_tasks and republishes
+            # live queue depth instead of leaving status.json frozen.
+            last_hb = time.monotonic()
+            while rate_q.unfinished_tasks > 0 and not stop_evt.is_set():
+                time.sleep(2)
+                if time.monotonic() - last_hb >= 60:
+                    last_hb = time.monotonic()
+                    try:
+                        publish_cycle_status(
+                            "draining", rate_q.qsize(), time.monotonic() - t0
+                        )
+                    except Exception as e:
+                        log(f"drain heartbeat failed: {str(e)[:120]}")
             took = time.monotonic() - t0
             # Publish a post-drain snapshot. Without this, the dashboard keeps
             # showing the pre-drain queue until the next multi-minute source
             # listing finishes, even though every object is already mirrored.
             try:
-                (mirror_n,) = state.execute("SELECT COUNT(*) FROM synced").fetchone()
-                (pending_retries,) = state.execute(
-                    "SELECT COUNT(*) FROM sync_failures "
-                    "WHERE fail_count>0 AND terminal=0"
-                ).fetchone()
-                (terminal_tombstones,) = state.execute(
-                    "SELECT COUNT(*) FROM sync_failures WHERE terminal=1"
-                ).fetchone()
-                inventory = source_inventory_summary(state, tops or targets)
-                status_blob = bucket.blob(SYNC_STATUS_PREFIX + "status.json")
-                status_blob.metadata = {
-                    "case_id": CASE_ID,
-                    "authorization_ref": AUTH_REF,
-                }
-                status_blob.upload_from_string(
-                    json.dumps(
-                        {
-                            "utc": utcnow(),
-                            "cycle": cycle,
-                            "state": "idle",
-                            "writes_blocked": WRITE_STATE["blocked"],
-                            "writes_block_reason": WRITE_STATE["reason"][:160],
-                            "queued_pending": 0,
-                            "tombstones_pending": pending_retries,
-                            "tombstones_terminal": terminal_tombstones,
-                            "cycle_took_sec": round(took, 1),
-                            "scanned_this_cycle": cycle_scanned,
-                            "scanned_total": stats["scanned"],
-                            "queued": queued,
-                            "uploaded_total": stats["uploaded"],
-                            "bytes_total": stats["bytes"],
-                            "errors": stats["errors"],
-                            "dashboard_notified": stats["notified"],
-                            "dashboard_notify_errors": stats["notify_errors"],
-                            "oversized_skipped": oversized,
-                            "gcs_mirror_objects": mirror_n,
-                            "preserved_only_estimate": max(
-                                0,
-                                mirror_n - int(inventory["source_inventory_objects"]),
-                            )
-                            if inventory["source_inventory_complete"]
-                            else None,
-                            **inventory,
-                            "s3_bucket": S3_BUCKET_URL,
-                            "gcs_target": f"gs://{GCS_BUCKET}/{GCS_PREFIX}",
-                            "case": CASE_ID,
-                            "authorization_ref": AUTH_REF,
-                        },
-                        indent=1,
-                    ),
-                    content_type="application/json",
-                )
+                publish_cycle_status("idle", 0, took)
             except Exception as e:
                 log(f"post-drain status publish failed: {str(e)[:120]}")
             if args.once:
