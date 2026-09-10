@@ -1806,6 +1806,11 @@ def money_flows(
         args + [limit, offset],
     ).fetchall()
     total_rows = materialized["rows_total"] if materialized else coverage["rows_total"]
+    src_new = c.execute(
+        "SELECT MAX(last_modified) m FROM payment_transactions "
+        "WHERE direction=? AND source_key NOT LIKE 'reference:%'",
+        (direction,),
+    ).fetchone()
     items = []
     for row in rows:
         item = dict(row)
@@ -1845,6 +1850,7 @@ def money_flows(
         )
         or 0,
         "rows_total": total_rows,
+        "src_newest": src_new["m"] if src_new else None,
         "summary_refreshed_utc": materialized["refreshed_utc"]
         if materialized
         else None,
