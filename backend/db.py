@@ -654,6 +654,7 @@ def list_objects(
     order_sql = {
         "key": "key ASC",
         "-modified": "last_modified DESC, key DESC",
+        "-seen": "seen_utc DESC, key DESC",
         "size": "size DESC, key ASC",
     }[order]
     rows = conn.execute(

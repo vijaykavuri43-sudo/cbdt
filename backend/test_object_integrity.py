@@ -136,6 +136,29 @@ class RepairRouteTests(unittest.TestCase):
             app._OBJ_CACHE_DIR,
         ) = self._old
 
+    def test_transcode_wav_rejects_garbage(self):
+        # No ffmpeg output possible from non-media bytes (and None when
+        # ffmpeg is absent): caller must serve the original instead.
+        self.assertIsNone(app._transcode_wav(b""))
+        self.assertIsNone(app._transcode_wav(GARBAGE))
+
+    def test_format_wav_fallback_or_transcode(self):
+        import shutil
+
+        app.object_store = _FakeGCS(GOOD_WEBM, hashlib.sha256(GOOD_WEBM).hexdigest())
+        app._fetch_repair_bytes = lambda key: (None, "s3 404")  # noqa: E731
+        resp = app.get_object(
+            WAV_KEY, _req(), download=0, thumb=0, format="wav", _=None
+        )
+        self.assertEqual(resp.status_code, 200)
+        if shutil.which("ffmpeg") is None:
+            # no transcoder: original webm served untouched
+            self.assertEqual(resp.media_type, "audio/webm")
+            self.assertEqual(_body_of(resp), GOOD_WEBM)
+        else:
+            self.assertEqual(resp.media_type, "audio/wav")
+            self.assertEqual(_body_of(resp)[:4], b"RIFF")
+
     def test_corrupt_mirror_repaired_from_s3(self):
         app.object_store = _FakeGCS(GARBAGE, hashlib.sha256(GOOD_WEBM).hexdigest())
         app._fetch_repair_bytes = lambda key: (GOOD_WEBM, "")  # noqa: E731

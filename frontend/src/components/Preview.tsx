@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, objectUrl, type ExtractPayload, type ObjRow } from '../lib/api'
+import { api, objectUrl, CAN_PLAY_WEBM_OPUS, type ExtractPayload, type ObjRow } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { extOf, fmtBytes, fmtTime, kindOf, shortKey } from '../lib/format'
 import { SheetViewer } from './SheetViewer'
@@ -240,7 +240,7 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
                   <a className="btn btn-primary" href={objectUrl(obj.key, true)} download>⛨ Download</a>
                 </div>
               ) : (
-                <audio controls preload="metadata" src={objectUrl(obj.key)} style={{ width: '100%' }} onError={() => setMediaErr(true)} />
+                <audio controls preload="metadata" src={CAN_PLAY_WEBM_OPUS ? objectUrl(obj.key) : objectUrl(obj.key, false, 0, 'wav')} style={{ width: '100%' }} onError={() => setMediaErr(true)} />
               )
             ) : kind === 'video' ? (
               mediaErr ? (

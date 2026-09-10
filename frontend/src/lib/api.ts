@@ -90,10 +90,16 @@ function clean(p: Record<string, any>) {
   return o
 }
 
-export function objectUrl(key: string, download = false, thumb = 0): string {
+export function objectUrl(key: string, download = false, thumb = 0, format = ''): string {
   const at = authParams()
-  return `/api/object?key=${encodeURIComponent(key)}${download ? '&download=1' : ''}${thumb ? `&thumb=${thumb}` : ''}${at ? '&' + at : ''}`
+  return `/api/object?key=${encodeURIComponent(key)}${download ? '&download=1' : ''}${thumb ? `&thumb=${thumb}` : ''}${format ? `&format=${format}` : ''}${at ? '&' + at : ''}`
 }
+
+// True when this browser can play Opus-in-WebM voice notes natively
+// (Chrome/Edge/Firefox). Safari answers '' and needs the ?format=wav
+// server transcode instead of showing 'browser can't preview this clip'.
+export const CAN_PLAY_WEBM_OPUS: boolean =
+  typeof Audio !== 'undefined' && new Audio().canPlayType('audio/webm; codecs="opus"') !== ''
 
 export function eventsUrl(): string {
   const at = authParams()

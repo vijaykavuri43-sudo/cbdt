@@ -585,7 +585,7 @@ def list_objs(
     q: str = "",
     limit: int = Query(200, le=1000),
     offset: int = 0,
-    order: str = Query("key", pattern="^(key|-modified|size)$"),
+    order: str = Query("key", pattern="^(key|-modified|-seen|size)$"),
     ext: str = Query("", description="comma list e.g. .jpg,.png"),
     since: str = Query("", description="YYYY-MM-DD or ISO ts"),
     flat: int = 0,
@@ -1073,6 +1073,51 @@ def _range_response(body: bytes, media: str, base_headers: dict, range_header: s
     )
 
 
+def _transcode_wav(data: bytes) -> bytes | None:
+    """Transcode Opus-in-WebM bytes to WAV (Safari voice-note fix).
+
+    WhatsApp voice notes are Opus-in-WebM misnamed .wav; the backend
+    correctly serves audio/webm, but Safari cannot decode WebM/Opus, so
+    officers on iPhones see 'browser can't preview this clip'. A mono
+    16kHz WAV plays everywhere. Small clips transcode in ~ms; the
+    result flows through the normal disk cache. Returns None when
+    ffmpeg is missing or the transcode fails (caller serves original).
+    """
+    import shutil
+    import subprocess
+
+    if not data or shutil.which("ffmpeg") is None:
+        return None
+    try:
+        p = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-i",
+                "pipe:0",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-f",
+                "wav",
+                "pipe:1",
+            ],
+            input=data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=30,
+        )
+        out = p.stdout or b""
+        if p.returncode == 0 and out[:4] == b"RIFF" and len(out) > 44:
+            return out
+        return None
+    except Exception:
+        return None
+
+
 def _serve_cached(
     path,
     media,
@@ -1255,6 +1300,7 @@ def get_object(
     request: Request,
     download: int = 0,
     thumb: int = Query(0, ge=0, le=1024),
+    format: str = Query("", pattern="^(|wav)$"),
     _=Depends(auth),
 ):
     global _objcache_writes
@@ -1280,7 +1326,7 @@ def get_object(
         except Exception:
             pass
     cache_etag = hashlib.sha1(
-        f"{key}\x00{manifest_etag}\x00{thumb}".encode()
+        f"{key}\x00{manifest_etag}\x00{thumb}\x00{format}".encode()
     ).hexdigest()[:32]
     global _objcache_hits_ram, _objcache_hits_disk, _objcache_miss
     if not download:
@@ -1474,6 +1520,13 @@ def get_object(
         # bytes in hand: magic wins over any stored/ext guess (fixes QR-as-text)
         out_media = _sniff_media(data[:32]) or media
         body = data
+        if format == "wav" and out_media == "audio/webm" and not integrity_reason:
+            # Safari can't decode WebM/Opus: serve a transcoded WAV instead.
+            # Genuine RIFF WAVs (out_media audio/wav) skip this untouched.
+            wav = _transcode_wav(data)
+            if wav is not None:
+                body = wav
+                out_media = "audio/wav"
         if thumb and media.startswith("image/"):
             try:
                 from PIL import Image as _Image

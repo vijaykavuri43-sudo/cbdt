@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, eventsUrl, objectUrl, post, type ObjRow } from '../lib/api'
+import { api, eventsUrl, objectUrl, post, CAN_PLAY_WEBM_OPUS, type ObjRow } from '../lib/api'
 import { extOf, fmtBytes, fmtTime } from '../lib/format'
 import { Preview } from '../components/Preview'
 
@@ -66,7 +66,7 @@ export function Chat() {
     let ext = ''
     if (filter === 'voice') ext = '.wav,.mp3,.ogg,.amr,.m4a,.opus,.webm,.3gp'
     if (filter === 'images') ext = '.jpg,.jpeg,.png,.webp'
-    api<any>('/api/list', { prefix: 'chat_file/', order: '-modified', limit, offset: page * limit, ext, q })
+    api<any>('/api/list', { prefix: 'chat_file/', order: '-seen', limit, offset: page * limit, ext, q })
       .then((d) => { setItems(d.items ?? []); setTotal(d.total ?? 0) })
       .catch(() => {})
   }, [filter, q, page])
@@ -104,7 +104,7 @@ export function Chat() {
           <span className="pg-header-icon">💬</span>
           <div>
             <h1 className="pg-header-title">Live Chats</h1>
-            <div className="pg-header-sub">chat_file/ · {total.toLocaleString()} messages · newest first</div>
+            <div className="pg-header-sub">chat_file/ · {total.toLocaleString()} messages · newest mirrored first</div>
           </div>
         </div>
         <div className="pg-header-right">
@@ -165,6 +165,9 @@ export function Chat() {
                         {to && <><span className="ch-way">→</span><span className="ch-sender to">{to}</span></>}
                         <span className="ch-time">{fmtTime(o.last_modified).slice(11, 16)}</span>
                         <span className="tiny dim">· {timeAgo(o.last_modified)} · {fmtBytes(o.size)}</span>
+                        {o.seen_utc && o.last_modified && o.seen_utc.slice(0, 10) !== o.last_modified.slice(0, 10) && (
+                          <span className="tiny dim" title={`In mirror since ${o.seen_utc}`}> · ⏫ {timeAgo(o.seen_utc)}</span>
+                        )}
                         {o.extract?.amount_inr != null && <span className="ex-badge ex-badge-money">₹{o.extract.amount_inr.toLocaleString('en-IN')}</span>}
                         {o.extract?.vpa && <span className="ex-badge" title={o.extract.vpa}>{o.extract.vpa.slice(0, 24)}</span>}
                       </div>
@@ -195,7 +198,7 @@ export function Chat() {
                       ) : (
                         <div className="ch-audio-wrap">
                           <span style={{ fontSize: 14 }}>🎙️</span>
-                          <audio controls src={objectUrl(o.key)} className="ch-audio" preload="metadata"
+                          <audio controls src={!CAN_PLAY_WEBM_OPUS && ['.wav', '.webm', '.opus'].includes(extOf(o.key)) ? objectUrl(o.key, false, 0, 'wav') : objectUrl(o.key)} className="ch-audio" preload="metadata"
                             onError={() => setAudioErr((m) => (m[o.key] ? m : { ...m, [o.key]: true }))} />
                           <span className="tiny dim mono">{fmtBytes(o.size)}</span>
                         </div>

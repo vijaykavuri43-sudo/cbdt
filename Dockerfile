@@ -9,9 +9,9 @@ RUN npm run build
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
-# tesseract + libs for QR decode
+# tesseract + libs for QR decode, ffmpeg for Safari voice-note transcode
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr libzbar0 libgl1 libglib2.0-0 \
+    tesseract-ocr libzbar0 libgl1 libglib2.0-0 ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

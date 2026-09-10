@@ -185,7 +185,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   const [source, setSource] = useState<'manifest' | 'live'>('manifest')
   const [prefix, setPrefix] = useState('')
   const [q, setQ] = useState('')
-  const [order, setOrder] = useState<'key' | '-modified' | 'size'>('-modified')
+  const [order, setOrder] = useState<'key' | '-modified' | '-seen' | 'size'>('-seen')
   const [ext, setExt] = useState('')
   const [sinceDays, setSinceDays] = useState('')
   const [flat, setFlat] = useState(false)
@@ -562,6 +562,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
 
           <div className="ex-toolbar-right">
             <select value={order} onChange={(e) => setOrder(e.target.value as any)} disabled={source === 'live'} className="ex-select">
+              <option value="-seen">Recently mirrored</option>
               <option value="-modified">Newest</option>
               <option value="key">A→Z</option>
               <option value="size">Largest</option>
