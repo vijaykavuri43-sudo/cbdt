@@ -23,6 +23,11 @@ export function LiveFeed() {
   const [sound, setSound] = useState(true)
   const [filter, setFilter] = useState('')
   const [walletsOnly, setWalletsOnly] = useState(false)
+  // Live-only default (review 2026-09-10): the feed buffer replays past
+  // arrivals on (re)connect, which reads as "very old data". Default to
+  // showing only objects that arrived since this page was opened.
+  const [liveOnly, setLiveOnly] = useState(true)
+  const mountedAt = useRef('')
   const [connected, setConnected] = useState(false)
   const [previewKey, setPreviewKey] = useState<string | null>(null)
   const pausedRef = useRef(paused)
@@ -31,6 +36,7 @@ export function LiveFeed() {
   soundRef.current = sound
 
   useEffect(() => {
+    mountedAt.current = new Date().toISOString().slice(0, 19) + 'Z'
     let retryMs = 1000
     let timer: ReturnType<typeof setTimeout> | null = null
     let es: EventSource | null = null
@@ -57,7 +63,7 @@ export function LiveFeed() {
 
   const filtered = (filter ? events.filter((e) => (e.top_prefix ?? '').startsWith(filter)) : events).filter((e) =>
     walletsOnly ? e.type === 'wallet_found' || e.payload?.wallets || e.payload?.vpa : true
-  )
+  ).filter((e) => !liveOnly || (e.seen_utc ?? '') >= mountedAt.current)
   const walletHits = events.filter((e) => e.type === 'wallet_found').length
   const previewObj = previewKey ? rowFromEvt(events.find((e) => e.key === previewKey)) : null
 
@@ -122,6 +128,14 @@ export function LiveFeed() {
             title="Show only UPI / crypto-wallet payment hits"
           >
             ₿ Wallets only · {walletHits}
+          </button>
+          <button
+            className={`ex-toggle ${liveOnly ? 'ex-toggle-on' : ''}`}
+            onClick={() => setLiveOnly(!liveOnly)}
+            style={{ fontSize: 12 }}
+            title="Live only: show objects that arrived since you opened this page. Turn off to browse the buffered backlog."
+          >
+            {liveOnly ? '🔴 Live only' : '📦 All buffered'}
           </button>
         </div>
         <div className="lf-controls-right">

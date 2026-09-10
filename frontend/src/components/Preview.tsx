@@ -199,7 +199,15 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
                 <SheetViewer obj={obj} />
               </div>
             ) : kind === 'image' ? (
-              imgErr ? (
+              !obj.size ? (
+                <div style={{ textAlign: 'center', padding: '48px 24px', maxWidth: 420 }}>
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>📁</div>
+                  <div className="small" style={{ marginBottom: 4 }}>Empty object (0 bytes)</div>
+                  <div className="tiny dim" style={{ marginBottom: 16, lineHeight: 1.6 }}>
+                    This is a folder marker, not evidence — it has no image content to preview.
+                  </div>
+                </div>
+              ) : imgErr ? (
                 <div style={{ textAlign: 'center', padding: '48px 24px', maxWidth: 420 }}>
                   <div style={{ fontSize: 28, marginBottom: 8 }}>🖼️</div>
                   <div className="small" style={{ marginBottom: 4 }}>Couldn't load the full image</div>

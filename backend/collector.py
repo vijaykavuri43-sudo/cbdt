@@ -294,7 +294,12 @@ class Collector:
                 db.set_meta(f"wm:{prefix}", max_key)
             if quiet:
                 return inserted
+            published = 0
             for o in changed:
+                # 0-byte folder markers are not evidence — index them but
+                # never push to the live feed (review 2026-09-10).
+                if not int(o.get("size") or 0):
+                    continue
                 bus.publish(
                     {
                         "type": "new_object",
@@ -305,7 +310,8 @@ class Collector:
                         "seen_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     }
                 )
-            self.state["new_since_start"] += len(changed)
+                published += 1
+            self.state["new_since_start"] += published
         return inserted
 
     # ---------- wrapping key-order crawl ----------
@@ -374,7 +380,12 @@ class Collector:
             inserted = db.upsert_objects(changed)
             if quiet:
                 return inserted
+            published = 0
             for o in changed:
+                # 0-byte folder markers are not evidence — index them but
+                # never push to the live feed (review 2026-09-10).
+                if not int(o.get("size") or 0):
+                    continue
                 bus.publish(
                     {
                         "type": "new_object",
@@ -385,7 +396,8 @@ class Collector:
                         "seen_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     }
                 )
-            self.state["new_since_start"] += len(changed)
+                published += 1
+            self.state["new_since_start"] += published
         finally:
             self._crawl_cursor[prefix] = last_key
             db.set_meta(f"crawl:{prefix}", last_key or "")
@@ -427,6 +439,9 @@ class Collector:
         if quiet:
             return inserted
         for o in fresh[:inserted]:
+            # 0-byte folder markers are not evidence (review 2026-09-10).
+            if not int(o.get("size") or 0):
+                continue
             bus.publish(
                 {
                     "type": "new_object",
