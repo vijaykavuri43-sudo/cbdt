@@ -1021,8 +1021,67 @@ def _ram_put(cetag: str, media: str, body: bytes):
         _ram_cache_bytes -= len(b)
 
 
+def _parse_range(range_header: str, total: int):
+    """Parse a single HTTP Range header. Returns (start, end) inclusive or None.
+
+    Voice-note seek fix (2026-09-11): <audio> seeks + Safari refuse streams
+    that answer 200 to Range requests. Malformed/unsatisfiable ranges return
+    None (caller serves 200) — never 500 on a preview path.
+    """
+    try:
+        if not range_header or "=" not in range_header or total <= 0:
+            return None
+        unit, spec = range_header.split("=", 1)
+        if unit.strip().lower() != "bytes":
+            return None
+        spec = spec.strip().split(",")[0].strip()
+        if spec.startswith("-"):  # suffix range: last N bytes
+            tail = int(spec[1:])
+            if tail <= 0:
+                return None
+            return (max(total - tail, 0), total - 1)
+        if "-" not in spec:
+            return None
+        s, _, e = spec.partition("-")
+        start = int(s) if s.strip() else 0
+        end = int(e) if e.strip() else total - 1
+        if start >= total or end < start:
+            return None
+        return (start, min(end, total - 1))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _range_response(body: bytes, media: str, base_headers: dict, range_header: str):
+    """Serve bytes with HTTP Range support (200 full / 206 partial)."""
+    total = len(body)
+    span = _parse_range(range_header, total)
+    if span is None:
+        return StreamingResponse(
+            [body].__iter__(), media_type=media, headers=base_headers
+        )
+    start, end = span
+    chunk = body[start : end + 1]
+    headers = {
+        **base_headers,
+        "Content-Range": f"bytes {start}-{end}/{total}",
+        "Content-Length": str(len(chunk)),
+        "Accept-Ranges": "bytes",
+    }
+    return StreamingResponse(
+        [chunk].__iter__(), media_type=media, headers=headers, status_code=206
+    )
+
+
 def _serve_cached(
-    path, media, filename, etag, download, cache_status="HIT-disk", extra=None
+    path,
+    media,
+    filename,
+    etag,
+    download,
+    cache_status="HIT-disk",
+    extra=None,
+    range_header="",
 ):
     disp = f'{"attachment" if download else "inline"}; filename="{filename}"'
     headers = {
@@ -1034,6 +1093,19 @@ def _serve_cached(
     }
     if extra:
         headers.update(extra)
+    if (
+        range_header
+        and not download
+        and (media.startswith("audio/") or media.startswith("video/"))
+    ):
+        # Seekable voice-note/video serving (2026-09-11): slice cached bytes
+        # into a 206 response. Files here are bounded by the cache file cap.
+        try:
+            return _range_response(path.read_bytes(), media, headers, range_header)
+        except OSError:
+            pass
+    elif not download and (media.startswith("audio/") or media.startswith("video/")):
+        headers["Accept-Ranges"] = "bytes"
     return FileResponse(
         str(path),
         media_type=media,
@@ -1279,6 +1351,7 @@ def get_object(
                         filename,
                         cache_etag,
                         download,
+                        range_header=request.headers.get("range", ""),
                     )
             except Exception:
                 pass
@@ -1438,6 +1511,7 @@ def get_object(
                     download,
                     cache_status="MISS",
                     extra=mirror_src or None,
+                    range_header=request.headers.get("range", ""),
                 )
             except OSError:
                 pass
@@ -1452,6 +1526,15 @@ def get_object(
         }
         if integrity_reason:
             _mem_headers["X-Object-Integrity"] = integrity_reason
+        if not download and (
+            out_media.startswith("audio/") or out_media.startswith("video/")
+        ):
+            return _range_response(
+                body,
+                out_media,
+                _mem_headers,
+                request.headers.get("range", ""),
+            )
         return StreamingResponse(
             [body].__iter__(),
             media_type=out_media,
@@ -1476,6 +1559,19 @@ def get_object(
         )
     if data is not None:
         # too big to cache: serve from memory, keep stream semantics
+        if not download and (media.startswith("audio/") or media.startswith("video/")):
+            return _range_response(
+                data,
+                media,
+                {
+                    "Content-Disposition": f'inline; filename="{filename}"',
+                    "Cache-Control": "private, max-age=300",
+                    "X-Cache-Status": "BYPASS-too-big",
+                    "X-Content-Type-Options": "nosniff",
+                    **mirror_src,
+                },
+                request.headers.get("range", ""),
+            )
         return StreamingResponse(
             [data].__iter__(),
             media_type=media,

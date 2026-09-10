@@ -602,7 +602,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
               {[
                 { v: '', l: 'All' },
                 { v: '.jpg,.jpeg,.png,.webp,.heic', l: '🖼 Images' },
-                { v: '.wav,.mp3,.ogg,.amr', l: '🔊 Audio' },
+                { v: '.wav,.mp3,.ogg,.amr,.m4a,.opus,.webm,.3gp', l: '🔊 Audio' },
                 { v: '.mp4,.mov,.avi,.webm', l: '🎬 Video' },
                 { v: '.xlsx,.xls,.csv', l: '📊 Ledgers' },
                 { v: '.pdf,.doc,.docx', l: '📄 PDF/Docs' },

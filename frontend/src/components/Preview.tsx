@@ -78,12 +78,7 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
     setTimeout(() => setCopied(''), 1600)
   }
 
-  const metaPairs: [string, string][] = [
-    ['Key', obj.key],
-    ['Size', fmtBytes(obj.size)],
-    ['Modified', fmtTime(obj.last_modified)],
-    ['Kind', kind],
-  ]
+  const isPdf = obj.key.toLowerCase().endsWith('.pdf')
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -245,7 +240,7 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
                   <a className="btn btn-primary" href={objectUrl(obj.key, true)} download>⛨ Download</a>
                 </div>
               ) : (
-                <audio controls autoPlay src={objectUrl(obj.key)} style={{ width: '100%' }} onError={() => setMediaErr(true)} />
+                <audio controls preload="metadata" src={objectUrl(obj.key)} style={{ width: '100%' }} onError={() => setMediaErr(true)} />
               )
             ) : kind === 'video' ? (
               mediaErr ? (
@@ -254,35 +249,23 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
                   <a className="btn btn-primary" href={objectUrl(obj.key, true)} download>⛨ Download</a>
                 </div>
               ) : (
-                <video controls src={objectUrl(obj.key)} style={{ maxWidth: '100%', maxHeight: '68vh' }} onError={() => setMediaErr(true)} />
+                <video controls preload="metadata" src={objectUrl(obj.key)} style={{ maxWidth: '100%', maxHeight: '68vh' }} onError={() => setMediaErr(true)} />
               )
             ) : kind === 'text' ? (
               <pre className="preview-text" style={{ width: '100%' }}>
                 {text}
               </pre>
             ) : kind === 'other' ? (
-              <p className="dim">
-                No inline preview for this type. Use Download to fetch it with sha256 evidence logging.
-              </p>
+              isPdf ? (
+                <iframe title="pdf preview" src={objectUrl(obj.key)} style={{ width: '100%', height: '68vh', border: '1px solid rgba(255,255,255,.12)', borderRadius: 8 }} />
+              ) : (
+                <p className="dim">
+                  No inline preview for this type. Use Download to fetch it with sha256 evidence logging.
+                </p>
+              )
             ) : null}
           </div>
           <div style={{ flex: '0 0 260px', minWidth: 220, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div className="panel" style={{ margin: 0, padding: 12 }}>
-              <h3 style={{ marginBottom: 8 }}>Evidence</h3>
-              {metaPairs.map(([k, v]) => (
-                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,.06)' }}>
-                  <span className="tiny dim" style={{ textTransform: 'uppercase', letterSpacing: .6, fontWeight: 600 }}>
-                    {k}
-                  </span>
-                  <span className="tiny mono" style={{ textAlign: 'right', wordBreak: 'break-all', maxWidth: 150 }}>
-                    {v}
-                  </span>
-                </div>
-              ))}
-              <button className="btn" style={{ width: '100%', marginTop: 10 }} onClick={() => copy(obj.key, 'key2')}>
-                {copied === 'key2' ? '✓ Key copied' : 'Copy original object key'}
-              </button>
-            </div>
             {kind === 'image' && (
               <div className="small dim" style={{ lineHeight: 1.6 }}>
                 Tip: <span className="kbd">+</span> / <span className="kbd">−</span> to zoom, drag image, <span className="kbd">Esc</span> to close.

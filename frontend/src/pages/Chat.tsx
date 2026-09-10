@@ -64,7 +64,7 @@ export function Chat() {
 
   const load = useCallback(() => {
     let ext = ''
-    if (filter === 'voice') ext = '.wav,.mp3,.ogg,.amr'
+    if (filter === 'voice') ext = '.wav,.mp3,.ogg,.amr,.m4a,.opus,.webm,.3gp'
     if (filter === 'images') ext = '.jpg,.jpeg,.png,.webp'
     api<any>('/api/list', { prefix: 'chat_file/', order: '-modified', limit, offset: page * limit, ext, q })
       .then((d) => { setItems(d.items ?? []); setTotal(d.total ?? 0) })
@@ -134,7 +134,7 @@ export function Chat() {
       {/* Messages */}
       <div className="ch-list" ref={listRef}>
         {items.map((o, idx) => {
-          const isVoice = ['.wav', '.mp3', '.ogg', '.amr'].includes(extOf(o.key))
+          const isVoice = ['.wav', '.mp3', '.ogg', '.amr', '.m4a', '.opus', '.webm', '.3gp'].includes(extOf(o.key))
           const isImg = ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(extOf(o.key))
           const { from, to, fileLabel } = parseParticipants(o.key)
           const shortName = fileLabel || o.key.split('/').pop() || o.key
@@ -172,7 +172,11 @@ export function Chat() {
                     </>
                   )}
                   <div style={{ marginTop: sameSender ? 0 : 6 }}>
-                    {isImg ? (
+                    {!o.size ? (
+                      <div className="tiny dim" style={{ padding: '10px 0' }} title="0-byte folder marker, not a real file">
+                        ∅ Empty object (0 B) — folder marker
+                      </div>
+                    ) : isImg ? (
                       imgErr[o.key] ? (
                         <div className="tiny dim" style={{ padding: '10px 0', cursor: 'pointer' }} onClick={() => setPreview(o)} title="Open preview (Retry inside if the mirror has caught up)">
                           🖼️ preview unavailable — click to retry / download

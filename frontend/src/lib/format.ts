@@ -38,7 +38,7 @@ export function shortKey(key: string, max = 64): string {
 }
 
 const IMG = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']
-const AUD = ['.wav', '.mp3', '.ogg', '.amr']
+const AUD = ['.wav', '.mp3', '.ogg', '.amr', '.m4a', '.opus', '.webm', '.3gp']
 const VID = ['.mp4', '.mov', '.webm', '.avi']
 const TXT = ['.txt', '.json', '.csv', '.xml', '.log', '.md', '.html', '.js', '.css']
 

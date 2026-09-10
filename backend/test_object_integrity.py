@@ -212,5 +212,84 @@ class RepairRouteTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 404)
 
 
+def _range_req(spec: str):
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "headers": [(b"range", spec.encode())],
+        }
+    )
+
+
+class ParseRangeTests(unittest.TestCase):
+    def test_full_span(self):
+        self.assertEqual(app._parse_range("bytes=0-99", 1000), (0, 99))
+
+    def test_open_end_clamped(self):
+        self.assertEqual(app._parse_range("bytes=900-", 1000), (900, 999))
+
+    def test_suffix(self):
+        self.assertEqual(app._parse_range("bytes=-100", 1000), (900, 999))
+
+    def test_bad_inputs_none(self):
+        self.assertIsNone(app._parse_range("", 1000))
+        self.assertIsNone(app._parse_range("items=0-10", 1000))
+        self.assertIsNone(app._parse_range("bytes=2000-3000", 1000))
+        self.assertIsNone(app._parse_range("bytes=abc-def", 1000))
+
+
+class RangeRouteTests(unittest.TestCase):
+    """Voice-note seek (2026-09-11): audio Range requests get 206 slices."""
+
+    def setUp(self):
+        self._old = (
+            app.object_store,
+            app._actual_source,
+            app._fetch_repair_bytes,
+            app._OBJ_CACHE_DIR,
+        )
+        app._OBJ_CACHE_DIR = Path(_tmp.name) / "objcache-range" / self._testMethodName
+        app._actual_source = lambda: "gcs"  # noqa: E731
+
+    def tearDown(self):
+        (
+            app.object_store,
+            app._actual_source,
+            app._fetch_repair_bytes,
+            app._OBJ_CACHE_DIR,
+        ) = self._old
+
+    def test_audio_range_returns_206_slice(self):
+        app.object_store = _FakeGCS(GOOD_WEBM, hashlib.sha256(GOOD_WEBM).hexdigest())
+        app._fetch_repair_bytes = lambda key: (None, "unused")  # noqa: E731
+        resp = app.get_object(
+            WAV_KEY, _range_req("bytes=0-99"), download=0, thumb=0, _=None
+        )
+        self.assertEqual(resp.status_code, 206)
+        self.assertEqual(
+            resp.headers.get("Content-Range"), f"bytes 0-99/{len(GOOD_WEBM)}"
+        )
+        self.assertEqual(resp.headers.get("Accept-Ranges"), "bytes")
+        self.assertEqual(_body_of(resp), GOOD_WEBM[:100])
+
+    def test_audio_no_range_returns_200(self):
+        app.object_store = _FakeGCS(GOOD_WEBM, hashlib.sha256(GOOD_WEBM).hexdigest())
+        app._fetch_repair_bytes = lambda key: (None, "unused")  # noqa: E731
+        resp = app.get_object(WAV_KEY, _req(), download=0, thumb=0, _=None)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.headers.get("Accept-Ranges"), "bytes")
+        self.assertEqual(_body_of(resp), GOOD_WEBM)
+
+    def test_bad_range_falls_back_to_200(self):
+        app.object_store = _FakeGCS(GOOD_WEBM, hashlib.sha256(GOOD_WEBM).hexdigest())
+        app._fetch_repair_bytes = lambda key: (None, "unused")  # noqa: E731
+        resp = app.get_object(
+            WAV_KEY, _range_req("bytes=99999-100000"), download=0, thumb=0, _=None
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(_body_of(resp), GOOD_WEBM)
+
+
 if __name__ == "__main__":
     unittest.main()
