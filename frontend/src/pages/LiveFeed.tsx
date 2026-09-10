@@ -182,7 +182,23 @@ function prefixBadge(prefix: string) {
 }
 
 function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen: () => void }) {
-  const [imgErr, setImgErr] = useState(false)
+  // Preview resilience (mirror-lag, 2026-09-10): thumbnails/full images can 404
+  // while an object is still landing in the GCS mirror. Cascade thumb -> full
+  // -> timed auto-retry instead of a dead "preview unavailable" box.
+  const [imgStage, setImgStage] = useState<'thumb' | 'full' | 'wait' | 'err'>('thumb')
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (retryTimer.current) clearTimeout(retryTimer.current) }, [])
+  const onImgErr = () => {
+    if (imgStage === 'thumb') setImgStage('full')
+    else if (imgStage === 'full' && !retryTimer.current) {
+      setImgStage('wait')
+      retryTimer.current = setTimeout(() => { retryTimer.current = null; setImgStage('thumb') }, 20000)
+    } else if (imgStage === 'wait') setImgStage('err')
+  }
+  const retryPreview = () => {
+    if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null }
+    setImgStage('thumb')
+  }
   const kind = kindOf(evt.key)
   const icon = fileIcon(evt.key)
   const color = fileColor(evt.key)
@@ -195,11 +211,20 @@ function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen
 
   return (
     <div className={`lf-card ${flash ? 'flash' : ''}`}>
-      {kind === 'image' && !imgErr && (
-        <img className="lf-thumb" src={objectUrl(evt.key, false, 320)} loading="lazy" onClick={onOpen} alt="" onError={() => setImgErr(true)} />
+      {kind === 'image' && (imgStage === 'thumb' || imgStage === 'full') && (
+        <img
+          className="lf-thumb"
+          src={imgStage === 'thumb' ? objectUrl(evt.key, false, 320) : objectUrl(evt.key)}
+          loading="lazy" onClick={onOpen} alt="" onError={onImgErr}
+        />
       )}
-      {kind === 'image' && imgErr && (
-        <div style={{ padding: '20px 0', textAlign: 'center', background: `${color}08` }} className="tiny dim" onClick={onOpen} title="Open preview">
+      {kind === 'image' && imgStage === 'wait' && (
+        <div style={{ padding: '20px 0', textAlign: 'center', background: `${color}08` }} className="tiny dim" onClick={onOpen} title="Object still landing in the mirror — retrying">
+          ⏳ landing in mirror — retrying…
+        </div>
+      )}
+      {kind === 'image' && imgStage === 'err' && (
+        <div style={{ padding: '20px 0', textAlign: 'center', background: `${color}08` }} className="tiny dim" onClick={retryPreview} title="Click to retry">
           🖼️ preview unavailable — click to retry
         </div>
       )}
@@ -256,7 +281,12 @@ function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen
         <div className="mono tiny dim" style={{ marginTop: 2, opacity: .6 }}>{prefix}</div>
         <div className="lf-meta">
           <span>{fmtBytes(evt.size)}</span>
-          <span>{fmtTime(evt.last_modified || evt.seen_utc).slice(0, 16)}</span>
+          <span title={evt.last_modified && evt.seen_utc ? `Original: ${fmtTime(evt.last_modified).slice(0, 16)} · In mirror since: ${fmtTime(evt.seen_utc).slice(0, 16)}` : ''}>
+            {fmtTime(evt.last_modified || evt.seen_utc).slice(0, 16)}
+            {evt.last_modified && evt.seen_utc && evt.seen_utc.slice(0, 10) !== evt.last_modified.slice(0, 10) && (
+              <> · ⏫ {fmtTime(evt.seen_utc).slice(5, 16)}</>
+            )}
+          </span>
           <a onClick={onOpen}>inspect</a>
           <a href={objectUrl(evt.key, true)} download>⛨ get</a>
         </div>
