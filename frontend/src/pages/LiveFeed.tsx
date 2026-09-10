@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { eventsUrl, objectUrl } from '../lib/api'
+import { api, eventsUrl, objectUrl } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { fileColor, fileIcon, fmtBytes, fmtTime, kindOf } from '../lib/format'
 import { Preview } from '../components/Preview'
@@ -23,10 +23,11 @@ export function LiveFeed() {
   const [sound, setSound] = useState(true)
   const [filter, setFilter] = useState('')
   const [walletsOnly, setWalletsOnly] = useState(false)
-  // Live-only default (review 2026-09-10): the feed buffer replays past
-  // arrivals on (re)connect, which reads as "very old data". Default to
-  // showing only objects that arrived since this page was opened.
-  const [liveOnly, setLiveOnly] = useState(true)
+  // Seeded default (review 2026-09-10): the feed mounts with the newest
+  // arrivals first (bounded recent history) instead of an empty pane, and
+  // live SSE events prepend on top. The live-only toggle narrows to
+  // post-mount arrivals when wanted.
+  const [liveOnly, setLiveOnly] = useState(false)
   const mountedAt = useRef('')
   const [connected, setConnected] = useState(false)
   const [previewKey, setPreviewKey] = useState<string | null>(null)
@@ -37,6 +38,22 @@ export function LiveFeed() {
 
   useEffect(() => {
     mountedAt.current = new Date().toISOString().slice(0, 19) + 'Z'
+    // Seed with newest arrivals first so the pane is never initially empty.
+    api<{ items: any[] }>('/api/recent', { hours: 24, limit: 60 }).then((d) => {
+      const seed: FeedEvt[] = (d.items ?? []).map((r) => ({
+        type: 'new_object',
+        key: r.key,
+        size: r.size,
+        last_modified: r.last_modified,
+        seen_utc: r.seen_utc,
+        payload: r.extract ?? null,
+        top_prefix: r.key.includes('/') ? r.key.split('/')[0] + '/' : '',
+      }))
+      if (seed.length) setEvents((prev) => {
+        const known = new Set(prev.map((e) => e.key))
+        return [...prev, ...seed.filter((e) => !known.has(e.key))].slice(0, 300)
+      })
+    }).catch(() => {})
     let retryMs = 1000
     let timer: ReturnType<typeof setTimeout> | null = null
     let es: EventSource | null = null

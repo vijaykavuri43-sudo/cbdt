@@ -632,6 +632,22 @@ def list_objs(
     return _JR(content=payload, headers=headers)
 
 
+@app.get("/api/recent")
+def recent(
+    hours: float = Query(24, gt=0, le=168),
+    limit: int = Query(60, le=500),
+    _=Depends(auth),
+):
+    # 2026-09-10: seed for LiveFeed on page mount — newest arrivals first so
+    # the feed is never initially empty (live SSE only appends post-mount).
+    from fastapi.responses import JSONResponse as _JR
+
+    return _JR(
+        content={"items": db.recent_new(hours=hours, limit=limit)},
+        headers={"Cache-Control": "private, max-age=30"},
+    )
+
+
 @app.get("/api/search")
 def search(
     q: str = "",

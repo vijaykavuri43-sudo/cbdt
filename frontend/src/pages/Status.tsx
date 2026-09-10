@@ -326,7 +326,15 @@ export function StatusPage() {
           <span className="st-panel-title">Uploads — last 14 days (UTC)</span>
         </div>
         {stats && stats.day_histogram.some((d) => d.objects > 0) ? (
-          <Histogram data={stats.day_histogram} />
+          <>
+            <Histogram data={stats.day_histogram} />
+            <div className="small dim" style={{ marginTop: 6 }}>
+              Bars bucket by casino upload date (source last-modified), not mirror time.
+              {(mirrorSync?.status?.queued_pending ?? 0) > 0
+                ? ` Mirror backlog ${(mirrorSync?.status?.queued_pending ?? 0).toLocaleString()} pending — recent bars keep filling as the backlog drains.`
+                : ' Mirror caught up — low bars mean the source went quiet, not a pipeline gap.'}
+            </div>
+          </>
         ) : (
           <div className="small dim">{st?.sweep_done ? 'No uploads in window.' : 'Waiting for sweep…'}</div>
         )}

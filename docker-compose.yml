@@ -18,7 +18,7 @@ services:
       - S3LM_GCS_BUCKET=${S3LM_GCS_BUCKET:-cbtf-case-evidence-518405669914}
       - S3LM_GCS_PREFIX=s3-mirror/
       - S3LM_ENRICH_MAX_AGE_HOURS=0
-      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-8}
+      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-4}
       - S3LM_ENRICH_BATCH=${S3LM_ENRICH_BATCH:-96}
       - OMP_THREAD_LIMIT=1
       # Gemini Vision verify (key lives ONLY in the VM .env, never in git)
@@ -64,7 +64,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 16G
+          memory: 20G
 
   # Continuous S3 -> GCS evidence mirror sync (Defect A fix, staleness review
   # 2026-09-02): the s3lm dashboard reads gs://cbtf…/s3-mirror/, which was
