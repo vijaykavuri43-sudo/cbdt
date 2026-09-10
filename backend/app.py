@@ -2280,7 +2280,7 @@ def export_wallets(_=Depends(auth)):
         try:
             master_rel = str(config.MASTER_WALLET_CSV.relative_to(config.REPO_ROOT))
         except Exception:
-            master_rel = str(config.MASTER_WALLET_CSV)
+            master_rel = config.MASTER_WALLET_CSV.name
         rows = []
         for it in db.wallet_feed(10**9):
             addr = it.get("address") or ""
@@ -2573,7 +2573,7 @@ def wallets_api(limit: int = Query(300, le=2000), _=Depends(auth)):
         try:
             master_rel = str(config.MASTER_WALLET_CSV.relative_to(config.REPO_ROOT))
         except Exception:
-            master_rel = str(config.MASTER_WALLET_CSV)
+            master_rel = config.MASTER_WALLET_CSV.name
     except Exception:
         master_rows = []
         master_rel = "LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv"
