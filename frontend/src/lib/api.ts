@@ -105,6 +105,15 @@ export function exportRailsUrl(): string {
   return `/api/export/rails${at ? '?' + at : ''}`
 }
 
+function exportUrl(kind: string): string {
+  const at = authParams()
+  return `/api/export/${kind}${at ? '?' + at : ''}`
+}
+
+export function exportUpisUrl(): string { return exportUrl('upis') }
+export function exportWalletsUrl(): string { return exportUrl('wallets') }
+export function exportPayoutsUrl(): string { return exportUrl('payout-accounts') }
+
 export interface Status {
   phase: string
   sweep_done: boolean

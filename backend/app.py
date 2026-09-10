@@ -2007,6 +2007,229 @@ def export_rails(_=Depends(auth)):
     )
 
 
+def _source_link(key: str) -> str:
+    """Absolute officer-verifiable link to the exact evidence object.
+
+    Opens the sha256-verified object on the live dashboard so an officer can
+    manually confirm any CSV row against the source screenshot/QR/file.
+    """
+    from urllib.parse import quote
+
+    return f"{config.PUBLIC_URL}/api/object?key={quote(key, safe='')}&download=1"
+
+
+def _iter_export_csv(columns: tuple, rows: list) -> Any:
+    """Yield a full officer exhibit CSV in chunks (bounded memory)."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(columns)
+    yield buf.getvalue()
+    buf.seek(0)
+    buf.truncate(0)
+    for row in rows:
+        writer.writerow([row.get(col, "") for col in columns])
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+
+def _export_response(rows: list, columns: tuple, filename: str) -> StreamingResponse:
+    stamp = time.strftime("%Y-%m-%d", time.gmtime())
+    return StreamingResponse(
+        _iter_export_csv(columns, rows),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}-{stamp}.csv"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+_UPI_EXPORT_COLUMNS = (
+    "vpa",
+    "payee_name",
+    "amount_inr",
+    "status",
+    "source_file",
+    "source_folder",
+    "qr_uploaded_utc",
+    "seen_utc",
+    "dashboard_source_link",
+    "case",
+    "auth_ref",
+    "fact_type",
+)
+
+
+@app.get("/api/export/upis")
+def export_upis(_=Depends(auth)):
+    """Full decoded-VPA exhibit (ALL rows, old + new): every QR-decoded VPA with
+    payee, amount, NEW/known status, source file + absolute dashboard link per
+    row for officer download and manual verification. Opens in Excel."""
+
+    def build():
+        master = downloads_master()
+        rows = []
+        for it in db.upi_feed(10**9):
+            vpa = it.get("vpa") or ""
+            known = bool(vpa and vpa.lower() in master)
+            key = it.get("key") or ""
+            folder = key.split("/")[0] + "/" if "/" in key else "(root)"
+            rows.append(
+                {
+                    "vpa": vpa,
+                    "payee_name": it.get("payee_name") or "",
+                    "amount_inr": it.get("amount_inr")
+                    if it.get("amount_inr") is not None
+                    else "",
+                    "status": "known" if known else "NEW",
+                    "source_file": key,
+                    "source_folder": folder,
+                    "qr_uploaded_utc": it.get("last_modified") or "",
+                    "seen_utc": it.get("seen_utc") or "",
+                    "dashboard_source_link": _source_link(key) if key else "",
+                    "case": config.CASE_ID,
+                    "auth_ref": config.AUTH_REF,
+                    "fact_type": "fact",
+                }
+            )
+        return rows
+
+    return _export_response(
+        cached("export-upis:full", 60.0, build),
+        _UPI_EXPORT_COLUMNS,
+        "decoded-vpas-full",
+    )
+
+
+_WALLET_EXPORT_COLUMNS = (
+    "address",
+    "network",
+    "label",
+    "confidence",
+    "status",
+    "source_file",
+    "qr_uploaded_utc",
+    "seen_utc",
+    "dashboard_source_link",
+    "case",
+    "auth_ref",
+    "fact_type",
+)
+
+
+@app.get("/api/export/wallets")
+def export_wallets(_=Depends(auth)):
+    """Full crypto-wallet exhibit (ALL rows): live-extracted addresses plus the
+    known-operator master list, each with source + absolute dashboard link.
+    Opens in Excel."""
+
+    def build():
+        from .evidence import load_master_wallet_rows
+
+        master = downloads_wallet_master()
+        try:
+            master_rel = str(config.MASTER_WALLET_CSV.relative_to(config.REPO_ROOT))
+        except Exception:
+            master_rel = str(config.MASTER_WALLET_CSV)
+        rows = []
+        for it in db.wallet_feed(10**9):
+            addr = it.get("address") or ""
+            known = bool(addr and addr.lower() in master)
+            key = it.get("key") or ""
+            rows.append(
+                {
+                    "address": addr,
+                    "network": it.get("network") or "",
+                    "label": "known_operator" if known else "",
+                    "confidence": it.get("confidence") or "",
+                    "status": "known_operator" if known else "NEW",
+                    "source_file": key,
+                    "qr_uploaded_utc": it.get("last_modified") or "",
+                    "seen_utc": it.get("seen_utc") or "",
+                    "dashboard_source_link": _source_link(key) if key else "",
+                    "case": config.CASE_ID,
+                    "auth_ref": config.AUTH_REF,
+                    "fact_type": "fact" if known else "ai_lead",
+                }
+            )
+        for m in load_master_wallet_rows():
+            rows.append(
+                {
+                    "address": m.get("address") or "",
+                    "network": m.get("network") or "",
+                    "label": m.get("label") or "",
+                    "confidence": m.get("confidence") or "",
+                    "status": "known_operator_master",
+                    "source_file": master_rel,
+                    "qr_uploaded_utc": "",
+                    "seen_utc": "",
+                    "dashboard_source_link": "",
+                    "case": m.get("case_ids") or config.CASE_ID,
+                    "auth_ref": config.AUTH_REF,
+                    "fact_type": m.get("fact_type") or "fact",
+                }
+            )
+        return rows
+
+    return _export_response(
+        cached("export-wallets:full", 60.0, build),
+        _WALLET_EXPORT_COLUMNS,
+        "crypto-wallets-full",
+    )
+
+
+_PAYOUT_EXPORT_COLUMNS = (
+    "account_holder",
+    "account_number",
+    "ifsc",
+    "sample_txid",
+    "amount_inr",
+    "source_export_file",
+    "source_row_no",
+    "dashboard_source_link",
+    "case",
+    "auth_ref",
+    "note",
+)
+
+
+@app.get("/api/export/payout-accounts")
+def export_payout_accounts(_=Depends(auth)):
+    """Full payout bank-account exhibit: every gateway payout row (holder,
+    account, IFSC, txid, amount) with its source export file + absolute
+    dashboard link. Observed accounts, not attributions. Opens in Excel."""
+
+    def build():
+        cur = db.connect().execute(
+            "SELECT key,row_no,holder,account,ifsc,txid,amount FROM gateway_rows"
+            " WHERE kind='gateway_payout' AND is_test=0 AND account!=''"
+            " ORDER BY amount DESC"
+        )
+        return [
+            {
+                "account_holder": r["holder"] or "",
+                "account_number": r["account"] or "",
+                "ifsc": r["ifsc"] or "",
+                "sample_txid": r["txid"] or "",
+                "amount_inr": r["amount"] if r["amount"] is not None else "",
+                "source_export_file": r["key"] or "",
+                "source_row_no": r["row_no"],
+                "dashboard_source_link": _source_link(r["key"]) if r["key"] else "",
+                "case": config.CASE_ID,
+                "auth_ref": config.AUTH_REF,
+                "note": "observed bank account, not criminal attribution",
+            }
+            for r in cur.fetchall()
+        ]
+
+    return _export_response(
+        cached("export-payouts:full", 60.0, build),
+        _PAYOUT_EXPORT_COLUMNS,
+        "payout-bank-accounts-full",
+    )
+
+
 @app.get("/api/extraction/status")
 def extraction_status(_=Depends(auth)):
     """Explicit extraction/backfill status so sync and OCR progress are not conflated."""
@@ -2142,7 +2365,7 @@ def wallets_full_scan(
 ):
     """Trigger an efficient full-bucket wallet scan directly against the GCS s3-mirror.
 
-    Source is live bucket objects via `gs://cbtf-case-evidence-991096649643/s3-mirror/`
+    Source is live bucket objects via `gs://cbtf-case-evidence-518405669914/s3-mirror/`
     (the preserved copy, never the investigator's LE-SUBMISSION-MASTER files). Results
     are enriched rows whose `key` is the exact GCS object key — every hit carries its
     live source file link in the dashboard. Master CSV is only used to badge known_operator.

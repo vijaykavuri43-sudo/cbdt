@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, eventsUrl, objectUrl, post, tabHidden } from '../lib/api'
+import { api, eventsUrl, exportWalletsUrl, objectUrl, post, tabHidden } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { fmtMoney, fmtTime } from '../lib/format'
 
@@ -145,6 +145,14 @@ export function Wallets() {
     a.download = `master-operator-wallets-${new Date().toISOString().slice(0, 10)}.tsv`
     a.click()
   }
+  function exportFullCsv() {
+    // Full officer exhibit: ALL live wallets + known-operator master with
+    // source file + dashboard link per row — server streams CSV (Excel-ready)
+    const a = document.createElement('a')
+    a.href = exportWalletsUrl()
+    a.download = `crypto-wallets-full-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+  }
 
   return (
     <>
@@ -162,6 +170,7 @@ export function Wallets() {
         <div className="pg-header-right">
           <button className="btn" onClick={refresh} style={{ fontSize: 11, marginRight: 8 }}>↻ Refresh</button>
           <button className="btn" onClick={startFullScan} style={{ fontSize: 11, marginRight: 8, borderColor: scan?.running ? 'var(--accent)' : undefined, opacity: scan?.running ? 0.6 : 1 }} disabled={!!scan?.running}>{scan?.running ? `⏳ scanning ${scan.scanned.toLocaleString()}` : '◉ Full wallet scan (GCS)'}</button>
+          <button className="btn" onClick={exportFullCsv} title="Full wallet list (live + master) with source file + dashboard link per row — officer exhibit, opens in Excel" style={{ fontSize: 11, marginRight: 8 }}>⬇ Export FULL CSV (LE)</button>
           <button className="btn" onClick={exportTsv} style={{ fontSize: 11, marginRight: 8 }}>⬇ Export live ({items.length})</button>
           <button className="btn" onClick={exportMasterTsv} style={{ fontSize: 11 }}>⬇ Export master ({data?.master_rows?.length ?? 0})</button>
         </div>

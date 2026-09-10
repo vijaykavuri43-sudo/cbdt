@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, objectUrl } from '../lib/api'
+import { api, exportUpisUrl, objectUrl } from '../lib/api'
 import { fmtINR, fmtTime } from '../lib/format'
 
 interface UpiRow {
@@ -39,6 +39,15 @@ export function Upis() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `upi-mules-${new Date().toISOString().slice(0, 10)}.tsv`; a.click()
   }
 
+  function exportFullCsv() {
+    // Full officer exhibit: every decoded VPA (old + new) with source file +
+    // dashboard link per row — server streams the whole list as CSV (Excel-ready)
+    const a = document.createElement('a')
+    a.href = exportUpisUrl()
+    a.download = `decoded-vpas-full-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+  }
+
   return (
     <>
       <div className="pg-header">
@@ -50,6 +59,7 @@ export function Upis() {
           </div>
         </div>
         <div className="pg-header-right">
+          <button className="btn" onClick={exportFullCsv} title="Full VPA list (old + new) with source file + dashboard link per row — officer exhibit, opens in Excel" style={{ fontSize: 11, marginRight: 8 }}>⬇ Export FULL CSV (LE)</button>
           <button className="btn" onClick={exportTsv} style={{ fontSize: 11 }}>⬇ Export ({items.length})</button>
         </div>
       </div>

@@ -19,7 +19,7 @@ BUCKET_HOST = BUCKET_URL.split("//", 1)[1].split("/", 1)[0]
 # only for source-side diagnostics. GCS keys below s3-mirror/ are exposed to the
 # rest of the app using their original S3 key names.
 OBJECT_SOURCE = os.environ.get("S3LM_OBJECT_SOURCE", "gcs").strip().lower()
-GCS_BUCKET = os.environ.get("S3LM_GCS_BUCKET", "cbtf-case-evidence-991096649643")
+GCS_BUCKET = os.environ.get("S3LM_GCS_BUCKET", "cbtf-case-evidence-518405669914")
 GCS_PREFIX = os.environ.get("S3LM_GCS_PREFIX", "s3-mirror/")
 SOURCE_ID = f"gs://{GCS_BUCKET}/{GCS_PREFIX}" if OBJECT_SOURCE == "gcs" else BUCKET_URL
 
@@ -86,6 +86,9 @@ CHAT_WALLET_HINT_TOKENS = (
 
 HOST = os.environ.get("S3LM_HOST", "127.0.0.1")
 PORT = int(os.environ.get("S3LM_PORT", "8787"))
+# Public base URL baked into officer CSV exhibits so every row's source_link
+# opens the exact evidence object on the live dashboard for manual verification.
+PUBLIC_URL = os.environ.get("S3LM_PUBLIC_URL", "http://8.231.108.145").rstrip("/")
 
 
 def _load_or_create_token() -> str:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, post } from '../lib/api'
+import { api, exportPayoutsUrl, post } from '../lib/api'
 import { fmtINR } from '../lib/format'
 
 interface TypeRow { type: string; txns: number; cash: number; bonus: number; gamblers: number; utrs: number }
@@ -52,8 +52,15 @@ export function Ledger() {
     }).catch((e) => setSyncMsg(String(e))).finally(() => setSyncing(false))
   }
 
-  function syncGateway() {
-    setGwSyncing(true); setGwMsg('')
+  function exportPayoutsCsv() {
+    // Full officer exhibit: every payout row with source file + dashboard link
+    const a = document.createElement('a')
+    a.href = exportPayoutsUrl()
+    a.download = `payout-bank-accounts-full-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+  }
+
+  function syncGateway() {    setGwSyncing(true); setGwMsg('')
     post<SyncOut>('/api/gateway/sync?limit=100').then((r) => {
       setGwMsg(`indexed ${r.indexed}/${r.attempted} · ${r.files_indexed}/${r.files_total} files · ${r.errors.length ? r.errors[0] : 'no errors'}`)
       refresh()
@@ -110,7 +117,7 @@ export function Ledger() {
         <div className="dp-table-wrap"><table className="dp-table"><thead><tr><th>Brand</th><th className="num">Txns</th><th className="num">Amount</th><th className="num">Gamblers</th><th className="num">UTRs</th></tr></thead>
           <tbody>{(gw?.brands ?? []).map((r) => <tr key={r.website}><td className="mono" style={{ fontWeight: 700 }}>{r.website}</td><td className="num">{r.txns.toLocaleString()}</td><td className="num money">{fmtINR(r.amount)}</td><td className="num">{r.customers.toLocaleString()}</td><td className="num">{r.utrs.toLocaleString()}</td></tr>)}{!gw && <tr><td colSpan={5} className="dim">Loading gateway settlements…</td></tr>}</tbody></table></div>
       </section>
-      <section className="money-section"><div className="money-section-head"><strong>Payout bank accounts (observed)</strong><span className="small dim">fact · accounts observed in exports, not criminal attribution</span></div>
+      <section className="money-section"><div className="money-section-head"><strong>Payout bank accounts (observed)</strong><span className="small dim">fact · accounts observed in exports, not criminal attribution</span><button className="btn" onClick={exportPayoutsCsv} title="Every payout row (holder, account, IFSC, txid, amount) with source export file + dashboard link per row — officer exhibit, opens in Excel" style={{ fontSize: 11, marginLeft: 'auto' }}>⬇ Export FULL CSV (LE)</button></div>
         <div className="dp-table-wrap"><table className="dp-table"><thead><tr><th>Holder</th><th>Account</th><th>IFSC</th><th className="num">Txns</th><th className="num">Amount</th></tr></thead>
           <tbody>{(gw?.payout_accounts ?? []).slice(0, 50).map((r) => <tr key={`${r.account}:${r.ifsc}`}><td>{r.holder || '—'}</td><td className="mono">{r.account}</td><td className="mono small">{r.ifsc}</td><td className="num">{r.txns.toLocaleString()}</td><td className="num money">{fmtINR(r.amount)}</td></tr>)}</tbody></table></div>
       </section>
