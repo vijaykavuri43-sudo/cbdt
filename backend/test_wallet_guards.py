@@ -20,6 +20,7 @@ _tmp = tempfile.TemporaryDirectory()
 os.environ["S3LM_DATA"] = _tmp.name
 os.environ["S3LM_REFERENCE_ROOT"] = str(Path(_tmp.name) / "no-references")
 
+from . import db  # noqa: E402
 from .enrich import (  # noqa: E402
     _after_ellipsis,
     _labeled_as_txid_loose,
@@ -89,6 +90,79 @@ class TronChecksumTests(unittest.TestCase):
 
     def test_unrecoverable_returns_none(self):
         self.assertIsNone(_recover_tron_ocr("T000000000000000000000000000000000"))
+
+
+def _repair_row(key, wallets, sample):
+    import json
+
+    db.upsert_objects(
+        [
+            {
+                "key": key,
+                "size": 100,
+                "last_modified": "2026-09-11T00:00:00Z",
+                "etag": "e1",
+            }
+        ]
+    )
+    db.mark_enriched(
+        key,
+        {
+            "kind": "deposit",
+            "engine": "tesseract",
+            "text_sample": sample,
+            "wallets": wallets,
+        },
+    )
+    res = db.repair_txid_wallets(dry_run=False)
+    row = (
+        db.connect()
+        .execute("SELECT extract_json FROM objects WHERE key=?", (key,))
+        .fetchone()
+    )
+    return res, json.loads(row[0])
+
+
+class TxidWalletRepairPolicyTests(unittest.TestCase):
+    def test_checksum_invalid_is_recovered_not_dropped(self):
+        degraded = REAL_TRON.replace("2Uo9uu", "2UO9uu", 1)
+        self.assertFalse(_tron_checksum_ok(degraded))
+        _, p = _repair_row(
+            "deposit/repair-test-recover.jpg",
+            [
+                {
+                    "address": degraded,
+                    "network": "TRON",
+                    "standard": "TRC-20",
+                    "confidence": "high",
+                    "role": "unknown",
+                    "role_confidence": "low",
+                }
+            ],
+            "To " + degraded,
+        )
+        addrs = [w["address"] for w in p["wallets"]]
+        # Recovered to the true on-chain address, never dropped.
+        self.assertIn(REAL_TRON, addrs)
+        self.assertTrue(any(w.get("ocr_recovered") for w in p["wallets"]))
+
+    def test_txid_fragment_still_dropped(self):
+        frag = "3985c62964b1d8666d4c394fd7f1c"
+        _, p = _repair_row(
+            "deposit/repair-test-drop.jpg",
+            [
+                {
+                    "address": frag,
+                    "network": "BITCOIN",
+                    "standard": "BTC",
+                    "confidence": "low",
+                    "role": "unknown",
+                    "role_confidence": "low",
+                }
+            ],
+            SLIP1_TXID_LINE,
+        )
+        self.assertEqual(p["wallets"], [])
 
 
 if __name__ == "__main__":

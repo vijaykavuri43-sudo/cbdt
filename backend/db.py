@@ -1818,21 +1818,27 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
     Verified 2026-09-11: a UPI 'Transaction ID …NEF54¢3985c…' fragment was
     stored as a BITCOIN wallet and a truncated-display '…111bcedb…' tail as
     another — txids are evidence, never wallets. Drops a stored wallet only
-    with positive evidence (txid/ref label gap, ellipsis truncation, long-hex
-    run, or failed TRON base58check); otherwise counts need_reocr. Wallets
-    live only inside extract_json (wallet_feed/wallet_stats read it live),
-    so no payment-row rebuild is needed. Mirrors repair_twin_artifacts
-    (two-phase decide/write).
+    with positive fragment evidence (txid/ref label gap, ellipsis truncation,
+    long-hex run). A failed TRON base58check is NOT drop evidence — it means
+    lookalike OCR degradation (5/S, o/0) one variant away from the true
+    on-chain address — so those are checksum-recovered when possible and
+    otherwise kept flagged (confidence low, needs_gemini) for Vision re-OCR,
+    never dropped. Wallets live only inside extract_json (wallet_feed /
+    wallet_stats read it live), so no payment-row rebuild is needed. Mirrors
+    repair_twin_artifacts (two-phase decide/write).
     """
     from .enrich import (  # lazy: enrich imports db
         _after_ellipsis,
         _in_long_hex_run,
         _labeled_as_txid,
         _labeled_as_txid_loose,
+        _recover_tron_ocr,
         _tron_checksum_ok,
+        infer_rail_role,
     )
 
     scanned = repaired = need_reocr = dropped_total = 0
+    recovered_total = flagged_total = 0
     samples: list[dict] = []
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     c = connect()
@@ -1857,6 +1863,7 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
         sample = p.get("text_sample") or ""
         kept: list[dict] = []
         dropped: list[dict] = []
+        recovered: list[dict] = []
         undecided = False
         for w in wallets:
             addr = str(w.get("address") or "")
@@ -1868,7 +1875,37 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
                 and w.get("checksum") != "valid"
                 and not _tron_checksum_ok(addr)
             ):
-                reason = "tron_checksum_invalid"
+                # Degraded lead, not proven junk: recover the true address
+                # when lookalike variants validate, else keep flagged for
+                # Vision re-OCR. Never drop — an officer lead must survive.
+                fixed = _recover_tron_ocr(addr)
+                pos = sample.find(addr)
+                if pos >= 0:
+                    role, rc = infer_rail_role(sample, pos, pos + len(addr))
+                else:
+                    role, rc = "unknown", "low"
+                if fixed:
+                    w = {
+                        **w,
+                        "address": fixed,
+                        "confidence": "medium",
+                        "checksum": "valid",
+                        "ocr_recovered": True,
+                        "role": role,
+                        "role_confidence": rc,
+                    }
+                    recovered.append({"from": addr, "to": fixed})
+                else:
+                    w = {
+                        **w,
+                        "confidence": "low",
+                        "checksum": "invalid",
+                        "role": role,
+                        "role_confidence": rc,
+                    }
+                    p["needs_gemini"] = True
+                kept.append(w)
+                continue
             else:
                 pos = sample.find(addr)
                 if pos < 0:
@@ -1890,8 +1927,11 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
                 kept.append(w)
         if undecided:
             need_reocr += 1
-        if not dropped:
-            # Nothing to remove, but mark scanned so rescan skips settled rows.
+        # Recovered/flagged wallets also modify the payload (address fix or
+        # needs_gemini), so they must be written even with zero drops.
+        touched = bool(dropped or recovered or p.get("needs_gemini"))
+        if not touched:
+            # Nothing to change, but mark scanned so rescan skips settled rows.
             p["txid_wallets_repaired"] = {
                 "repaired_utc": now,
                 "repaired_from": "batch",
@@ -1902,8 +1942,11 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
             continue
         repaired += 1
         dropped_total += len(dropped)
+        recovered_total += len(recovered)
         if len(samples) < 15:
-            samples.append({"key": r["key"], "dropped": dropped})
+            samples.append(
+                {"key": r["key"], "dropped": dropped, "recovered": recovered}
+            )
         if dry_run:
             continue
         p["wallets"] = kept
@@ -1911,6 +1954,7 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
             "repaired_utc": now,
             "repaired_from": "batch",
             "dropped": dropped,
+            "recovered": recovered,
             "kept": len(kept),
         }
         fixes.append((r["key"], p))
@@ -1928,6 +1972,7 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
         "repaired": repaired,
         "need_reocr": need_reocr,
         "wallets_dropped": dropped_total,
+        "wallets_recovered": recovered_total,
         "dry_run": dry_run,
         "samples": samples,
     }
