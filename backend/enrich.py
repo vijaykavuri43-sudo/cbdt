@@ -2076,7 +2076,13 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
         if accepted:
             tesseract_amount, tesseract_ccy = accepted[0]["value"], accepted[0]["ccy"]
         else:
-            tesseract_amount, tesseract_ccy = None, "INR"
+            # Fallback: amount printed only in words ("Rupees Four Hundred
+            # Fifty Only"; verified 2026-09-11: Paytm slip whose only digits
+            # were a ~60,000 postpaid ad, now correctly skipped). Same fallback
+            # as extract_amount_with_currency — ocr_slip reads the shared
+            # sweep directly so it needs it here too.
+            tesseract_amount = extract_amount_in_words(flat)
+            tesseract_ccy = "INR"
         out["amount_value"] = tesseract_amount
         out["amount_currency"] = tesseract_ccy
         # amount_inr feeds ₹ totals — set ONLY when the principal really is
