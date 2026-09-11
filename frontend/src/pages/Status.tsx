@@ -225,7 +225,7 @@ export function StatusPage() {
         <div className="st-panel-head">
           <span className="st-panel-title">Live GCS mirror connectivity</span>
           <button className="btn" onClick={ping} disabled={pinging} style={{ fontSize: 11, padding: '4px 10px' }}>
-            {pinging ? 'Pinging…' : '↻ Re-probe'}
+            {pinging ? 'Pinging…' : '↻ Probe bucket'}
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>

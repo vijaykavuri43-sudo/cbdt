@@ -106,7 +106,7 @@ export function LiveFeed() {
           </div>
         </div>
         <div className="pg-header-right">
-          <span className="lf-status ok">{filtered.length} events</span>
+          <span className="lf-status ok">{filtered.length} shown</span>
         </div>
       </div>
 
@@ -152,7 +152,7 @@ export function LiveFeed() {
             style={{ fontSize: 12 }}
             title="Live only: show objects that arrived since you opened this page. Turn off to browse the buffered backlog."
           >
-            {liveOnly ? '🔴 Live only' : '📦 All buffered'}
+            {liveOnly ? '🔴 Live only' : '📦 All'}
           </button>
         </div>
         <div className="lf-controls-right">
@@ -160,7 +160,7 @@ export function LiveFeed() {
             <span className={'dot ' + (connected ? (paused ? 'idle' : 'live') : 'idle')} />
             {connected ? (paused ? 'PAUSED' : 'STREAMING') : 'OFFLINE'}
           </span>
-          <button className="btn" onClick={() => setEvents([])} style={{ fontSize: 11, padding: '4px 10px' }}>Clear</button>
+          <button className="btn" onClick={() => setEvents([])} style={{ fontSize: 11, padding: '4px 10px' }} title="Clear the feed buffer (does not affect stored evidence)">Clear feed</button>
         </div>
       </div>
 
@@ -176,7 +176,7 @@ export function LiveFeed() {
         <span className="lf-sep">·</span>
         <span className={`lf-stat ${walletHits ? 'warn' : ''}`}>₿ {walletHits} wallet hits</span>
         <span style={{ flex: 1 }} />
-        <span className="lf-stat dim">{filtered.length} shown / {events.length} buffered</span>
+        <span className="lf-stat dim" title="Totals cover the recent buffer only (max 300 events), not the full bucket">{filtered.length} shown / {events.length} buffered (recent 300)</span>
       </div>
 
       {/* Grid */}

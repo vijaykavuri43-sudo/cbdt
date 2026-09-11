@@ -10,7 +10,6 @@ const EXAMPLES = [
   'Top mule rails in the last 7 days?',
   'Deposits above ₹50,000 this month?',
   'OCR coverage and backlog ETA?',
-  'Is the full bucket completely parsed?',
 ]
 
 export function Ask() {

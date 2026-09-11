@@ -542,7 +542,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
               title="Query the GCS evidence mirror directly (ground truth)"
               onClick={() => setSource(source === 'live' ? 'manifest' : 'live')}
             >
-              {source === 'live' ? '● LIVE' : '○ Manifest'}
+              {source === 'live' ? '● LIVE' : '○ Indexed'}
             </button>
 
             <div className="ex-search-wrap">
@@ -581,7 +581,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
             </select>
 
             <button className={`ex-toggle ${flat ? 'ex-toggle-on' : ''}`} onClick={() => setFlat(!flat)} title="Include descendants">
-              {flat ? '↧ Recurse' : '↦ Direct'}
+              {flat ? '↧ Recursive' : '↦ Direct'}
             </button>
             <button className={`ex-toggle ${gallery ? 'ex-toggle-on' : ''}`} onClick={() => setGallery(!gallery)} title="G to toggle">
               {gallery ? '▦ Grid' : '▤ List'}
@@ -593,7 +593,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
               {syncing ? '⏳' : '↻'}
             </button>
             <select value={autoSync} onChange={(e) => setAutoSync(e.target.value)} className="ex-select ex-select-sm">
-              <option value="">Manual</option>
+              <option value="">Off</option>
               <option value="30">30s</option>
               <option value="60">60s</option>
               <option value="300">5min</option>

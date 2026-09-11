@@ -22,9 +22,6 @@ function parseParticipants(key: string): { from: string; to: string | null; file
   const p = parts[0] || 'unknown'
   return { from: p, to: null, fileLabel: base }
 }
-function _senderOf(key: string): string { return parseParticipants(key).from }
-void _senderOf
-
 function timeAgo(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime()
   if (diff < 60000) return 'now'

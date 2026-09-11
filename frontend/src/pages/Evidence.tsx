@@ -98,7 +98,7 @@ export function Evidence() {
       <div className="st-panel">
         <div className="st-panel-head">
           <span className="st-panel-title">Download jobs</span>
-          <span className="small dim">{jobs.length} total</span>
+          <span className="small dim">{doneJobs.length} done · {jobs.length} total (latest 10 listed)</span>
         </div>
         {doneJobs.length === 0 && activeJobs.length === 0 && (
           <div className="dp-empty"><div className="dp-empty-icon">📦</div>No jobs yet. Queue keys above or use Explorer.</div>

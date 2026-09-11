@@ -75,10 +75,10 @@ export function Upis() {
             ⚠ NEW only · {(data?.new_total ?? data?.new_not_in_master ?? 0).toLocaleString()}
           </button>
           <button className={`ex-toggle ${distinct ? 'ex-toggle-on' : ''}`} onClick={() => setDistinct((d) => !d)} title="One row per unique VPA with slip count + summed amount — the officer action list">
-            ⇄ {distinct ? 'Unique VPAs' : 'Per-slip rows'}
+            ⇄ {distinct ? 'Unique VPAs ✓' : 'Group: unique VPAs'}
           </button>
           <button className={`ex-toggle ${hideSenders ? 'ex-toggle-on' : ''}`} onClick={() => setHideSenders((h) => !h)} title="Sender-only VPAs are gambler/user counterparties (Paid-by side), not mule rails — hidden by default">
-            🚫 {hideSenders ? 'Senders hidden (users out)' : 'Show senders (users)'}
+            {hideSenders ? 'Show user senders' : 'Hide user senders'}
           </button>
         </div>
       </div>
@@ -87,7 +87,6 @@ export function Upis() {
         <div className="st-card st-card-accent">
               <div className="st-card-label">{distinct ? 'Unique VPAs (all pages)' : 'Slip rows (all pages)'}</div>
           <div className="st-card-value accent">{total.toLocaleString()}</div>
-          <div className="st-card-sub">Page {page + 1} of {pageCount} · showing {from.toLocaleString()}–{to.toLocaleString()}</div>
         </div>
         <div className="st-card st-card-warn">
           <div className="st-card-label">New — not in master</div>

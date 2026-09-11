@@ -29,7 +29,7 @@ export function Cashflow() {
     <>
       <div className="pg-header">
         <div className="pg-header-left"><span className="pg-header-icon">⇄</span>
-          <div><h1 className="pg-header-title">Cash Flow (corrected)</h1>
+          <div><h1 className="pg-header-title">Cash Flow (ex-bonus)</h1>
             <div className="pg-header-sub">Deposits vs withdrawals, ex-bonus · index more files from the Ledger tab</div></div>
         </div>
         <div className="pg-header-right"><button className="btn" onClick={refresh}>↻ Refresh</button></div>

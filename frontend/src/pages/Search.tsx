@@ -86,7 +86,7 @@ export function Search() {
       {/* Filter chips */}
       <div className="sr-chips" style={{ marginBottom: 10 }}>
         {extChips.map(([v, label]) => (
-          <button key={v} className={`ex-chip ${[...exts].some((x) => v.split(',').includes(x)) ? 'ex-chip-on' : ''}`} onClick={() => toggleExt(v)}>{label}</button>
+          <button key={v} className={`ex-chip ${(exts.has(v) || v.split(',').some((p) => exts.has(p))) ? 'ex-chip-on' : ''}`} onClick={() => toggleExt(v)}>{label}</button>
         ))}
         <span style={{ width: 8 }} />
         {timeChips.map(([v, label]) => (

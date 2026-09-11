@@ -85,7 +85,7 @@ export function Ledger() {
       {syncMsg && <div className="tiny dim" style={{ marginBottom: 8 }}>{syncMsg}</div>}
       {error && <div className="money-error">Could not load ledger: {error}</div>}
       <div className="st-cards money-cards">
-        <div className="st-card st-card-accent"><div className="st-card-label">Files indexed</div><div className="st-card-value accent">{(data?.files.indexed ?? 0).toLocaleString()} / {(data?.files.total ?? 0).toLocaleString()}</div></div>
+        <div className="st-card st-card-accent"><div className="st-card-label">Ledger files indexed</div><div className="st-card-value accent">{(data?.files.indexed ?? 0).toLocaleString()} / {(data?.files.total ?? 0).toLocaleString()}</div></div>
         <div className="st-card st-card-money"><div className="st-card-label">Ledger UTRs slip-matched</div><div className="st-card-value money">{cov}%</div><div className="tiny dim">{(data?.coverage.matched_in_flows ?? 0).toLocaleString()} / {(data?.coverage.ledger_utrs ?? 0).toLocaleString()}</div></div>
       </div>
       <section className="money-section"><div className="money-section-head"><strong>Corrected totals by entry type</strong><span className="small dim">fact · cash ex-bonus</span></div>
@@ -99,7 +99,7 @@ export function Ledger() {
 
       <div className="pg-header" style={{ marginTop: 18 }}>
         <div className="pg-header-left"><span className="pg-header-icon">⛩</span>
-          <div><h1 className="pg-header-title">Gateway settlements</h1>
+          <div><h2 className="pg-header-title">Gateway settlements</h2>
             <div className="pg-header-sub">paymentgateway/csv-files/ · deposits by white-label brand · payout bank accounts · {gw?.note}</div></div>
         </div>
         <div className="pg-header-right">
