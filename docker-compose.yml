@@ -4,8 +4,9 @@ services:
     image: s3lm:latest
     container_name: s3lm
     # multi-worker uvicorn (review 2026-09-10): a single worker wedges the
-    # whole dashboard when one request blocks — 4 workers on 8-vCPU hosts.
-    command: ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8787", "--workers", "4"]
+    # whole dashboard when one request blocks — 2 workers suffice (API is
+    # I/O-bound) and leaves headroom for OCR/sync on 8-vCPU hosts.
+    command: ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8787", "--workers", "2"]
     ports:
       - "80:8787"
     environment:
