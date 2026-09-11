@@ -1947,6 +1947,28 @@ def mule_rails(
     }
 
 
+# OCR template junk: receipt boilerplate Tesseract misreads as a VPA
+# (verified 2026-09-11 live: 1,166 distinct junk VPAs / 13,127 slips, e.g.
+# 'store@completed', 'only@food', 'kumar@transfer'). These are not payment
+# rails — exclude from every mule-VPA surface (feed, distinct, exports).
+_VPA_JUNK_PATTERNS = (
+    "%@completed",
+    "only@%",
+    "merchant@%",
+    "restaurant@%",
+    "store@%",
+    "%@transfer",
+    "%@entertainment",
+)
+
+
+def _vpa_junk_clause() -> str:
+    return "".join(
+        " AND lower(json_extract(extract_json,'$.vpa')) NOT LIKE '%s'" % p
+        for p in _VPA_JUNK_PATTERNS
+    )
+
+
 def upi_feed(limit: int = 300) -> list[dict]:
     """Mule-side VPAs only: collection QR images + deposit-slip recipients
     (money paid TO this VPA). Withdrawal-slip VPAs are excluded — those are
@@ -1957,7 +1979,8 @@ def upi_feed(limit: int = 300) -> list[dict]:
             "SELECT key,last_modified,seen_utc,extract_json FROM objects"
             " WHERE extract_json IS NOT NULL AND json_extract(extract_json,'$.kind') IN ('qr','deposit')"
             " AND json_extract(extract_json,'$.vpa') IS NOT NULL"
-            " ORDER BY last_modified DESC LIMIT ?",
+            + _vpa_junk_clause()
+            + " ORDER BY last_modified DESC LIMIT ?",
             (limit,),
         )
         .fetchall()
@@ -2012,11 +2035,14 @@ def upi_distinct(limit: int = 300) -> list[dict]:
                    PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS first_seen,
                  MAX(last_modified) OVER (
                    PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS last_seen
-           FROM objects
-           WHERE extract_json IS NOT NULL
-             AND json_extract(extract_json,'$.kind') IN ('qr','deposit')
-             AND json_extract(extract_json,'$.vpa') IS NOT NULL
-         ) WHERE rn = 1
+            FROM objects
+            WHERE extract_json IS NOT NULL
+              AND json_extract(extract_json,'$.kind') IN ('qr','deposit')
+              AND json_extract(extract_json,'$.vpa') IS NOT NULL
+              """
+            + _vpa_junk_clause()
+            + """
+          ) WHERE rn = 1
         ORDER BY last_seen DESC LIMIT ?
         """,
             (limit,),

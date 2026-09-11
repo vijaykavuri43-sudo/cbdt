@@ -264,6 +264,31 @@ class MoneyFlowTests(unittest.TestCase):
         self.assertEqual([row["rail_id"] for row in rows], ["settlement@okaxis"])
         self.assertEqual(rows[0]["rail_role"], "sender")
 
+    def test_upi_surfaces_exclude_ocr_template_junk(self):
+        # Verified 2026-09-11 live: receipt boilerplate ('store@completed',
+        # 'only@food', 'kumar@transfer') is misread as a VPA on ~13K slips.
+        # Junk must not appear in the mule tab; real mules must.
+        self._object("deposit/junk.png")
+        db.mark_enriched(
+            key := "deposit/junk.png",
+            {"kind": "deposit", "vpa": "store@completed", "amount_inr": 200},
+        )
+        self._object("deposit/real.png")
+        db.mark_enriched(
+            "deposit/real.png",
+            {"kind": "deposit", "vpa": "8429410249@okbizaxis", "amount_inr": 300},
+        )
+        feed_vpas = [
+            (r.get("vpa") or "").lower()
+            for r in db.upi_feed(10**9)
+            if r.get("key", "").startswith("deposit/")
+        ]
+        self.assertIn("8429410249@okbizaxis", feed_vpas)
+        self.assertNotIn("store@completed", feed_vpas)
+        distinct_vpas = [r["vpa"] for r in db.upi_distinct(10**9)]
+        self.assertIn("8429410249@okbizaxis", distinct_vpas)
+        self.assertNotIn("store@completed", distinct_vpas)
+
     def test_mule_rail_aggregate_links_both_directions(self):
         for key, direction, role, gambler in (
             ("deposit/shared.png", "deposit", "beneficiary", "G6"),
