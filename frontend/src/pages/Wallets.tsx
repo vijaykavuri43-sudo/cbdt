@@ -10,6 +10,10 @@ interface WalletRow {
   network?: string
   standard?: string
   confidence?: string
+  role?: string | null
+  role_confidence?: string | null
+  checksum?: string | null
+  ocr_recovered?: boolean
   amount_inr?: number | null
   amount_value?: number | null
   amount_currency?: string | null
@@ -280,11 +284,12 @@ export function Wallets() {
       <div className="dp-table-wrap">
         <table className="dp-table">
           <thead>
-            <tr>
-              <th>Address</th>
-              <th>Network</th>
-              <th>Std</th>
-              <th className="num">Amount</th>
+              <tr>
+                <th>Address</th>
+                <th>Network</th>
+                <th>Std</th>
+                <th>Side</th>
+                <th className="num">Amount</th>
               <th>Status</th>
               <th>Source (where found)</th>
               <th>Uploaded</th>
@@ -294,9 +299,12 @@ export function Wallets() {
           <tbody>
             {items.map((r) => (
               <tr key={r.key + (r.address ?? '')}>
-                <td className="mono" style={{ fontWeight: r.known_operator ? 400 : 700 }}>{r.address}</td>
+                <td className="mono" style={{ fontWeight: r.known_operator ? 400 : 700 }}>{r.address}{r.checksum === 'invalid' && <span title="On-chain checksum failed — OCR-degraded read, treat as unverified"> ⚠</span>}</td>
                 <td>{r.network ?? '—'}</td>
                 <td className="small dim">{r.standard ?? '—'}</td>
+                <td className="small" title={`role confidence: ${r.role_confidence ?? '—'}${r.ocr_recovered ? ' · OCR-recovered, checksum-validated' : ''}`}>
+                  {r.role === 'sender' ? 'From · sender' : r.role === 'beneficiary' ? 'To · recipient' : <span className="dim">—</span>}
+                </td>
                 <td className="num">{fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency ?? (r.amount_inr != null ? 'INR' : null))}</td>
                 <td>
                   {r.known_operator ? (
@@ -312,7 +320,7 @@ export function Wallets() {
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan={8} className="dp-empty">
+                <td colSpan={9} className="dp-empty">
                   <div className="dp-empty-icon">₿</div>
                   <div style={{ fontWeight: 700, marginBottom: 4 }}>No live wallets extracted yet on this monitor host</div>
                   <div className="small dim" style={{ maxWidth: 720, margin: '0 auto', lineHeight: 1.5 }}>

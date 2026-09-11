@@ -134,7 +134,7 @@ CRYPTO_HINT_RE = re.compile(
 )
 
 _BENEFICIARY_ROLE_RE = re.compile(
-    r"(?:paid\s+to|payee|beneficiary|recipient|receiver|credited\s+to|sent\s+to|transfer(?:red)?\s+to)\s*[:=\-]?",
+    r"(?:paid\s+to|payee|beneficiary|recipient|receiver|credited\s+to|sent\s+to|transfer(?:red)?\s+to|\bto\b)\s*[:=\-]?",
     re.IGNORECASE,
 )
 _SENDER_ROLE_RE = re.compile(
@@ -208,6 +208,135 @@ def _in_long_hex_run(text: str, start: int, end: int, min_run: int = 40) -> bool
     return (run_end - run_start) >= min_run
 
 
+# A txid label followed by a SHORT gap of hash-like text then the candidate
+# means the candidate is the tail of one broken hash (verified live
+# 2026-09-11: "Transaction ID O NEF54¢3985c…f1c" — the label's own value got
+# glued to OCR garbage, so the tight immediate-label guard never fired and a
+# 29-char fragment was stored as a BITCOIN wallet).
+_TXID_LABEL_ANY_RE = re.compile(
+    r"\btx\.?\s*id\b|\btxid\b|transaction\s*(?:hash|id)\b|\bhash\b"
+    r"|upi\s*ref(?:erence)?(?:\s*id)?\b|ref(?:erence)?\s*(?:no|id|number)\b|\brrn\b",
+    re.IGNORECASE,
+)
+
+
+def _labeled_as_txid_loose(text: str, start: int, end: int, window: int = 120) -> bool:
+    """True if a Txid/hash/ref label sits NEAR start with only hash-like
+    text between the label and the candidate.
+
+    The gap (label value remainder + OCR junk) plus the candidate must form a
+    long (>= 20 chars) mostly-hex (>= 60%) segment. Genuine addresses carry
+    enough non-hex base58 letters to stay below the ratio; the gap cap (45)
+    keeps distant labels from suppressing real wallets.
+    """
+    before = text[max(0, start - window) : start]
+    label = None
+    for mm in _TXID_LABEL_ANY_RE.finditer(before):
+        label = mm
+    if not label:
+        return False
+    gap = before[label.end() :]
+    if len(gap.strip()) > 45:
+        return False
+    seg = re.sub(r"[\s.…]+", "", gap + text[start:end])
+    if len(seg) < 20:
+        return False
+    hexcount = sum(ch in "0123456789abcdefABCDEF" for ch in seg)
+    return hexcount / len(seg) >= 0.6
+
+
+def _after_ellipsis(text: str, start: int, end: int, window: int = 15) -> bool:
+    """True if the candidate sits right after an ellipsis with a hex head.
+
+    Truncated-display shape ("8ce402586fedf9 ...111bcedb…", verified live
+    2026-09-11): the visible tail is a display fragment, never an address.
+    """
+    before = text[max(0, start - window) : start]
+    if not re.search(r"(?:\.\.\.|\u2026)\s*$", before):
+        return False
+    head = re.match(r"[0-9a-fA-F]+", text[start:end])
+    return bool(head) and len(head.group(0)) >= 8
+
+
+_B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def _tron_checksum_ok(addr: str) -> bool:
+    """Validate a TRON address via base58check (version 0x41 + double-SHA256).
+
+    On-chain math, not OCR, is the authority for whether a T-address is real.
+    """
+    try:
+        n = 0
+        for ch in addr:
+            n = n * 58 + _B58_ALPHABET.index(ch)
+        raw = n.to_bytes(25, "big")
+    except Exception:
+        return False
+    if len(raw) != 25 or raw[0] != 0x41:
+        return False
+    import hashlib
+
+    chk = hashlib.sha256(hashlib.sha256(raw[:21]).digest()).digest()[:4]
+    return chk == raw[21:]
+
+
+# Relaxed TRON shape for OCR-degraded reads (lookalike errors 0/O, 5/S…).
+# Matches are NEVER kept directly — only checksum-validated variants are.
+TRON_RELAXED_RE = re.compile(r"\b(T[1-9A-HJ-NP-Za-km-z0OIil]{33})\b")
+_TRON_CONFUSE = {
+    "0": "oOQ",
+    "O": "o0Q",
+    "o": "0O",
+    "I": "1l",
+    "l": "1I",
+    "1": "lI",
+    "S": "589",
+    "5": "S6",
+    "8": "B6",
+    "B": "86",
+    "6": "b85",
+    "b": "6",
+}
+
+
+def _recover_tron_ocr(token: str, combo_cap: int = 1500) -> Optional[str]:
+    """Return a checksum-valid variant of an OCR-degraded T-address, else None.
+
+    Tries lookalike substitutions at ambiguous positions (capped combinatorial
+    budget). A wrong guess cannot survive: only base58check-valid output wins.
+    """
+    spots = [
+        (i, token[i] + "".join(o for o in _TRON_CONFUSE[token[i]] if o != token[i]))
+        for i, ch in enumerate(token)
+        if ch in _TRON_CONFUSE
+    ]
+    if not spots:
+        return None
+    total = 1
+    for _, opts in spots:
+        total *= len(opts)
+        if total > combo_cap:
+            return None
+    chars = list(token)
+
+    def _dfs(k: int) -> Optional[str]:
+        if k == len(spots):
+            cand = "".join(chars)
+            return cand if _tron_checksum_ok(cand) else None
+        i, opts = spots[k]
+        orig = chars[i]
+        for o in opts:
+            chars[i] = o
+            hit = _dfs(k + 1)
+            if hit:
+                return hit
+        chars[i] = orig
+        return None
+
+    return _dfs(0)
+
+
 def infer_rail_role(text: str, start: int, end: int) -> tuple[str, str]:
     """Infer whether an identifier belongs to the payer or beneficiary.
 
@@ -252,9 +381,14 @@ def extract_wallets(text: str) -> list[dict]:
         # Same txid-fragment class as BTC (a glued "Txid"+hash can read as T…).
         if _labeled_as_txid(text, m.start()):
             continue
+        if _labeled_as_txid_loose(text, m.start(), m.end()):
+            continue
+        if _after_ellipsis(text, m.start(), m.end()):
+            continue
         # checksum-ish sanity: reject all-same-char artifacts from OCR smears
         if len(set(addr)) < 8:
             continue
+        checksum_ok = _tron_checksum_ok(addr)
         seen.add(addr)
         role, role_confidence = infer_rail_role(text, m.start(), m.end())
         found.append(
@@ -262,7 +396,41 @@ def extract_wallets(text: str) -> list[dict]:
                 "address": addr,
                 "network": "TRON",
                 "standard": "TRC-20",
-                "confidence": "high",
+                # OCR can flip case/lookalikes yet stay in-charset; the
+                # base58check checksum is the authority — invalid checksum
+                # downgrades confidence instead of silently asserting.
+                "confidence": "high" if checksum_ok else "medium",
+                "checksum": "valid" if checksum_ok else "invalid",
+                "role": role,
+                "role_confidence": role_confidence,
+            }
+        )
+    # OCR-degraded TRON recovery: a T-address with lookalike errors (0-for-o,
+    # 5-for-S…) misses TRON_RE. Retried charset-relaxed, but ONLY a variant
+    # whose base58check checksum validates is kept — zero false-positive risk.
+    for m in TRON_RELAXED_RE.finditer(text):
+        token = m.group(1)
+        if token in seen:
+            continue
+        if _labeled_as_txid(text, m.start()):
+            continue
+        if _labeled_as_txid_loose(text, m.start(), m.end()):
+            continue
+        if _after_ellipsis(text, m.start(), m.end()):
+            continue
+        fixed = _recover_tron_ocr(token)
+        if not fixed or fixed in seen:
+            continue
+        seen.add(fixed)
+        role, role_confidence = infer_rail_role(text, m.start(), m.end())
+        found.append(
+            {
+                "address": fixed,
+                "network": "TRON",
+                "standard": "TRC-20",
+                "confidence": "medium",
+                "checksum": "valid",
+                "ocr_recovered": True,
                 "role": role,
                 "role_confidence": role_confidence,
             }
@@ -297,6 +465,10 @@ def extract_wallets(text: str) -> list[dict]:
         if _in_long_hex_run(text, m.start(), m.end()):
             continue
         if _labeled_as_txid(text, m.start()):
+            continue
+        if _labeled_as_txid_loose(text, m.start(), m.end()):
+            continue
+        if _after_ellipsis(text, m.start(), m.end()):
             continue
         if addr.lower().startswith("bc1") and not (14 <= len(addr) <= 90):
             continue

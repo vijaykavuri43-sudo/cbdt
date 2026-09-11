@@ -1967,6 +1967,25 @@ def enrich_repair_grouping(
         raise HTTPException(500, f"repair-grouping failed: {e}")
 
 
+@app.post("/api/enrich/repair-wallets")
+def enrich_repair_wallets(
+    dry_run: int = Query(1, ge=0, le=1),
+    limit: int = Query(20000, ge=1, le=100000),
+    _=Depends(auth),
+):
+    """Remove stored transaction-id fragments kept as crypto wallets.
+
+    dry_run=1 (default) scans and reports without writing. dry_run=0 drops
+    wallets with positive txid-fragment evidence (label gap, ellipsis
+    truncation, long-hex run, failed TRON checksum) and flags the row
+    repaired. Undecidable rows are counted as need_reocr.
+    """
+    try:
+        return db.repair_txid_wallets(dry_run=bool(dry_run), limit=limit)
+    except Exception as e:
+        raise HTTPException(500, f"repair-wallets failed: {e}")
+
+
 # ---------------- SSE live feed ----------------
 @app.get("/api/events")
 async def events(_=Depends(auth)):

@@ -1812,6 +1812,127 @@ def repair_malformed_amounts(dry_run: bool = True, limit: int = 20000) -> dict:
     }
 
 
+def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
+    """Batch-remove stored transaction-id fragments kept as crypto wallets.
+
+    Verified 2026-09-11: a UPI 'Transaction ID …NEF54¢3985c…' fragment was
+    stored as a BITCOIN wallet and a truncated-display '…111bcedb…' tail as
+    another — txids are evidence, never wallets. Drops a stored wallet only
+    with positive evidence (txid/ref label gap, ellipsis truncation, long-hex
+    run, or failed TRON base58check); otherwise counts need_reocr. Wallets
+    live only inside extract_json (wallet_feed/wallet_stats read it live),
+    so no payment-row rebuild is needed. Mirrors repair_twin_artifacts
+    (two-phase decide/write).
+    """
+    from .enrich import (  # lazy: enrich imports db
+        _after_ellipsis,
+        _in_long_hex_run,
+        _labeled_as_txid,
+        _labeled_as_txid_loose,
+        _tron_checksum_ok,
+    )
+
+    scanned = repaired = need_reocr = dropped_total = 0
+    samples: list[dict] = []
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    c = connect()
+    rows = c.execute(
+        "SELECT o.key AS key, o.extract_json AS extract_json FROM objects o"
+        " WHERE o.extract_json IS NOT NULL"
+        " AND json_array_length(o.extract_json,'$.wallets') > 0"
+        " AND json_extract(o.extract_json,'$.txid_wallets_repaired') IS NULL"
+        " LIMIT ?",
+        (limit,),
+    ).fetchall()
+    fixes: list[tuple[str, dict]] = []
+    for r in rows:
+        try:
+            p = json.loads(r["extract_json"])
+        except Exception:
+            continue
+        wallets = p.get("wallets") or []
+        if not wallets:
+            continue
+        scanned += 1
+        sample = p.get("text_sample") or ""
+        kept: list[dict] = []
+        dropped: list[dict] = []
+        undecided = False
+        for w in wallets:
+            addr = str(w.get("address") or "")
+            if not addr:
+                continue
+            reason = None
+            if (
+                w.get("network") == "TRON"
+                and w.get("checksum") != "valid"
+                and not _tron_checksum_ok(addr)
+            ):
+                reason = "tron_checksum_invalid"
+            else:
+                pos = sample.find(addr)
+                if pos < 0:
+                    undecided = True
+                    kept.append(w)
+                    continue
+                end = pos + len(addr)
+                if _in_long_hex_run(sample, pos, end):
+                    reason = "long_hex_run"
+                elif _labeled_as_txid(sample, pos):
+                    reason = "txid_label"
+                elif _labeled_as_txid_loose(sample, pos, end):
+                    reason = "txid_label_gap"
+                elif _after_ellipsis(sample, pos, end):
+                    reason = "ellipsis_truncation"
+            if reason:
+                dropped.append({"address": addr, "reason": reason})
+            else:
+                kept.append(w)
+        if undecided:
+            need_reocr += 1
+        if not dropped:
+            # Nothing to remove, but mark scanned so rescan skips settled rows.
+            p["txid_wallets_repaired"] = {
+                "repaired_utc": now,
+                "repaired_from": "batch",
+                "dropped": [],
+                "kept": len(kept),
+            }
+            fixes.append((r["key"], p))
+            continue
+        repaired += 1
+        dropped_total += len(dropped)
+        if len(samples) < 15:
+            samples.append({"key": r["key"], "dropped": dropped})
+        if dry_run:
+            continue
+        p["wallets"] = kept
+        p["txid_wallets_repaired"] = {
+            "repaired_utc": now,
+            "repaired_from": "batch",
+            "dropped": dropped,
+            "kept": len(kept),
+        }
+        fixes.append((r["key"], p))
+    if fixes and not dry_run:
+        with _writer_lock:
+            wc = connect()
+            for key, p in fixes:
+                wc.execute(
+                    "UPDATE objects SET extract_json=? WHERE key=?",
+                    (json.dumps(p, ensure_ascii=False), key),
+                )
+            wc.commit()
+    return {
+        "scanned": scanned,
+        "repaired": repaired,
+        "need_reocr": need_reocr,
+        "wallets_dropped": dropped_total,
+        "dry_run": dry_run,
+        "samples": samples,
+    }
+
+
 def refresh_payment_summaries() -> dict:
     """Materialize common dashboard aggregates; live rows refresh every minute."""
     refreshed = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
