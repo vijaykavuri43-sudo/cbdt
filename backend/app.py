@@ -2406,8 +2406,20 @@ def extraction_status(_=Depends(auth)):
 
 
 @app.get("/api/upis")
-def upis_api(limit: int = 300, _=Depends(auth)):
+def upis_api(limit: int = 300, distinct: bool = False, _=Depends(auth)):
     master = downloads_master()
+    if distinct:
+        items = db.upi_distinct(limit)
+        for it in items:
+            vpa = (it.get("vpa") or "").lower()
+            it["known_mule"] = bool(vpa and vpa in master)
+        new = [i for i in items if not i.get("known_mule")]
+        return {
+            "master_size": len(master),
+            "items": items,
+            "new_not_in_master": len(new),
+            "distinct": True,
+        }
     items = db.upi_feed(limit)
     for it in items:
         vpa = (it.get("vpa") or "").lower()

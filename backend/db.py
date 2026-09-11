@@ -1968,6 +1968,49 @@ def upi_feed(limit: int = 300) -> list[dict]:
     ]
 
 
+def upi_distinct(limit: int = 300) -> list[dict]:
+    """One row per unique VPA (case-insensitive): slip count, summed amount,
+    first/last seen, plus the newest slip's key/payee as the sample evidence.
+    Single-pass window query — no per-VPA lookups."""
+    rows = (
+        connect()
+        .execute(
+            """
+        SELECT vpa, slips, total_inr, with_amount, first_seen, last_seen,
+               key, payee_name, amount_inr, last_modified
+        FROM (
+          SELECT LOWER(json_extract(extract_json,'$.vpa')) AS vpa,
+                 key, last_modified,
+                 json_extract(extract_json,'$.payee_name') AS payee_name,
+                 CAST(json_extract(extract_json,'$.amount_inr') AS REAL) AS amount_inr,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))
+                   ORDER BY last_modified DESC) AS rn,
+                 COUNT(*) OVER (
+                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS slips,
+                 SUM(CAST(json_extract(extract_json,'$.amount_inr') AS REAL)) OVER (
+                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS total_inr,
+                 SUM(CASE WHEN json_extract(extract_json,'$.amount_inr') IS NOT NULL
+                          THEN 1 ELSE 0 END) OVER (
+                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS with_amount,
+                 MIN(last_modified) OVER (
+                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS first_seen,
+                 MAX(last_modified) OVER (
+                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS last_seen
+          FROM objects
+          WHERE extract_json IS NOT NULL
+            AND json_extract(extract_json,'$.kind')='qr'
+            AND json_extract(extract_json,'$.vpa') IS NOT NULL
+        ) WHERE rn = 1
+        ORDER BY last_seen DESC LIMIT ?
+        """,
+            (limit,),
+        )
+        .fetchall()
+    )
+    return [dict(r) for r in rows]
+
+
 def wallet_feed(limit: int = 300) -> list[dict]:
     """Every enriched object whose payload contains crypto wallet addresses.
 

@@ -4,6 +4,7 @@ import { fmtINR, fmtTime } from '../lib/format'
 
 interface UpiRow {
   key: string; last_modified: string; vpa?: string; payee_name?: string; amount_inr?: number | null; known_mule?: boolean; raw_text?: string | null
+  slips?: number; total_inr?: number | null; with_amount?: number; first_seen?: string; last_seen?: string
 }
 
 function folderOf(key: string): string {
@@ -14,12 +15,13 @@ function folderOf(key: string): string {
 export function Upis() {
   const [data, setData] = useState<{ master_size: number; items: UpiRow[]; new_not_in_master: number } | null>(null)
   const [onlyNew, setOnlyNew] = useState(false)
+  const [distinct, setDistinct] = useState(false)
   const [selected, setSelected] = useState<UpiRow | null>(null)
   const [imgErr, setImgErr] = useState(false)
 
   const refresh = useCallback(() => {
-    api<any>('/api/upis', { limit: 500 }).then(setData).catch(() => {})
-  }, [])
+    api<any>('/api/upis', distinct ? { limit: 500, distinct: 1 } : { limit: 500 }).then(setData).catch(() => {})
+  }, [distinct])
   useEffect(refresh, [refresh])
   useEffect(() => { setImgErr(false) }, [selected?.key])
 
@@ -70,12 +72,15 @@ export function Upis() {
           <button className={`ex-toggle ${onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(true)}>
             ⚠ NEW only · {data?.new_not_in_master ?? 0}
           </button>
+          <button className={`ex-toggle ${distinct ? 'ex-toggle-on' : ''}`} onClick={() => setDistinct((d) => !d)} title="One row per unique VPA with slip count + summed amount — the officer action list">
+            ⇄ {distinct ? 'Unique VPAs' : 'Per-slip rows'}
+          </button>
         </div>
       </div>
 
       <div className="st-cards" style={{ marginBottom: 16 }}>
         <div className="st-card st-card-accent">
-          <div className="st-card-label">Decoded QRs</div>
+          <div className="st-card-label">{distinct ? 'Unique VPAs' : 'Decoded QRs'}</div>
           <div className="st-card-value accent">{items.length.toLocaleString()}</div>
         </div>
         <div className="st-card st-card-warn">
@@ -95,10 +100,11 @@ export function Upis() {
             <tr>
               <th>VPA</th>
               <th>Payee name</th>
-              <th className="num">Amount</th>
+              {distinct ? <th className="num">Slips</th> : null}
+              <th className="num">{distinct ? 'Total amount' : 'Amount'}</th>
               <th>Status</th>
-              <th>Source (where found)</th>
-              <th>QR uploaded</th>
+              <th>{distinct ? 'First → last seen' : 'Source (where found)'}</th>
+              <th>{distinct ? 'Sample slip' : 'QR uploaded'}</th>
               <th></th>
             </tr>
           </thead>
@@ -110,15 +116,20 @@ export function Upis() {
                 <tr key={r.key}>
                   <td className="mono" style={{ fontWeight: r.known_mule ? 400 : 700 }}>{r.vpa}</td>
                   <td className="small">{r.payee_name ?? '—'}</td>
-                  <td className="num">{r.amount_inr != null ? fmtINR(r.amount_inr) : '—'}</td>
+                  {distinct ? <td className="num"><b>{(r.slips ?? 0).toLocaleString()}</b></td> : null}
+                  <td className="num">{(distinct ? r.total_inr : r.amount_inr) != null ? fmtINR((distinct ? r.total_inr : r.amount_inr) as number) : '—'}</td>
                   <td>
                     {r.known_mule
                       ? <span className="ex-badge" style={{ borderColor: 'var(--accent2)', color: 'var(--accent2)' }}>known mule</span>
                       : <span className="ex-badge ex-badge-new">NEW</span>
                     }
                   </td>
-                  <td className="small dim mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}>{r.key}</td>
-                  <td className="small dim">{fmtTime(r.last_modified)}</td>
+                  {distinct
+                    ? <td className="small dim">{r.first_seen ? fmtTime(r.first_seen) : '—'} → {r.last_seen ? fmtTime(r.last_seen) : '—'}</td>
+                    : <td className="small dim mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}>{r.key}</td>}
+                  {distinct
+                    ? <td className="small dim mono" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}>{r.key.split('/').pop()}</td>
+                    : <td className="small dim">{fmtTime(r.last_modified)}</td>}
                   <td><button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setSelected(r)}>view QR</button></td>
                 </tr>
               )
