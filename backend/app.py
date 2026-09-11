@@ -900,6 +900,14 @@ def gateway_summary(_=Depends(auth)):
     return cached("gateway:summary", 300.0, gateway.summary)
 
 
+@app.get("/api/network-urls")
+def network_urls(_=Depends(auth)):
+    """Officer network inventory: brand domains + QR-embedded URLs (CSV-ready)."""
+    from . import gateway
+
+    return cached("gateway:network-urls", 300.0, gateway.network_urls)
+
+
 @app.post("/api/gateway/sync")
 def gateway_sync(limit: int = Query(25, ge=1, le=200), _=Depends(auth)):
     """Index new/changed paymentgateway/csv-files/ exports (bounded per call)."""

@@ -23,7 +23,9 @@ Never touches payment_transactions (writes gateway_* only).
 
 import csv
 import io
+import re
 import time
+from urllib.parse import urlparse
 
 from . import db
 
@@ -327,5 +329,111 @@ def summary() -> dict:
             "total": files["total"] or 0,
             "bucket_total": bucket_total["n"],
             "newest": files["newest"] or "",
+        },
+    }
+
+
+_URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+
+
+def _url_host(url: str) -> str:
+    try:
+        return (urlparse(url).hostname or "").lower().strip(".")
+    except Exception:
+        return ""
+
+
+def network_urls(qr_scan_limit: int = 50000) -> dict:
+    """Officer network inventory: every frontend/backend/other URL in the network.
+
+    Sources (fact, test rows excluded):
+      - gateway-brand: white-label brand domains from settlement exports
+        (player-facing frontends) + per-brand volume stats.
+      - qr-payload: http(s) URLs embedded in decoded collection QR codes.
+      - qr-expanded: short-link QR destinations after redirect expansion.
+    Grouped by host; each row carries a sample URL + sample evidence key.
+    """
+    c = db.connect()
+    rows: list[dict] = []
+    for b in c.execute(
+        "SELECT website,COUNT(*) txns,COALESCE(SUM(amount),0) amount,"
+        " COUNT(DISTINCT NULLIF(customer,'')) customers,"
+        " COUNT(DISTINCT NULLIF(utr,'')) utrs,"
+        " MIN(ts) first_seen,MAX(ts) last_seen,MIN(key) sample_key"
+        " FROM gateway_rows WHERE kind='gateway_deposit' AND is_test=0 AND website!=''"
+        " GROUP BY website ORDER BY txns DESC"
+    ).fetchall():
+        site = (b["website"] or "").strip()
+        url = site if site.lower().startswith("http") else (
+            f"https://{site}" if "." in site else site
+        )
+        rows.append(
+            {
+                "host": site.lower(),
+                "url": url,
+                "source": "gateway-brand",
+                "hits": b["txns"],
+                "txns": b["txns"],
+                "amount_inr": b["amount"],
+                "customers": b["customers"],
+                "utrs": b["utrs"],
+                "first_seen": b["first_seen"] or "",
+                "last_seen": b["last_seen"] or "",
+                "sample_key": b["sample_key"] or "",
+            }
+        )
+    agg: dict[str, dict] = {}
+    for r in c.execute(
+        "SELECT key,last_modified,"
+        " json_extract(extract_json,'$.raw_text') raw,"
+        " json_extract(extract_json,'$.expanded_url') exp"
+        " FROM objects WHERE json_extract(extract_json,'$.kind')='qr'"
+        " AND (json_extract(extract_json,'$.expanded_url') IS NOT NULL"
+        "  OR json_extract(extract_json,'$.raw_text') LIKE '%http%')"
+        " LIMIT ?",
+        (qr_scan_limit,),
+    ).fetchall():
+        found: list[tuple[str, str]] = []
+        for u in _URL_RE.findall(r["raw"] or ""):
+            h = _url_host(u)
+            if h:
+                found.append((h, ("qr-payload", u)))
+        if r["exp"]:
+            h = _url_host(r["exp"])
+            if h:
+                found.append((h, ("qr-expanded", r["exp"])))
+        for host, (source, url) in found:
+            key = (host, source)
+            a = agg.get(key)
+            if a is None:
+                agg[key] = {
+                    "host": host,
+                    "url": url,
+                    "source": source,
+                    "hits": 1,
+                    "txns": 0,
+                    "amount_inr": 0,
+                    "customers": 0,
+                    "utrs": 0,
+                    "first_seen": r["last_modified"] or "",
+                    "last_seen": r["last_modified"] or "",
+                    "sample_key": r["key"],
+                }
+            else:
+                a["hits"] += 1
+                if r["last_modified"]:
+                    if not a["first_seen"] or r["last_modified"] < a["first_seen"]:
+                        a["first_seen"] = r["last_modified"]
+                    if not a["last_seen"] or r["last_seen"] > a["last_seen"]:
+                        a["last_seen"] = r["last_seen"]
+    rows.extend(sorted(agg.values(), key=lambda d: -d["hits"]))
+    return {
+        "fact_type": "fact",
+        "note": "Hosts observed in gateway settlement brands + decoded collection-QR URLs. Test rows excluded. QR hosts include payment rails (upi:) neighbours — source column distinguishes.",
+        "rows": rows,
+        "counts": {
+            "total": len(rows),
+            "brands": sum(1 for d in rows if d["source"] == "gateway-brand"),
+            "qr_hosts": sum(1 for d in rows if d["source"] != "gateway-brand"),
         },
     }

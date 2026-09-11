@@ -61,12 +61,19 @@ interface MirrorSync {
   }
 }
 
+interface NetUrlRow {
+  host: string; url: string; source: string; hits: number; txns: number;
+  amount_inr: number; customers: number; utrs: number;
+  first_seen: string; last_seen: string; sample_key: string;
+}
+
 export function StatusPage() {
   const [st, setSt] = useState<Status | null>(null)
   const [stats, setStats] = useState<Stats | null>(null)
   const [types, setTypes] = useState<Types | null>(null)
   const [health, setHealth] = useState<BucketHealth | null>(null)
   const [mirrorSync, setMirrorSync] = useState<MirrorSync | null>(null)
+  const [netUrls, setNetUrls] = useState<{ rows: NetUrlRow[]; counts: any } | null>(null)
   const [pinging, setPinging] = useState(false)
   const [liveConnected, setLiveConnected] = useState(false)
   const [lastEventAt, setLastEventAt] = useState<string | null>(null)
@@ -74,6 +81,7 @@ export function StatusPage() {
   const doRefresh = useCallback(() => {
     api<Stats>('/api/stats').then(setStats).catch(() => {})
     api<Status>('/api/status').then(setSt).catch(() => {})
+    api<{ rows: NetUrlRow[]; counts: any }>('/api/network-urls').then(setNetUrls).catch(() => {})
   }, [])
   const refreshStats = doRefresh
 
@@ -145,6 +153,20 @@ export function StatusPage() {
   const sweepPct = Math.min(99, Math.floor((swept / Math.max(1, sweepTarget)) * 100))
   const totalBytes = stats?.per_prefix?.reduce((a, r) => a + (r.s ?? 0), 0) ?? 0
   const maxPrefixCount = Math.max(...(stats?.per_prefix ?? []).map((r) => r.n), 1)
+
+  function exportNetCsv() {
+    // Officer download: every network URL row (brands + QR hosts) with volume info.
+    const q = (v: any) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
+    const header = 'Host,Source,Hits,Txns,Amount_INR,Customers,UTRs,First_seen,Last_seen,Sample_URL,Evidence_key\n'
+    const rows = (netUrls?.rows ?? [])
+      .map((r) => [q(r.host), q(r.source), r.hits, r.txns, r.amount_inr, r.customers, r.utrs, q(r.first_seen), q(r.last_seen), q(r.url), q(r.sample_key)].join(','))
+      .join('\n')
+    const blob = new Blob([header + rows], { type: 'text/csv' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `network-urls-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+  }
 
   return (
     <>
@@ -394,6 +416,31 @@ export function StatusPage() {
           <span className="tiny dim">SQLite WAL · extract_json persisted · re-queue on etag/size change · payment_transactions materialized · WALLET_FULL_SCAN=0 (toggle via POST /api/wallets/full-scan)</span>
         </div>
         <div className="tiny dim" style={{ marginTop: 6 }}>Objects re-decode only when size/ETag/timestamp changes. Completion requires pending = 0 and errors reviewed; compare <code className="mono">GET /api/types</code> counts with money-flow coverage before reporting totals as exhaustive.</div>
+      </div>
+
+      {/* Network URLs — every frontend/backend/other URL in the network + CSV */}
+      <div className="st-panel">
+        <div className="st-panel-head">
+          <span className="st-panel-title">Network URLs ({(netUrls?.counts?.total ?? 0).toLocaleString()} hosts)</span>
+          <button className="btn" onClick={exportNetCsv} disabled={!netUrls?.rows?.length} style={{ fontSize: 11, padding: '4px 10px' }}>
+            ⬇ Export table CSV ({(netUrls?.rows ?? []).length})
+          </button>
+        </div>
+        <div className="small dim" style={{ marginBottom: 8 }}>
+          gateway-brand = white-label frontends from settlement exports · qr-payload / qr-expanded = URLs inside collection QR codes ·
+          showing {(netUrls?.rows ?? []).slice(0, 100).length} of {(netUrls?.rows ?? []).length} · CSV carries every row
+        </div>
+        <div className="dp-table-wrap"><table className="dp-table"><thead><tr>
+          <th>Host</th><th>Source</th><th className="num">Hits</th><th className="num">Amount</th><th>Sample URL</th><th>Evidence key</th>
+        </tr></thead>
+          <tbody>{(netUrls?.rows ?? []).slice(0, 100).map((r) => <tr key={r.source + ':' + r.host}>
+            <td className="mono" style={{ fontWeight: 700 }}>{r.host}</td>
+            <td className="small">{r.source}</td>
+            <td className="num">{r.hits.toLocaleString()}</td>
+            <td className="num money">{r.source === 'gateway-brand' ? fmtINR(r.amount_inr) : '—'}</td>
+            <td className="mono small" style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.url}>{r.url}</td>
+            <td className="mono small" title={r.sample_key}>{r.sample_key ? r.sample_key.split('/').pop() : '—'}</td>
+          </tr>)}{!netUrls && <tr><td colSpan={6} className="dim">Loading network inventory…</td></tr>}</tbody></table></div>
       </div>
 
       {/* Runtime */}

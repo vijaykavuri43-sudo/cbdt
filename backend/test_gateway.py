@@ -114,6 +114,99 @@ class GatewayParseTests(unittest.TestCase):
         self.assertEqual(s["payouts"]["accounts"], 1)
         self.assertEqual(s["files"]["bucket_total"], 2)
 
+    def test_network_urls_brands_and_qr_hosts(self):
+        import json
+
+        db.connect()
+        c = db.connect()
+        c.execute("DELETE FROM gateway_rows")
+        c.execute("DELETE FROM objects")
+        c.executemany(
+            "INSERT INTO gateway_rows(key,row_no,kind,customer,amount,utr,website,ts,is_test)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    "g1.csv",
+                    1,
+                    "gateway_deposit",
+                    "u1",
+                    1000.0,
+                    "111111111111",
+                    "newlotus",
+                    "2026-01-01",
+                    0,
+                ),
+                (
+                    "g1.csv",
+                    2,
+                    "gateway_deposit",
+                    "u2",
+                    2000.0,
+                    "222222222222",
+                    "newlotus",
+                    "2026-01-02",
+                    0,
+                ),
+                (
+                    "g1.csv",
+                    3,
+                    "gateway_deposit",
+                    "t1",
+                    1000.0,
+                    "999",
+                    "testbrand",
+                    "2026-01-03",
+                    1,
+                ),
+            ],
+        )
+        c.executemany(
+            "INSERT INTO objects(key,size,etag,last_modified,top_prefix,extract_json) VALUES(?,?,?,?,?,?)",
+            [
+                (
+                    "bankingqr/q1.png",
+                    10,
+                    "e1",
+                    "2026-02-01",
+                    "bankingqr/",
+                    json.dumps(
+                        {
+                            "kind": "qr",
+                            "raw_text": "upi://pay?pa=a@okaxis&pn=Shop https://pay.example.com/r/1",
+                        }
+                    ),
+                ),
+                (
+                    "qrcode/q2.png",
+                    10,
+                    "e2",
+                    "2026-02-02",
+                    "qrcode/",
+                    json.dumps(
+                        {
+                            "kind": "qr",
+                            "raw_text": "upi://pay?pa=b@okaxis",
+                            "expanded_url": "https://go.short/abc",
+                        }
+                    ),
+                ),
+            ],
+        )
+        c.commit()
+        out = gateway.network_urls()
+        by_src = {}
+        for r in out["rows"]:
+            by_src.setdefault(r["source"], []).append(r)
+        brand = by_src["gateway-brand"][0]
+        self.assertEqual(brand["host"], "newlotus")
+        self.assertEqual(brand["txns"], 2)
+        self.assertEqual(brand["amount_inr"], 3000.0)
+        self.assertNotIn("testbrand", [r["host"] for r in out["rows"]])
+        hosts = {(r["host"], r["source"]) for r in out["rows"]}
+        self.assertIn(("pay.example.com", "qr-payload"), hosts)
+        self.assertIn(("go.short", "qr-expanded"), hosts)
+        self.assertEqual(out["counts"]["brands"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
