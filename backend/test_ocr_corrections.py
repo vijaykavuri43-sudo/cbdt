@@ -304,8 +304,20 @@ class Round2AmountGuardTests(unittest.TestCase):
 
     def test_targeted_fixes_sane(self):
         for key, (val, _note) in db.TARGETED_AMOUNT_FIXES.items():
-            self.assertTrue(key.startswith("deposit/"))
-            self.assertGreater(val, 0)
+            self.assertTrue(key.startswith("deposit/") or key.startswith("withdrawal/"))
+            if val is not None:
+                self.assertGreater(val, 0)
+
+    def test_targeted_none_means_null_for_gemini(self):
+        hit = {"rule": "targeted-audit", "evidence": "x"}
+        # None-correct entries must NOT carry a "correct" key, so the repair
+        # path nulls (needs_gemini True) instead of setting a value.
+        self.assertNotIn("correct", hit)
+        for key, (val, _note) in db.TARGETED_AMOUNT_FIXES.items():
+            if val is None:
+                self.assertTrue(
+                    key.startswith("withdrawal/") or key.startswith("deposit/")
+                )
 
 
 if __name__ == "__main__":

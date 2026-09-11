@@ -1694,12 +1694,50 @@ _MALFORMED_TSFRAG_RE = re.compile(r"(\d{1,2}:\d{2})\s+((?:\d{1,3}\s+)+\d{1,3})")
 #   stored sample but no generic rule can decide (Navi slips print the paid
 #   amount as malformed '71,0000' while the 20L loan ad poisons the winner).
 #   Values verified against text_sample 2026-09-11; never guessed.
-TARGETED_AMOUNT_FIXES: dict[str, tuple[float, str]] = {
+TARGETED_AMOUNT_FIXES: dict[str, tuple[Optional[float], str]] = {
     "deposit/1788195062817.jpg": (71000.0, "sample shows paid 71,0000; 20L is loan ad"),
     "deposit/1788572774877.jpg": (72000.0, "sample shows paid 72,0000; 20L is loan ad"),
     "deposit/1788025253342.jpg": (71000.0, "sample shows paid 71,0000; 20L is loan ad"),
     "deposit/1788113559421.jpg": (71000.0, "sample shows paid 71,0000; 20L is loan ad"),
     "deposit/1788083689003.jpg": (75000.0, "sample shows paid 75000; 20L is loan ad"),
+    # Round-2 audit (2026-09-11): audited junk, true principal unknown -> null
+    # for Gemini re-adjudication (None correct = null, needs_gemini True).
+    "withdrawal/1787741592963.jpeg": (
+        None,
+        "IMPS ref id picked as amount; true principal unknown",
+    ),
+    "withdrawal/1787915028867.jpeg": (
+        500.0,
+        "audited: true principal 500; stored 2.5M is a ref/id run",
+    ),
+    "withdrawal/1788022477775.png": (
+        None,
+        "credit-card-bill context (Pay Postpaid/due tomorrow); not a transfer",
+    ),
+    "withdrawal/1788019852731.png": (
+        None,
+        "credit-card-bill context (Pay Postpaid/due tomorrow); not a transfer",
+    ),
+    "withdrawal/1788020007524.png": (
+        None,
+        "credit-card-bill context (Pay Postpaid/due tomorrow); not a transfer",
+    ),
+    "withdrawal/1788106904937.png": (
+        None,
+        "credit-card-bill context (Pay Postpaid/due tomorrow); not a transfer",
+    ),
+    "withdrawal/1788106995331.png": (
+        None,
+        "credit-card-bill context (Pay Postpaid/due tomorrow); not a transfer",
+    ),
+    "deposit/1788969025602.jpg": (
+        None,
+        "stored 920188 unaudited vs ~500 split-expense; null for Vision re-read",
+    ),
+    "deposit/1788800046008.jpg": (
+        None,
+        "stored 1M matches ref/scratch id pattern; true principal unknown",
+    ),
 }
 
 
@@ -1835,7 +1873,11 @@ def repair_malformed_amounts(dry_run: bool = True, limit: int = 20000) -> dict:
         hit = _malformed_evidence(p.get("text_sample") or "", float(stored))
         if not hit and r["key"] in TARGETED_AMOUNT_FIXES:
             correct, note = TARGETED_AMOUNT_FIXES[r["key"]]
-            hit = {"rule": "targeted-audit", "evidence": note, "correct": correct}
+            if correct is None:
+                # Audited junk, true principal unknown -> null for Gemini
+                hit = {"rule": "targeted-audit", "evidence": note}
+            else:
+                hit = {"rule": "targeted-audit", "evidence": note, "correct": correct}
         if not hit:
             need_reocr += 1
             continue
