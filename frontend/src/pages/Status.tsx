@@ -199,7 +199,7 @@ export function StatusPage() {
           <div className="st-card-icon">💰 {liveConnected && <span className="dot live" style={{ display: 'inline-block', verticalAlign: 'middle', marginLeft: 6 }} />}</div>
           <div className="st-card-label">Gambler funds → receiving rails</div>
           <div className="st-card-value money">{fmtINR(stats?.deposits.sum_amount_inr)}</div>
-          <div className="st-card-sub">{(stats?.deposits.count ?? 0).toLocaleString()} deposit slips parsed · withdrawals tracked separately</div>
+          <div className="st-card-sub">{(stats?.deposits.count ?? 0).toLocaleString()} deposit slips parsed · history from Jul 22, 2026 · withdrawals tracked separately</div>
           <div className="tiny dim" style={{ marginTop: 4, lineHeight: 1.3 }}>Principal only · promo/balance ignored · ≤{fmtINR(st?.max_amount_inr ?? 10000000)} · persisted enriched=1</div>
         </div>
 
