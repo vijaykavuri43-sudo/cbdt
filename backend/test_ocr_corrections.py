@@ -251,5 +251,62 @@ class UpiPaginationTests(unittest.TestCase):
         self.assertEqual(c["distinct_total"], 0)
 
 
+class Round2AmountGuardTests(unittest.TestCase):
+    """Officer case 2026-09-11 round-2: withdrawal-tail garbage that survived
+    round-1 (RRN/ref ids, credit-card-bill reminders, timestamp concats)."""
+
+    def test_timestamp_frag_dropped_in_scan(self):
+        flat = "Paid at 1:05 1 111 202 to Ritam Mahajanphone"
+        hits = [d for d in _scan_amount_matches(flat) if d["value"] == 1111202.0]
+        self.assertTrue(hits)
+        self.assertTrue(all(d["dropped"] for d in hits))
+        self.assertTrue(all(d["reason"] == "timestamp-frag" for d in hits))
+
+    def test_timestamp_guard_exempts_prefixed_amount(self):
+        flat = "Paid at 10:30 ₹500 to ACME acme@okaxis UTR 123456789012"
+        vals = [d["value"] for d in _scan_amount_matches(flat) if not d["dropped"]]
+        self.assertIn(500.0, vals)
+
+    def test_bill_context_dropped_in_scan(self):
+        flat = "Pay Postpaid now 1,328,572.62 for Credit Card - 1668"
+        hits = [d for d in _scan_amount_matches(flat) if d["value"] == 1328572.62]
+        self.assertTrue(hits)
+        self.assertTrue(all(d["dropped"] for d in hits))
+
+    def test_genuine_paid_bill_kept(self):
+        flat = "Payment successful Paid postpaid bill ₹1,200 to AIRTEL airtel@okaxis"
+        vals = [d["value"] for d in _scan_amount_matches(flat) if not d["dropped"]]
+        self.assertIn(1200.0, vals)
+
+    def test_transfer_amount_evidence_corrects(self):
+        sample = "IMPS RRNNumber « = 6252477 Transfer Amount 1500 Beneficiary"
+        hit = db._malformed_evidence(sample, 6252477.0)
+        self.assertIsNotNone(hit)
+        assert hit is not None
+        self.assertEqual(hit["rule"], "transfer-amount")
+        self.assertEqual(hit["correct"], 1500.0)
+
+    def test_transfer_amount_matching_stored_not_flagged(self):
+        sample = "Transfer Amount 1500 Beneficiary RRN 123"
+        self.assertIsNone(db._malformed_evidence(sample, 1500.0))
+
+    def test_timestamp_frag_evidence(self):
+        hit = db._malformed_evidence("Paid at 1:05 1 111 202 to Ritam", 1111202.0)
+        self.assertIsNotNone(hit)
+        assert hit is not None
+        self.assertEqual(hit["rule"], "timestamp-frag")
+
+    def test_bill_context_evidence(self):
+        hit = db._malformed_evidence("Pay Postpaid now 1,328,572.62 done", 1328572.62)
+        self.assertIsNotNone(hit)
+        assert hit is not None
+        self.assertEqual(hit["rule"], "bill-context")
+
+    def test_targeted_fixes_sane(self):
+        for key, (val, _note) in db.TARGETED_AMOUNT_FIXES.items():
+            self.assertTrue(key.startswith("deposit/"))
+            self.assertGreater(val, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

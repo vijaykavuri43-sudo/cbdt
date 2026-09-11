@@ -2816,7 +2816,10 @@ def spa_fallback(full_path: str):
     try:
         dist = Path(__file__).resolve().parents[1] / "frontend" / "dist" / "index.html"
         if dist.exists():
-            return FileResponse(str(dist))
+            # No-store: after each deploy the bundle hash changes, and a
+            # cached index.html (verified 2026-09-11: stale "0 pending" UI)
+            # is worse than one extra 304-checked fetch per load.
+            return FileResponse(str(dist), headers={"Cache-Control": "no-store"})
     except Exception:
         pass
     from fastapi import HTTPException as _HE2

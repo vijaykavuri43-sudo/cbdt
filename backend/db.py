@@ -1674,6 +1674,33 @@ _MALFORMED_AD_RE = re.compile(
     r"|buy\s*now|\bemi\b|discount|cashback",
     re.IGNORECASE,
 )
+# Round-2 (verified 2026-09-11 top-tail audit):
+# - IMPS receipts print the authoritative principal as 'Transfer Amount X'
+#   while a nearby RRN/ref run gets stored ('RRNNumber « = 6252477' over
+#   TRUE 1,500; 'Transfer Amount 500.00' over stored 2,537,316).
+_MALFORMED_TRANSFER_RE = re.compile(
+    r"transfer\s+amount\s+([\d,]+(?:\.\d+)?)", re.IGNORECASE
+)
+# - Bill reminders show an amount DUE, never a completed transfer
+#   ('due tomorrow', 'Pay Postpaid', masked 'Credit Card - 1668';
+#   8× ₹13,28,572.62 rows on credit-card bills).
+_MALFORMED_BILL_RE = re.compile(
+    r"due\s+tomorrow|pay\s+postpaid|credit\s+card\s*-\s*\d", re.IGNORECASE
+)
+# - Timestamp-fragment concat: spaced run glued to HH:MM
+#   ('1:05 1 111 202' stored 1,111,202 over TRUE 200).
+_MALFORMED_TSFRAG_RE = re.compile(r"(\d{1,2}:\d{2})\s+((?:\d{1,3}\s+)+\d{1,3})")
+# - Targeted corrections: audited keys whose TRUE value is visible in the
+#   stored sample but no generic rule can decide (Navi slips print the paid
+#   amount as malformed '71,0000' while the 20L loan ad poisons the winner).
+#   Values verified against text_sample 2026-09-11; never guessed.
+TARGETED_AMOUNT_FIXES: dict[str, tuple[float, str]] = {
+    "deposit/1788195062817.jpg": (71000.0, "sample shows paid 71,0000; 20L is loan ad"),
+    "deposit/1788572774877.jpg": (72000.0, "sample shows paid 72,0000; 20L is loan ad"),
+    "deposit/1788025253342.jpg": (71000.0, "sample shows paid 71,0000; 20L is loan ad"),
+    "deposit/1788113559421.jpg": (71000.0, "sample shows paid 71,0000; 20L is loan ad"),
+    "deposit/1788083689003.jpg": (75000.0, "sample shows paid 75000; 20L is loan ad"),
+}
 
 
 def _malformed_evidence(sample: str, stored: float) -> Optional[dict]:
@@ -1681,8 +1708,25 @@ def _malformed_evidence(sample: str, stored: float) -> Optional[dict]:
 
     Returns {rule, evidence} when the digit string matching `stored` is found
     in the text sample inside a known-decoy context, else None (undecidable —
-    needs a Vision re-read of the pixels).
+    needs a Vision re-read of the pixels). A {rule: transfer-amount/bill,
+    correct: value} dict corrects instead of nulling when the sample names
+    the authoritative principal.
     """
+    # Authoritative principal on IMPS receipts takes precedence: when the
+    # sample prints 'Transfer Amount X' and X != stored, the stored run is
+    # a nearby RRN/ref id, never the principal.
+    tm = _MALFORMED_TRANSFER_RE.search(sample)
+    if tm:
+        try:
+            true_val = float(tm.group(1).replace(",", ""))
+        except ValueError:
+            true_val = None
+        if true_val is not None and true_val != stored:
+            return {
+                "rule": "transfer-amount",
+                "evidence": tm.group(0)[:40],
+                "correct": true_val,
+            }
     for m in _MALFORMED_NUM_RE.finditer(sample):
         tok = m.group(0)
         try:
@@ -1695,6 +1739,8 @@ def _malformed_evidence(sample: str, stored: float) -> Optional[dict]:
         before = sample[max(0, s - 40) : s]
         after = sample[e : e + 25]
         before_low = before.lower()
+        if _MALFORMED_BILL_RE.search(before_low[-40:]):
+            return {"rule": "bill-context", "evidence": tok}
         if "," in tok:
             from .enrich import detect_bad_grouping  # lazy: enrich imports db
 
@@ -1736,6 +1782,15 @@ def _malformed_evidence(sample: str, stored: float) -> Optional[dict]:
             return {"rule": "ref-number", "evidence": m.group(0)}
         if sample[m.end() : m.end() + 25].lower().lstrip("~ ").startswith("scratch"):
             return {"rule": "scratch-promo", "evidence": m.group(0)}
+    # Timestamp-fragment concat: spaced run glued to HH:MM whose glued value
+    # equals the stored amount ('1:05 1 111 202' → 1,111,202 over TRUE 200).
+    for m in _MALFORMED_TSFRAG_RE.finditer(sample):
+        glued = m.group(2).replace(" ", "")
+        try:
+            if float(glued) == stored:
+                return {"rule": "timestamp-frag", "evidence": m.group(0)[:40]}
+        except ValueError:
+            continue
     return None
 
 
@@ -1778,6 +1833,9 @@ def repair_malformed_amounts(dry_run: bool = True, limit: int = 20000) -> dict:
             continue
         scanned += 1
         hit = _malformed_evidence(p.get("text_sample") or "", float(stored))
+        if not hit and r["key"] in TARGETED_AMOUNT_FIXES:
+            correct, note = TARGETED_AMOUNT_FIXES[r["key"]]
+            hit = {"rule": "targeted-audit", "evidence": note, "correct": correct}
         if not hit:
             need_reocr += 1
             continue
@@ -1787,8 +1845,15 @@ def repair_malformed_amounts(dry_run: bool = True, limit: int = 20000) -> dict:
         if dry_run:
             continue
         p["amount_tesseract_raw"] = stored
-        p["amount_inr"] = None
-        p["needs_gemini"] = True
+        if "correct" in hit:
+            # Authoritative principal named in the sample (Transfer Amount
+            # label, targeted audit) — set it, no Gemini round-trip needed.
+            p["amount_inr"] = hit["correct"]
+            p["amount_corrected_from"] = stored
+            p["needs_gemini"] = False
+        else:
+            p["amount_inr"] = None
+            p["needs_gemini"] = True
         p["malformed_amount"] = {**hit, "repaired_utc": now, "repaired_from": "batch"}
         fixes.append((r["key"], p, hit))
     if fixes:
@@ -1805,6 +1870,7 @@ def repair_malformed_amounts(dry_run: bool = True, limit: int = 20000) -> dict:
     return {
         "scanned": scanned,
         "repaired": repaired,
+        "corrected": sum(1 for _k, _p, h in fixes if "correct" in h),
         "need_reocr": need_reocr,
         "dry_run": dry_run,
         "samples": samples,

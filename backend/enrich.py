@@ -810,12 +810,28 @@ def _scan_amount_matches(flat: str) -> list[dict]:
                 and "seamless" in (ctx_before_low + ctx_after_low).lower()[:60]
             ):
                 dropped, reason = True, "promo-cap"
-            # In-app ad / shopping banner price — never the deposit principal
+            # In-app ad / shopping banner price — never the deposit principal.
+            # Narrow exemption: bill-class words GOVERNED by paid/debited
+            # ('Paid postpaid bill ₹1,200' is a real transfer). Hard-ad words
+            # (buy now/EMI/discount/...) always drop, and slip headers like
+            # 'Payment successful' never exempt a neighboring banner
+            # (verified 2026-09-11: iPhone ₹50,000 beside header must lose).
             if not dropped and (
                 _AD_CTX_RE.search(ctx_before_low[-30:])
                 or _AD_CTX_RE.search(ctx_after_low[:30])
             ):
-                dropped, reason = True, "ad-promo"
+                _bill_gov = re.search(
+                    r"\b(?:paid|debited)\b.{0,25}(?:postpaid|\bbill\b|credit\s+card|due\s+tomorrow)",
+                    ctx_before_low[-40:],
+                )
+                _hard_ad = re.search(
+                    r"buy\s*now|\bemi\b|discount|cashback|sponsored|up\s*to"
+                    r"|upto|getupto|loan|credit\s+(?:limit|line|on\s+upi)"
+                    r"|pre[\s-]?approved|instant\s+(?:loan|credit|approval)",
+                    ctx_before_low[-30:] + " " + ctx_after_low[:30],
+                )
+                if not (_bill_gov and not _hard_ad):
+                    dropped, reason = True, "ad-promo"
             if not dropped and "up to" in ctx_before_low[-28:] and "%" in m.group(0):
                 dropped, reason = True, "promo-cap"
             # Malformed comma grouping — OCR ate/added a digit, value is 10-100x
@@ -853,6 +869,22 @@ def _scan_amount_matches(flat: str) -> list[dict]:
                 and len(bare_digits) >= 7
             ):
                 dropped, reason = True, "ref-echo"
+            # Timestamp-fragment concat — spaced run glued to a clock time is a
+            # datetime, not a principal ('1:05 1 111 202' stored 1,111,202
+            # over TRUE 200; verified 2026-09-11). Prefixed amounts (pi<5)
+            # are exempt: 'at 10:30 ₹500' keeps its glyph.
+            if not dropped and pi in (5, 6):
+                if re.search(r"\d{1,2}:\d{2}(?:\s+\d{1,3})?\s*$", ctx_before[-14:]):
+                    dropped, reason = True, "timestamp-frag"
+            # Bill-reminder context — amount due on a reminder is not a
+            # completed transfer ('due tomorrow', 'Pay Postpaid', masked
+            # 'Credit Card - 1668'; 8× ₹13.28L rows; verified 2026-09-11).
+            # Genuine bill PAYMENTS say 'Paid', never these cues.
+            if not dropped and re.search(
+                r"due\s+tomorrow|pay\s+postpaid|credit\s+card\s*-\s*\d",
+                ctx_before_low[-40:],
+            ):
+                dropped, reason = True, "bill-context"
             # Token-glued digits — run attaches to letters that aren't a
             # currency prefix ('towards7105960' over TRUE 1,20,000; verified
             # 2026-09-11). Rs/INR-glued ('Rs20000') stay: legit shorthand.

@@ -207,7 +207,7 @@ export function StatusPage() {
           <div className="st-card-icon">💸 {liveConnected && <span className="dot live" style={{ display: 'inline-block', verticalAlign: 'middle', marginLeft: 6 }} />}</div>
           <div className="st-card-label">Withdrawals — LIVE</div>
           <div className="st-card-value">{fmtINR(stats?.withdrawals.sum_amount_inr)}</div>
-          <div className="st-card-sub">{(stats?.withdrawals.count ?? 0).toLocaleString()} slips · both directions</div>
+          <div className="st-card-sub">{(stats?.withdrawals.count ?? 0).toLocaleString()} withdrawal slips</div>
           <div className="tiny dim" style={{ marginTop: 4, lineHeight: 1.3 }}>Principal only · ≤{fmtINR(st?.max_amount_inr ?? 10000000)} · persisted</div>
         </div>
 
