@@ -2597,7 +2597,21 @@ class EnrichmentWorker:
         self._prepare_payload(key, payload)
         db.mark_enriched(key, payload)
         if self.on_result:
-            self.on_result({"type": "enriched", "key": key, "payload": payload})
+            # Attach live size/modified: sizeless `enriched` events made the
+            # Live Feed modal render real images as 0-byte markers (2026-09-11).
+            try:
+                meta = db.get_object_sizes([key]).get(key, {})
+            except Exception:
+                meta = {}
+            self.on_result(
+                {
+                    "type": "enriched",
+                    "key": key,
+                    "size": meta.get("size"),
+                    "last_modified": meta.get("last_modified", ""),
+                    "payload": payload,
+                }
+            )
 
     def process_key(self, key: str, full_scan: bool = False, _claim: bool = True):
         # _claim=False when the caller (drain_pending/drain_specific batch
@@ -2864,12 +2878,19 @@ class EnrichmentWorker:
             try:
                 done = db.persist_enriched_batch(ok)
                 if self.on_result:
+                    try:
+                        sizes = db.get_object_sizes([k for k, _ in ok])
+                    except Exception:
+                        sizes = {}
                     for key, payload in ok:
                         try:
+                            meta = sizes.get(key, {})
                             self.on_result(
                                 {
                                     "type": "enriched",
                                     "key": key,
+                                    "size": meta.get("size"),
+                                    "last_modified": meta.get("last_modified", ""),
                                     "payload": payload,
                                 }
                             )

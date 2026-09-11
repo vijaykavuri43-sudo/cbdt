@@ -199,7 +199,7 @@ export function LiveFeed() {
 
 function rowFromEvt(e?: FeedEvt) {
   if (!e) return null as any
-  return { key: e.key, size: e.size ?? 0, last_modified: e.last_modified ?? e.seen_utc ?? '', extract: e.payload ?? null }
+  return { key: e.key, size: e.size ?? null, last_modified: e.last_modified ?? e.seen_utc ?? '', extract: e.payload ?? null }
 }
 
 function prefixBadge(prefix: string) {

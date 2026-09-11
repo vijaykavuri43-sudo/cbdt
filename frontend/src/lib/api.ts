@@ -156,7 +156,7 @@ export interface Status {
 
 export interface ObjRow {
   key: string
-  size: number
+  size: number | null
   last_modified: string
   seen_utc?: string
   etag?: string

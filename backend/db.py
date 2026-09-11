@@ -717,6 +717,28 @@ def get_object_row(key: str) -> Optional[dict]:
     return _row_pub(r) if r else None
 
 
+def get_object_sizes(keys: list[str]) -> dict[str, dict]:
+    """Batch size/last_modified lookup for SSE event enrichment.
+
+    The `enriched` event used to carry key+payload only, so the Live Feed
+    modal received sizeless rows and rendered real images as 0-byte folder
+    markers (verified 2026-09-11: 336KB slip shown as empty). One indexed
+    query serves the whole batch.
+    """
+    out: dict[str, dict] = {}
+    keys = [k for k in dict.fromkeys(keys) if k]
+    if not keys:
+        return out
+    for i in range(0, len(keys), 500):
+        chunk = keys[i : i + 500]
+        q = "SELECT key,size,last_modified FROM objects WHERE key IN (%s)" % ",".join(
+            "?" * len(chunk)
+        )
+        for r in connect().execute(q, chunk).fetchall():
+            out[r["key"]] = {"size": r["size"], "last_modified": r["last_modified"]}
+    return out
+
+
 def mark_enriched(key: str, payload: dict | None):
     """Persist an enrichment payload; amounts are sanity-checked at ingestion.
 

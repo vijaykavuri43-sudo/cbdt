@@ -172,7 +172,7 @@ export function Chat() {
                     </>
                   )}
                   <div style={{ marginTop: sameSender ? 0 : 6 }}>
-                    {!o.size ? (
+                    {o.size === 0 ? (
                       <div className="tiny dim" style={{ padding: '10px 0' }} title="0-byte folder marker, not a real file">
                         ∅ Empty object (0 B) — folder marker
                       </div>

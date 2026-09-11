@@ -197,7 +197,9 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
                 <SheetViewer obj={obj} />
               </div>
             ) : kind === 'image' ? (
-              !obj.size ? (
+              // Explicit 0 only: unknown size (null) must still attempt the
+              // load — sizeless `enriched` events used to fake 0-byte markers.
+              obj.size === 0 ? (
                 <div style={{ textAlign: 'center', padding: '48px 24px', maxWidth: 420 }}>
                   <div style={{ fontSize: 28, marginBottom: 8 }}>📁</div>
                   <div className="small" style={{ marginBottom: 4 }}>Empty object (0 bytes)</div>
