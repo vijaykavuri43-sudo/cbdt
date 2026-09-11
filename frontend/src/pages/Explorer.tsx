@@ -83,10 +83,12 @@ function FolderTree({
               key={d.seg}
               className={`ex-folder-item ${isActive ? 'ex-folder-item-active' : ''}`}
               onClick={() => onNavigate(d.seg)}
+              title={info.desc}
             >
               <span className="ex-folder-icon" style={{ color: info.color }}>{info.icon}</span>
               <div className="ex-folder-info">
                 <span className="ex-folder-name">{d.seg}</span>
+                <span className="ex-folder-desc tiny dim" style={{ display: 'block', whiteSpace: 'normal', lineHeight: 1.3 }}>{info.desc}</span>
                 <span className="ex-folder-meta">
                   {d.n.toLocaleString()} files · {fmtBytes(d.size)}
                 </span>
