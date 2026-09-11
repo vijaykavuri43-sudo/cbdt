@@ -19,6 +19,8 @@ from .enrich import (  # noqa: E402
     _scan_amount_matches,
     detect_twin_artifact,
     extract_amount,
+    extract_bank_accounts,
+    extract_participants,
     extract_vpa_details,
     extract_vpas,
 )
@@ -157,6 +159,39 @@ class SharedSweepTests(unittest.TestCase):
         )
         self.assertIsNone(detect_twin_artifact(text, 71234.0))
         assert True
+
+
+class BankReceiptTests(unittest.TestCase):
+    """Officer case 2026-09-11: PNB withdrawal receipt (withdrawal/1789105367390.jpg).
+    Payee labeled 'Name X', bank A/C + IFSC present — all must surface."""
+
+    SLIP = (
+        "Transaction Successful Transaction ID 2902105 Customer No. 7301713510 "
+        "Txn Amount =2000.0000 Name Pebba Rajesh | Bank Name PUNJAB NATIONAL BANK "
+        "A/C 1583100100008388 | Tr. Date Time 9/11/2026 11:12:06 AM | IFSC Code "
+        "PUNB0244200 | RRN 625411078687 Transfer Mode IMPS"
+    )
+
+    def test_beneficiary_from_name_label(self):
+        self.assertEqual(
+            extract_participants(self.SLIP).get("beneficiary_name"), "Pebba Rajesh"
+        )
+
+    def test_bank_name_not_taken_as_beneficiary(self):
+        out = extract_participants(
+            "Transaction Successful Bank Name PUNJAB NATIONAL BANK A/C 1583100100008388"
+        )
+        self.assertNotIn("PUNJAB", (out.get("beneficiary_name") or ""))
+
+    def test_account_and_ifsc_extracted(self):
+        accts = extract_bank_accounts(self.SLIP)
+        self.assertTrue(accts)
+        self.assertEqual(accts[0]["account_number"], "1583100100008388")
+        self.assertEqual(accts[0]["ifsc"], "PUNB0244200")
+
+    def test_equals_sign_amount_read(self):
+        # Tesseract renders ₹ as '=' on this receipt ("Txn Amount =2000.0000").
+        self.assertEqual(extract_amount(self.SLIP), 2000.0)
 
 
 if __name__ == "__main__":

@@ -191,7 +191,7 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
         )}
 
         <div className="modal-body" style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          <div style={{ flex: sideBySide ? '1 1 560px' : '1 1 520px', minWidth: 320, overflow: 'auto', maxHeight: '70vh', display: 'flex', justifyContent: 'center' }}>
+          <div style={{ flex: sideBySide ? '1 1 560px' : '1 1 520px', minWidth: 320, maxWidth: sideBySide ? 660 : undefined, overflow: 'auto', maxHeight: '70vh', display: 'flex', justifyContent: 'center' }}>
             {isSheet(obj.key) ? (
               <div style={{ width: '100%' }}>
                 <SheetViewer obj={obj} />
@@ -294,17 +294,20 @@ function ExtractFacts({ x, objKey, copied, onCopy }: {
   onCopy: (v: string, label: string) => void
 }) {
   const anyX = x as any
+  const acct = (x.bank_accounts ?? []).find((a: any) => a?.account_number || a?.masked_account)
+  const acctNo = acct ? String(acct.account_number || acct.masked_account || '') : ''
+  const ifsc = String(acct?.ifsc || (x as any).ifsc || '')
   const row: CSSProperties = {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    gap: 8, padding: '7px 10px', borderRadius: 8,
+    gap: 8, padding: '8px 10px', borderRadius: 8,
     background: 'rgba(255,255,255,.035)', border: '1px solid rgba(255,255,255,.07)',
   }
   const label: CSSProperties = {
-    fontSize: 10, letterSpacing: '.08em', color: 'var(--dim, #8b93a7)',
+    fontSize: 11, letterSpacing: '.08em', color: 'var(--dim, #8b93a7)',
     textTransform: 'uppercase', flexShrink: 0,
   }
   const val: CSSProperties = {
-    fontSize: 13, textAlign: 'right', overflow: 'hidden',
+    fontSize: 14, textAlign: 'right', overflow: 'hidden',
     textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
   }
   const miniBtn: CSSProperties = { padding: '1px 7px', fontSize: 10, flexShrink: 0 }
@@ -347,8 +350,22 @@ function ExtractFacts({ x, objKey, copied, onCopy }: {
       )}
       {(x.payee_name || anyX.beneficiary_name) && (
         <div style={row}>
-          <span style={label}>Payee</span>
+          <span style={label}>{x.payee_name ? 'Payee' : 'Beneficiary'}</span>
           <span style={val} title={x.payee_name || anyX.beneficiary_name}>{x.payee_name || anyX.beneficiary_name}</span>
+        </div>
+      )}
+      {acctNo && (
+        <div style={row}>
+          <span style={label}>Bank A/C</span>
+          <span className="mono" style={val} title={acctNo}>{acctNo}</span>
+          <button className="btn" style={miniBtn} onClick={() => onCopy(acctNo, 'ac-f')}>{copied === 'ac-f' ? '✓' : 'Copy'}</button>
+        </div>
+      )}
+      {ifsc && (
+        <div style={row}>
+          <span style={label}>IFSC</span>
+          <span className="mono" style={val} title={ifsc}>{ifsc}</span>
+          <button className="btn" style={miniBtn} onClick={() => onCopy(ifsc, 'ifsc-f')}>{copied === 'ifsc-f' ? '✓' : 'Copy'}</button>
         </div>
       )}
       {(x.wallets ?? []).slice(0, 3).map((w: any) => {
@@ -375,8 +392,8 @@ function ExtractFacts({ x, objKey, copied, onCopy }: {
       )}
       {(x.text_sample || x.raw_text) && (
         <details className="tiny dim" style={{ ...row, display: 'block' }}>
-          <summary style={{ cursor: 'pointer' }}>OCR text</summary>
-          <div className="mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 6, maxHeight: 180, overflow: 'auto' }}>
+          <summary style={{ cursor: 'pointer', fontSize: 12 }}>OCR text</summary>
+          <div className="mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 6, maxHeight: 220, overflow: 'auto', fontSize: 12, lineHeight: 1.6, color: 'var(--text, #e6e9f2)' }}>
             {x.text_sample || x.raw_text}
           </div>
         </details>

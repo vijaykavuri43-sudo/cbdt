@@ -978,6 +978,24 @@ def extract_participants(text: str) -> dict:
                 cand = " ".join(m2.group(1).split())
                 if 2 <= len(cand.split()) <= 4 and cand.isupper():
                     out["beneficiary_name"] = cand.title()[:120]
+        if "beneficiary_name" not in out:
+            # Third fallback: bank receipts label the payee "Name X"
+            # ("Name Pebba Rajesh | Bank Name ..." — officer case 2026-09-11).
+            # Skip Bank Name / Customer Name labels via preceding-word guard.
+            for m3 in re.finditer(
+                r"\bName\s*[:\-]?\s*([A-Z][A-Za-z .]{1,40}?)(?=\s*[|\n]|$)",
+                flat,
+            ):
+                before3 = flat[max(0, m3.start() - 12) : m3.start()].lower()
+                if re.search(r"(?:bank|customer|user)\s*$", before3.strip()):
+                    continue
+                cand3 = " ".join(m3.group(1).split()).strip(" .")
+                words3 = cand3.split()
+                if 1 <= len(words3) <= 4 and all(
+                    re.match(r"^[A-Za-z.]{2,20}$", w) for w in words3
+                ):
+                    out["beneficiary_name"] = cand3[:120]
+                    break
     return out
 
 
