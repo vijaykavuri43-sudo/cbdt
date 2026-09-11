@@ -2485,9 +2485,11 @@ def upis_api(
     new_total = (
         total
         if new_only
-        else db.upi_counts(master, which="feed", hide_senders=hide_senders)[
-            "feed_total"
-        ]
+        # Same view grain as the tab (distinct vs feed) — a feed-grist NEW
+        # count beside a unique-VPA tab was a stale mismatch (2026-09-11).
+        else db.upi_counts(
+            master, which="distinct" if distinct else "feed", hide_senders=hide_senders
+        )["distinct_total" if distinct else "feed_total"]
     )
     return {
         "master_size": len(master),

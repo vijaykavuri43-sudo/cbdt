@@ -44,13 +44,6 @@ export function Upis() {
   const to = Math.min(total, page * PAGE_SIZE + items.length)
   const seen = new Set<string>()
 
-  function exportTsv() {
-    const header = 'VPA\tPayee Name\tAmount (INR)\tStatus\tSource File\tSource Folder\tQR Uploaded\n'
-    const rows = items.map((r) => [r.vpa, r.payee_name ?? '', r.amount_inr ?? '', r.known_mule ? 'known' : 'NEW', r.key, folderOf(r.key), r.last_modified].join('\t')).join('\n')
-    const blob = new Blob([header + rows], { type: 'text/tab-separated-values' })
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `upi-mules-${new Date().toISOString().slice(0, 10)}.tsv`; a.click()
-  }
-
   function exportFullCsv() {
     // Full officer exhibit: every decoded VPA (old + new) with source file +
     // dashboard link per row — server streams the whole list as CSV (Excel-ready)
@@ -71,14 +64,13 @@ export function Upis() {
           </div>
         </div>
         <div className="pg-header-right">
-          <button className="btn" onClick={exportFullCsv} title="Full VPA list (old + new) with source file + dashboard link per row — officer exhibit, opens in Excel" style={{ fontSize: 11, marginRight: 8 }}>⬇ Export FULL CSV (LE)</button>
-          <button className="btn" onClick={exportTsv} style={{ fontSize: 11 }}>⬇ Export ({items.length})</button>
+          <button className="btn" onClick={exportFullCsv} title="Full VPA list (old + new) with source file + dashboard link per row — officer exhibit, opens in Excel" style={{ fontSize: 11 }}>⬇ Export FULL CSV (LE)</button>
         </div>
       </div>
 
       <div className="lf-controls">
         <div className="lf-controls-left">
-          <button className={`ex-toggle ${!onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(false)}>All · {data?.items.length ?? 0}</button>
+          <button className={`ex-toggle ${!onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(false)} title={`Full set across all pages (${total.toLocaleString()} rows, 500 per page)`}>All · {total.toLocaleString()}</button>
           <button className={`ex-toggle ${onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(true)}>
             ⚠ NEW only · {(data?.new_total ?? data?.new_not_in_master ?? 0).toLocaleString()}
           </button>
