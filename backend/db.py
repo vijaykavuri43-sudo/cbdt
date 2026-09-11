@@ -683,9 +683,9 @@ def search(
             conds.append("lower(key) LIKE ?")
             args.append("%" + e)
     if prefix:
-        p = prefix.lstrip("/")
-        if not p.endswith("/"):
-            p += "/"
+        # Canonicalize like app._norm_prefix: collapse '//' so a malformed
+        # prefix can never silently match zero keys (2026-09-11 explorer bug).
+        p = re.sub(r"/+", "/", prefix.strip("/")) + "/"
         conds.append("key LIKE ? ESCAPE '\\'")
         args.append(p.replace("%", r"\%").replace("_", r"\_") + "%")
     if since:
@@ -1946,11 +1946,14 @@ def mule_rails(
 
 
 def upi_feed(limit: int = 300) -> list[dict]:
+    """Mule-side VPAs only: collection QR images + deposit-slip recipients
+    (money paid TO this VPA). Withdrawal-slip VPAs are excluded — those are
+    gambler payout accounts, not mules."""
     rows = (
         connect()
         .execute(
             "SELECT key,last_modified,seen_utc,extract_json FROM objects"
-            " WHERE extract_json IS NOT NULL AND json_extract(extract_json,'$.kind')='qr'"
+            " WHERE extract_json IS NOT NULL AND json_extract(extract_json,'$.kind') IN ('qr','deposit')"
             " AND json_extract(extract_json,'$.vpa') IS NOT NULL"
             " ORDER BY last_modified DESC LIMIT ?",
             (limit,),
@@ -1971,18 +1974,28 @@ def upi_feed(limit: int = 300) -> list[dict]:
 def upi_distinct(limit: int = 300) -> list[dict]:
     """One row per unique VPA (case-insensitive): slip count, summed amount,
     first/last seen, plus the newest slip's key/payee as the sample evidence.
-    Single-pass window query — no per-VPA lookups."""
+    Mule-side only (collection QRs + deposit-slip recipients; withdrawal-slip
+    VPAs are gambler payout accounts, excluded). Origin tells which evidence
+    kinds a VPA appears in. Single-pass window query — no per-VPA lookups."""
     rows = (
         connect()
         .execute(
             """
         SELECT vpa, slips, total_inr, with_amount, first_seen, last_seen,
-               key, payee_name, amount_inr, last_modified
+               key, payee_name, amount_inr, last_modified, origin
         FROM (
           SELECT LOWER(json_extract(extract_json,'$.vpa')) AS vpa,
                  key, last_modified,
                  json_extract(extract_json,'$.payee_name') AS payee_name,
                  CAST(json_extract(extract_json,'$.amount_inr') AS REAL) AS amount_inr,
+                 CASE WHEN MAX(CASE WHEN json_extract(extract_json,'$.kind')='qr' THEN 1 ELSE 0 END) OVER (
+                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) = 1
+                      AND MAX(CASE WHEN json_extract(extract_json,'$.kind')='deposit' THEN 1 ELSE 0 END) OVER (
+                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) = 1
+                  THEN 'qr+deposit'
+                  WHEN MAX(CASE WHEN json_extract(extract_json,'$.kind')='qr' THEN 1 ELSE 0 END) OVER (
+                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) = 1
+                  THEN 'qr' ELSE 'deposit' END AS origin,
                  ROW_NUMBER() OVER (
                    PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))
                    ORDER BY last_modified DESC) AS rn,
@@ -1997,11 +2010,11 @@ def upi_distinct(limit: int = 300) -> list[dict]:
                    PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS first_seen,
                  MAX(last_modified) OVER (
                    PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS last_seen
-          FROM objects
-          WHERE extract_json IS NOT NULL
-            AND json_extract(extract_json,'$.kind')='qr'
-            AND json_extract(extract_json,'$.vpa') IS NOT NULL
-        ) WHERE rn = 1
+           FROM objects
+           WHERE extract_json IS NOT NULL
+             AND json_extract(extract_json,'$.kind') IN ('qr','deposit')
+             AND json_extract(extract_json,'$.vpa') IS NOT NULL
+         ) WHERE rn = 1
         ORDER BY last_seen DESC LIMIT ?
         """,
             (limit,),

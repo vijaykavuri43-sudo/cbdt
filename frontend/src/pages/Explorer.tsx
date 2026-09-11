@@ -362,7 +362,9 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   }
 
   const crumbs = useMemo(() => {
-    const parts = prefix ? prefix.replace(/\/$/, '').split('/') : []
+    // filter(Boolean): a '//' prefix must never render a ghost empty crumb
+    // (2026-09-11: '/paymentgateway//csv-files/' showed a blank folder icon).
+    const parts = prefix ? prefix.replace(/\/$/, '').split('/').filter(Boolean) : []
     return parts.map((p, i) => ({ name: p, path: parts.slice(0, i + 1).join('/') + '/' }))
   }, [prefix])
 
@@ -374,7 +376,10 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
     const s = seg.replace(/^\/+|\/+$/g, '')
     if (!s) return
     resetFolderView()
-    const base = normPrefix(prefix)
+    // Strip the base's trailing slash too: it always ends with '/' below
+    // root, so base + '/' produced 'paymentgateway//csv-files/' (2026-09-11:
+    // every subfolder click below root matched zero keys + ghost crumb).
+    const base = normPrefix(prefix).replace(/\/+$/, '')
     setPrefix((base ? base + '/' : '') + s + '/')
   }
 

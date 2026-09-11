@@ -3,7 +3,7 @@ import { api, exportUpisUrl, objectUrl } from '../lib/api'
 import { fmtINR, fmtTime } from '../lib/format'
 
 interface UpiRow {
-  key: string; last_modified: string; vpa?: string; payee_name?: string; amount_inr?: number | null; known_mule?: boolean; raw_text?: string | null
+  key: string; last_modified: string; vpa?: string; payee_name?: string; amount_inr?: number | null; known_mule?: boolean; raw_text?: string | null; kind?: string; origin?: string
   slips?: number; total_inr?: number | null; with_amount?: number; first_seen?: string; last_seen?: string
 }
 
@@ -57,7 +57,7 @@ export function Upis() {
           <span className="pg-header-icon">@</span>
           <div>
             <h1 className="pg-header-title">UPI / Mule Accounts</h1>
-            <div className="pg-header-sub">VPAs decoded from payment QRs · cross-checked against {(data?.master_size ?? 0).toLocaleString()} known mules</div>
+            <div className="pg-header-sub">Mule VPAs — collection QRs + deposit-slip recipients (money paid TO this VPA) · cross-checked against {(data?.master_size ?? 0).toLocaleString()} known mules</div>
           </div>
         </div>
         <div className="pg-header-right">
@@ -80,7 +80,7 @@ export function Upis() {
 
       <div className="st-cards" style={{ marginBottom: 16 }}>
         <div className="st-card st-card-accent">
-          <div className="st-card-label">{distinct ? 'Unique VPAs' : 'Decoded QRs'}</div>
+              <div className="st-card-label">{distinct ? 'Unique VPAs' : 'Slip rows'}</div>
           <div className="st-card-value accent">{items.length.toLocaleString()}</div>
         </div>
         <div className="st-card st-card-warn">
@@ -125,17 +125,17 @@ export function Upis() {
                     }
                   </td>
                   {distinct
-                    ? <td className="small dim">{r.first_seen ? fmtTime(r.first_seen) : '—'} → {r.last_seen ? fmtTime(r.last_seen) : '—'}</td>
-                    : <td className="small dim mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}>{r.key}</td>}
+                    ? <td className="small dim">{r.first_seen ? fmtTime(r.first_seen) : '—'} → {r.last_seen ? fmtTime(r.last_seen) : '—'} <span className="ex-badge" title={r.origin === 'qr+deposit' ? 'Seen on collection QRs AND deposit slips' : r.origin === 'qr' ? 'Seen on collection QRs' : 'Seen on deposit slips (money paid to this VPA)'}>{r.origin ?? '—'}</span></td>
+                    : <td className="small dim mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}><span className="ex-badge" title={r.kind === 'deposit' ? 'Deposit slip — money paid to this VPA' : 'Collection QR image'}>{r.kind === 'deposit' ? 'slip' : 'QR'}</span> {r.key}</td>}
                   {distinct
                     ? <td className="small dim mono" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}>{r.key.split('/').pop()}</td>
                     : <td className="small dim">{fmtTime(r.last_modified)}</td>}
-                  <td><button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setSelected(r)}>view QR</button></td>
+                  <td><button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setSelected(r)}>view</button></td>
                 </tr>
               )
             })}
             {items.length === 0 && (
-              <tr><td colSpan={7} className="dp-empty"><div className="dp-empty-icon">💳</div>No decoded VPAs yet — enrichment runs on bankingqr/, qrcode/, payment/</td></tr>
+              <tr><td colSpan={7} className="dp-empty"><div className="dp-empty-icon">💳</div>No decoded VPAs yet — enrichment runs on bankingqr/, qrcode/, deposit/ slips</td></tr>
             )}
           </tbody>
         </table>
@@ -181,6 +181,7 @@ export function Upis() {
                 {[
                   ['Source file', selected.key],
                   ['Source folder', folderOf(selected.key)],
+                  ['Evidence type', selected.kind === 'deposit' ? 'Deposit slip (money paid to this VPA)' : 'Collection QR image'],
                   ['Uploaded', fmtTime(selected.last_modified)],
                   ['Amount', selected.amount_inr != null ? fmtINR(selected.amount_inr) : '—'],
                   ['Status', selected.known_mule ? 'known mule' : 'NEW — not in master'],

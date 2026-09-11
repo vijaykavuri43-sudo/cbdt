@@ -8,6 +8,7 @@ import io
 import json
 import mimetypes
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -202,9 +203,14 @@ def _norm_prefix(prefix: str) -> str:
     The Explorer used to build '/banner/' (leading slash) when navigating from
     bucket root (2026-09-03: every folder click returned 0 rows). Object keys
     never start with '/', so strip them here as well — belt and braces.
+    2026-09-11: also collapse interior '//' — openDir() appended '/' to a base
+    that already ended with '/', so EVERY subfolder click below root produced
+    e.g. 'paymentgateway//csv-files/' (LIKE-matched zero keys, ghost crumb).
+    Collapsing here keeps old/bookmarked URLs working even before the
+    frontend fix reaches the browser.
     """
-    p = (prefix or "").lstrip("/")
-    if p and not p.endswith("/"):
+    p = re.sub(r"/+", "/", (prefix or "").strip("/"))
+    if p:
         p += "/"
     return p
 
