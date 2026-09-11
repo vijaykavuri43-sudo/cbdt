@@ -975,8 +975,11 @@ def _objcache_kind(thumb: int) -> str:
     return "t" if thumb else "f"
 
 
-def _objcache_entry(key: str, etag: str, thumb: int):
-    h = hashlib.sha256(f"{key}\x00{etag}\x00{thumb}".encode()).hexdigest()
+def _objcache_entry(key: str, etag: str, thumb: int, format: str = ""):
+    # format is part of the key: a ?format=wav transcode gets its own entry,
+    # otherwise the first-cached original shadows it forever (and a cached
+    # transcode would poison plain requests). Voice-note 0:00, 2026-09-11.
+    h = hashlib.sha256(f"{key}\x00{etag}\x00{thumb}\x00{format}".encode()).hexdigest()
     return _OBJ_CACHE_DIR / _objcache_kind(thumb) / h[:2] / (h + ".bin")
 
 
@@ -1376,7 +1379,7 @@ def get_object(
                         "X-Content-Type-Options": "nosniff",
                     },
                 )
-        hit = _objcache_entry(key, manifest_etag, thumb)
+        hit = _objcache_entry(key, manifest_etag, thumb, format)
         if hit.exists():
             refetch = False
             try:
@@ -1565,7 +1568,7 @@ def get_object(
             except Exception:
                 body = data
                 out_media = media
-        dest = _objcache_entry(key, manifest_etag, thumb)
+        dest = _objcache_entry(key, manifest_etag, thumb, format)
         # Never poison the cache with bytes that failed the integrity gate,
         # and never cache downloads under the inline key (empty-etag orphan).
         if not integrity_reason and not download:

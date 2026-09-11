@@ -159,6 +159,40 @@ class RepairRouteTests(unittest.TestCase):
             self.assertEqual(resp.media_type, "audio/wav")
             self.assertEqual(_body_of(resp)[:4], b"RIFF")
 
+    def test_format_wav_cache_key_separated_from_original(self):
+        # Voice-note 0:00 (2026-09-11): ?format=wav shared the disk-cache key
+        # with the original, so a cached webm shadowed the transcode forever
+        # (and a cached transcode would poison plain requests). Keys must differ.
+        import shutil
+
+        e_orig = app._objcache_entry(WAV_KEY, "", 0)
+        e_wav = app._objcache_entry(WAV_KEY, "", 0, "wav")
+        self.assertNotEqual(e_orig, e_wav)
+        app.object_store = _FakeGCS(GOOD_WEBM, hashlib.sha256(GOOD_WEBM).hexdigest())
+        app._fetch_repair_bytes = lambda key: (None, "s3 404")  # noqa: E731
+        r1 = app.get_object(WAV_KEY, _req(), download=0, thumb=0, _=None)
+        self.assertEqual(r1.headers.get("X-Cache-Status"), "MISS")
+        self.assertEqual(_body_of(r1), GOOD_WEBM)
+        # wav request after a cached original must MISS (own entry), not HIT-disk
+        r2 = app.get_object(WAV_KEY, _req(), download=0, thumb=0, format="wav", _=None)
+        self.assertEqual(r2.headers.get("X-Cache-Status"), "MISS")
+        if shutil.which("ffmpeg") is None:
+            self.assertEqual(r2.media_type, "audio/webm")
+            self.assertEqual(_body_of(r2), GOOD_WEBM)
+        else:
+            self.assertEqual(r2.media_type, "audio/wav")
+            self.assertEqual(_body_of(r2)[:4], b"RIFF")
+        # repeat wav request: HIT-disk with the same (transcoded) bytes
+        r3 = app.get_object(WAV_KEY, _req(), download=0, thumb=0, format="wav", _=None)
+        self.assertEqual(r3.headers.get("X-Cache-Status"), "HIT-disk")
+        self.assertEqual(_body_of(r3), _body_of(r2))
+        self.assertEqual(r3.media_type, r2.media_type)
+        # and the original entry is unpoisoned: still the webm bytes
+        r4 = app.get_object(WAV_KEY, _req(), download=0, thumb=0, _=None)
+        self.assertEqual(r4.headers.get("X-Cache-Status"), "HIT-disk")
+        self.assertEqual(_body_of(r4), GOOD_WEBM)
+        self.assertEqual(r4.media_type, "audio/webm")
+
     def test_corrupt_mirror_repaired_from_s3(self):
         app.object_store = _FakeGCS(GARBAGE, hashlib.sha256(GOOD_WEBM).hexdigest())
         app._fetch_repair_bytes = lambda key: (GOOD_WEBM, "")  # noqa: E731
@@ -190,7 +224,11 @@ class RepairRouteTests(unittest.TestCase):
         entry.with_suffix(".json").write_text(json.dumps({"media": "audio/x-wav"}))
         app.object_store = _FakeGCS(GARBAGE, "")
         app._fetch_repair_bytes = lambda key: (GOOD_WEBM, "")  # noqa: E731
-        resp = app.get_object(WAV_KEY, _req(), download=0, thumb=0, _=None)
+        # NOTE: pass format="" explicitly — a direct call leaves FastAPI's
+        # Query() default object in place, which would hash a different
+        # disk-cache key than the entry created above (production always
+        # supplies a real string).
+        resp = app.get_object(WAV_KEY, _req(), download=0, thumb=0, format="", _=None)
         self.assertEqual(resp.media_type, "audio/webm")
         self.assertEqual(entry.read_bytes(), GOOD_WEBM)
 
