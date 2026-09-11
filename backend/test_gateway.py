@@ -207,6 +207,45 @@ class GatewayParseTests(unittest.TestCase):
         self.assertIn(("go.short", "qr-expanded"), hosts)
         self.assertEqual(out["counts"]["brands"], 1)
 
+    def test_network_urls_repeat_host_last_seen(self):
+        # Regression: second QR row for an already-seen host hit the else
+        # branch, which read r["last_seen"] (not a selected column) and
+        # raised IndexError -> /api/network-urls 500 on live.
+        import json
+
+        db.connect()
+        c = db.connect()
+        c.execute("DELETE FROM gateway_rows")
+        c.execute("DELETE FROM objects")
+        c.executemany(
+            "INSERT INTO objects(key,size,etag,last_modified,top_prefix,extract_json) VALUES(?,?,?,?,?,?)",
+            [
+                (
+                    "bankingqr/r1.png",
+                    10,
+                    "e1",
+                    "2026-03-01",
+                    "bankingqr/",
+                    json.dumps({"kind": "qr", "raw_text": "https://dup.example/a"}),
+                ),
+                (
+                    "bankingqr/r2.png",
+                    10,
+                    "e2",
+                    "2026-03-05",
+                    "bankingqr/",
+                    json.dumps({"kind": "qr", "raw_text": "https://dup.example/b"}),
+                ),
+            ],
+        )
+        c.commit()
+        out = gateway.network_urls()
+        rows = [r for r in out["rows"] if r["host"] == "dup.example"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["hits"], 2)
+        self.assertEqual(rows[0]["first_seen"], "2026-03-01")
+        self.assertEqual(rows[0]["last_seen"], "2026-03-05")
+
 
 if __name__ == "__main__":
     unittest.main()

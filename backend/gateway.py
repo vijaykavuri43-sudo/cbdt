@@ -364,8 +364,10 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
         " GROUP BY website ORDER BY txns DESC"
     ).fetchall():
         site = (b["website"] or "").strip()
-        url = site if site.lower().startswith("http") else (
-            f"https://{site}" if "." in site else site
+        url = (
+            site
+            if site.lower().startswith("http")
+            else (f"https://{site}" if "." in site else site)
         )
         rows.append(
             {
@@ -424,8 +426,8 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
                 if r["last_modified"]:
                     if not a["first_seen"] or r["last_modified"] < a["first_seen"]:
                         a["first_seen"] = r["last_modified"]
-                    if not a["last_seen"] or r["last_seen"] > a["last_seen"]:
-                        a["last_seen"] = r["last_seen"]
+                    if not a["last_seen"] or r["last_modified"] > a["last_seen"]:
+                        a["last_seen"] = r["last_modified"]
     rows.extend(sorted(agg.values(), key=lambda d: -d["hits"]))
     return {
         "fact_type": "fact",
