@@ -2504,6 +2504,31 @@ def wallet_stats() -> dict:
     }
 
 
+def pending_slip_count() -> int:
+    """COUNT twin of pending_slips() — the slip backlog the live
+    pending-enrichment queue never sees.
+
+    With SLIP_OCR burn mode the live queue (_pending_where) excludes
+    deposit/withdrawal/payment prefixes entirely; slips drain only via
+    slip_loop, so pending_enrichment_count() reports 0 while hundreds of
+    thousands of bulk-copied slips sit undecoded. This count makes the
+    backlog visible so eligible/coverage/ETA stay honest. Served by the
+    idx_obj_enrich_pending partial index — no full-table scan.
+    """
+    return (
+        connect()
+        .execute(
+            "SELECT COUNT(*) FROM objects "
+            "WHERE (enriched=0 AND extract_json IS NULL) "
+            "AND (enrich_retry_utc IS NULL "
+            "OR enrich_retry_utc <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+            f"AND {_IMG_CLAUSE} "
+            "AND top_prefix IN ('deposit/','withdrawal/','payment/')"
+        )
+        .fetchone()[0]
+    )
+
+
 def enrichment_progress() -> dict:
     r = (
         connect()
@@ -2517,15 +2542,17 @@ def enrichment_progress() -> dict:
         .fetchone()
     )
     pend = pending_enrichment_count()
-    eligible = (r["done"] or 0) + pend
+    slip_backlog = pending_slip_count()
+    eligible = (r["done"] or 0) + pend + slip_backlog
     coverage = round(((r["done"] or 0) / eligible) * 100, 2) if eligible else 100.0
     hourly = r["processed_last_hour"] or 0
-    eta_hours = round(pend / hourly, 1) if hourly else None
+    eta_hours = round((pend + slip_backlog) / hourly, 1) if hourly else None
     return {
         "total": r["total"],
         "enriched_done": r["done"] or 0,
         "with_payload": r["with_payload"] or 0,
         "pending_now": pend,
+        "slip_backlog": slip_backlog,
         "eligible_total": eligible,
         "coverage_pct": coverage,
         "processed_last_hour": hourly,

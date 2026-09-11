@@ -142,6 +142,7 @@ export interface Status {
     enriched_done: number
     with_payload: number
     pending_now: number
+    slip_backlog?: number
     eligible_total?: number
     coverage_pct?: number
     processed_last_hour?: number
