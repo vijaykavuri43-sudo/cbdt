@@ -2282,7 +2282,9 @@ def export_upis(_=Depends(auth)):
     def build():
         master = downloads_master()
         rows = []
-        for it in db.upi_feed(10**9):
+        # Full exhibit keeps sender-side rows too (evidence completeness) —
+        # the tab hides them by default via hide_senders.
+        for it in db.upi_feed(10**9, hide_senders=False):
             vpa = it.get("vpa") or ""
             known = bool(vpa and vpa.lower() in master)
             key = it.get("key") or ""
@@ -2458,31 +2460,42 @@ def upis_api(
     offset: int = 0,
     distinct: bool = False,
     new_only: bool = False,
+    hide_senders: bool = True,
     _=Depends(auth),
 ):
     """Paginated UPI tab (2026-09-11: newest-500 cap hid ~10k VPAs — the tab
     now pages through the full set; new_only filters server-side BEFORE
-    limit/offset so pages stay full)."""
+    limit/offset so pages stay full; hide_senders drops sender-only VPAs —
+    innocent gambler counterparties — from items AND totals, same place)."""
     master = downloads_master()
     exclude = master if new_only else set()
     limit = max(1, min(limit, 2000))
     offset = max(0, offset)
     if distinct:
-        items = db.upi_distinct(limit, offset, exclude)
+        items = db.upi_distinct(limit, offset, exclude, hide_senders=hide_senders)
     else:
-        items = db.upi_feed(limit, offset, exclude)
+        items = db.upi_feed(limit, offset, exclude, hide_senders=hide_senders)
     for it in items:
         vpa = (it.get("vpa") or "").lower()
         it["known_mule"] = bool(vpa and vpa in master)
-    totals = db.upi_counts(exclude, which="distinct" if distinct else "feed")
+    totals = db.upi_counts(
+        exclude, which="distinct" if distinct else "feed", hide_senders=hide_senders
+    )
     total = totals["distinct_total"] if distinct else totals["feed_total"]
-    new_total = total if new_only else db.upi_counts(master, which="feed")["feed_total"]
+    new_total = (
+        total
+        if new_only
+        else db.upi_counts(master, which="feed", hide_senders=hide_senders)[
+            "feed_total"
+        ]
+    )
     return {
         "master_size": len(master),
         "items": items,
         "new_not_in_master": sum(1 for i in items if not i.get("known_mule")),
         "new_total": new_total,
         "distinct": distinct,
+        "hide_senders": hide_senders,
         "limit": limit,
         "offset": offset,
         "total": total,

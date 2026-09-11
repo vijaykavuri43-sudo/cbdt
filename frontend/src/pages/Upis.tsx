@@ -5,6 +5,7 @@ import { fmtINR, fmtTime } from '../lib/format'
 interface UpiRow {
   key: string; last_modified: string; vpa?: string; payee_name?: string; amount_inr?: number | null; known_mule?: boolean; raw_text?: string | null; kind?: string; origin?: string
   slips?: number; total_inr?: number | null; with_amount?: number; first_seen?: string; last_seen?: string
+  sender_only?: boolean; has_sender?: number; has_bene?: number
 }
 
 function folderOf(key: string): string {
@@ -16,18 +17,19 @@ export function Upis() {
   const PAGE_SIZE = 500
   const [data, setData] = useState<{ master_size: number; items: UpiRow[]; new_not_in_master: number; new_total?: number; total?: number } | null>(null)
   const [onlyNew, setOnlyNew] = useState(false)
-  const [distinct, setDistinct] = useState(false)
+  const [distinct, setDistinct] = useState(true)
+  const [hideSenders, setHideSenders] = useState(true)
   const [page, setPage] = useState(0)
   const [selected, setSelected] = useState<UpiRow | null>(null)
   const [imgErr, setImgErr] = useState(false)
 
   const refresh = useCallback(() => {
-    api<any>('/api/upis', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, distinct: distinct ? 1 : 0, new_only: onlyNew ? 1 : 0 }).then(setData).catch(() => {})
-  }, [distinct, onlyNew, page])
+    api<any>('/api/upis', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, distinct: distinct ? 1 : 0, new_only: onlyNew ? 1 : 0, hide_senders: hideSenders ? 1 : 0 }).then(setData).catch(() => {})
+  }, [distinct, onlyNew, hideSenders, page])
   useEffect(refresh, [refresh])
   useEffect(() => { setImgErr(false) }, [selected?.key])
   // Newest-first feed grows over time — jumping pages re-syncs; toggles restart at page 0
-  useEffect(() => { setPage(0) }, [distinct, onlyNew])
+  useEffect(() => { setPage(0) }, [distinct, onlyNew, hideSenders])
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelected(null) }
@@ -65,7 +67,7 @@ export function Upis() {
           <span className="pg-header-icon">@</span>
           <div>
             <h1 className="pg-header-title">UPI / Mule Accounts</h1>
-            <div className="pg-header-sub">Mule VPAs — collection QRs + deposit-slip recipients (money paid TO this VPA) · cross-checked against {(data?.master_size ?? 0).toLocaleString()} known mules</div>
+            <div className="pg-header-sub">Mule VPAs — unique collection rails with deposit counts · sender-side (user) VPAs hidden · cross-checked against {(data?.master_size ?? 0).toLocaleString()} known mules</div>
           </div>
         </div>
         <div className="pg-header-right">
@@ -82,6 +84,9 @@ export function Upis() {
           </button>
           <button className={`ex-toggle ${distinct ? 'ex-toggle-on' : ''}`} onClick={() => setDistinct((d) => !d)} title="One row per unique VPA with slip count + summed amount — the officer action list">
             ⇄ {distinct ? 'Unique VPAs' : 'Per-slip rows'}
+          </button>
+          <button className={`ex-toggle ${hideSenders ? 'ex-toggle-on' : ''}`} onClick={() => setHideSenders((h) => !h)} title="Sender-only VPAs are gambler/user counterparties (Paid-by side), not mule rails — hidden by default">
+            🚫 {hideSenders ? 'Senders hidden (users out)' : 'Show senders (users)'}
           </button>
         </div>
       </div>
@@ -134,7 +139,7 @@ export function Upis() {
                     }
                   </td>
                   {distinct
-                    ? <td className="small dim">{r.first_seen ? fmtTime(r.first_seen) : '—'} → {r.last_seen ? fmtTime(r.last_seen) : '—'} <span className="ex-badge" title={r.origin === 'qr+deposit' ? 'Seen on collection QRs AND deposit slips' : r.origin === 'qr' ? 'Seen on collection QRs' : 'Seen on deposit slips (money paid to this VPA)'}>{r.origin ?? '—'}</span></td>
+                    ? <td className="small dim">{r.first_seen ? fmtTime(r.first_seen) : '—'} → {r.last_seen ? fmtTime(r.last_seen) : '—'} <span className="ex-badge" title={r.origin === 'qr+deposit' ? 'Seen on collection QRs AND deposit slips' : r.origin === 'qr' ? 'Seen on collection QRs' : 'Seen on deposit slips (money paid to this VPA)'}>{r.origin ?? '—'}</span>{r.has_sender ? <span className="ex-badge ex-badge-new" title="This VPA also appears on the Paid-by side of some slip — mixed role, verify before action">also sender</span> : null}</td>
                     : <td className="small dim mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}><span className="ex-badge" title={r.kind === 'deposit' ? 'Deposit slip — money paid to this VPA' : 'Collection QR image'}>{r.kind === 'deposit' ? 'slip' : 'QR'}</span> {r.key}</td>}
                   {distinct
                     ? <td className="small dim mono" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}>{r.key.split('/').pop()}</td>

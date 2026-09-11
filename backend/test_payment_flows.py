@@ -289,6 +289,93 @@ class MoneyFlowTests(unittest.TestCase):
         self.assertIn("8429410249@okbizaxis", distinct_vpas)
         self.assertNotIn("store@completed", distinct_vpas)
 
+    def test_sender_only_vpas_hidden_by_default(self):
+        # A gambler's own VPA under "Paid by" is an innocent counterparty,
+        # not a rail — hidden from feed/distinct/counts unless asked for.
+        self._object("deposit/gambler1.png")
+        db.mark_enriched(
+            "deposit/gambler1.png",
+            {
+                "kind": "deposit",
+                "vpa": "victim1@okaxis",
+                "amount_inr": 500,
+                "vpa_details": [
+                    {
+                        "vpa": "victim1@okaxis",
+                        "role": "sender",
+                        "role_confidence": "high",
+                    }
+                ],
+            },
+        )
+        self._object("deposit/mule1.png")
+        db.mark_enriched(
+            "deposit/mule1.png",
+            {
+                "kind": "deposit",
+                "vpa": "8429410249@okbizaxis",
+                "amount_inr": 300,
+                "vpa_details": [
+                    {
+                        "vpa": "8429410249@okbizaxis",
+                        "role": "beneficiary",
+                        "role_confidence": "high",
+                    }
+                ],
+            },
+        )
+        self._object("deposit/unknown1.png")
+        db.mark_enriched(
+            "deposit/unknown1.png",
+            {"kind": "deposit", "vpa": "mystery@okaxis", "amount_inr": 100},
+        )
+        feed = [r.get("vpa") for r in db.upi_feed(10**9)]
+        self.assertNotIn("victim1@okaxis", feed)
+        self.assertIn("8429410249@okbizaxis", feed)
+        self.assertIn("mystery@okaxis", feed)  # no role tags → kept for triage
+        self.assertTrue(all(not r.get("sender_only") for r in db.upi_feed(10**9)))
+        shown = db.upi_feed(10**9, hide_senders=False)
+        self.assertIn("victim1@okaxis", [r.get("vpa") for r in shown])
+        self.assertTrue(
+            [r for r in shown if r.get("vpa") == "victim1@okaxis"][0]["sender_only"]
+        )
+        dist = {r["vpa"]: r for r in db.upi_distinct(10**9)}
+        self.assertNotIn("victim1@okaxis", dist)
+        self.assertIn("8429410249@okbizaxis", dist)
+        self.assertIn("mystery@okaxis", dist)
+        dist_all = {r["vpa"]: r for r in db.upi_distinct(10**9, hide_senders=False)}
+        self.assertIn("victim1@okaxis", dist_all)
+        counts = db.upi_counts(which="both")
+        self.assertEqual(counts["feed_total"], 2)
+        self.assertEqual(counts["distinct_total"], 2)
+        counts_all = db.upi_counts(which="both", hide_senders=False)
+        self.assertEqual(counts_all["feed_total"], 3)
+        self.assertEqual(counts_all["distinct_total"], 3)
+
+    def test_mixed_role_vpa_kept_and_flagged(self):
+        # Seen as beneficiary on one slip, sender on another → kept, flagged.
+        for key, role in (
+            ("deposit/mix-bene.png", "beneficiary"),
+            ("deposit/mix-sender.png", "sender"),
+        ):
+            self._object(key)
+            db.mark_enriched(
+                key,
+                {
+                    "kind": "deposit",
+                    "vpa": "mixed@okaxis",
+                    "amount_inr": 100,
+                    "vpa_details": [
+                        {"vpa": "mixed@okaxis", "role": role, "role_confidence": "high"}
+                    ],
+                },
+            )
+        dist = {r["vpa"]: r for r in db.upi_distinct(10**9)}
+        self.assertIn("mixed@okaxis", dist)
+        self.assertEqual(dist["mixed@okaxis"]["has_bene"], 1)
+        self.assertEqual(dist["mixed@okaxis"]["has_sender"], 1)
+        self.assertEqual(dist["mixed@okaxis"]["slips"], 2)
+
     def test_mule_rail_aggregate_links_both_directions(self):
         for key, direction, role, gambler in (
             ("deposit/shared.png", "deposit", "beneficiary", "G6"),

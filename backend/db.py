@@ -2412,88 +2412,165 @@ def _vpa_exclude_clause(exclude: Collection[str] = ()) -> tuple[str, tuple]:
     )
 
 
+def _vpa_role_row_expr(role: str) -> str:
+    """Row-level check: this row's primary VPA is tagged `role` in its own
+    vpa_details[] (role provenance from extract_vpa_details / QR decode).
+
+    2026-09-11: sender-tagged VPAs are gambler/user counterparties ("Paid by
+    ..."), not mule rails — the UPI tab hides sender-only VPAs by default.
+    Rows without vpa_details[] match neither role (kept as unknown/triage).
+    """
+    return (
+        "EXISTS(SELECT 1 FROM json_each(json_extract(extract_json,'$.vpa_details')) d"
+        " WHERE LOWER(json_extract(d.value,'$.vpa'))=LOWER(json_extract(extract_json,'$.vpa'))"
+        f" AND json_extract(d.value,'$.role')='{role}')"
+    )
+
+
+def _vpa_sender_only_row_expr() -> str:
+    """Positive row expression: primary VPA tagged sender and never
+    beneficiary in this row's details."""
+    return (
+        f"({_vpa_role_row_expr('sender')} AND NOT {_vpa_role_row_expr('beneficiary')})"
+    )
+
+
+def _vpa_sender_only_row_filter() -> str:
+    """Row predicate (NOT sender-only here): primary VPA tagged sender and
+    never beneficiary in this row's details. Applied in WHERE so hidden rows
+    never consume page slots — LIMIT/OFFSET stay full."""
+    return f"NOT {_vpa_sender_only_row_expr()}"
+
+
 def upi_feed(
-    limit: int = 300, offset: int = 0, exclude: Collection[str] = ()
+    limit: int = 300,
+    offset: int = 0,
+    exclude: Collection[str] = (),
+    hide_senders: bool = True,
 ) -> list[dict]:
     """Mule-side VPAs only: collection QR images + deposit-slip recipients
     (money paid TO this VPA). Withdrawal-slip VPAs are excluded — those are
-    gambler payout accounts, not mules."""
+    gambler payout accounts, not mules. 2026-09-11: sender-only rows (a
+    gambler's own VPA under "Paid by", ~1% of rows) are hidden by default —
+    they are innocent counterparties, not rails; pass hide_senders=False for
+    the full exhibit (export does this)."""
     xclause, xargs = _vpa_exclude_clause(exclude)
+    hclause = (" AND " + _vpa_sender_only_row_filter()) if hide_senders else ""
     rows = (
         connect()
         .execute(
-            "SELECT key,last_modified,seen_utc,extract_json FROM objects"
+            "SELECT key,last_modified,seen_utc,extract_json,"
+            f" CASE WHEN {_vpa_sender_only_row_expr()} THEN 1 ELSE 0 END AS sender_only"
+            " FROM objects"
             " WHERE extract_json IS NOT NULL AND json_extract(extract_json,'$.kind') IN ('qr','deposit')"
             " AND json_extract(extract_json,'$.vpa') IS NOT NULL"
             + _vpa_junk_clause()
             + xclause
+            + hclause
             + " ORDER BY last_modified DESC LIMIT ? OFFSET ?",
             (*xargs, limit, offset),
         )
         .fetchall()
     )
-    return [
-        {
-            "key": r["key"],
-            "last_modified": r["last_modified"],
-            "seen_utc": r["seen_utc"],
-            **(json.loads(r["extract_json"]) if r["extract_json"] else {}),
-        }
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        try:
+            payload = json.loads(r["extract_json"]) if r["extract_json"] else {}
+        except Exception:
+            payload = {}
+        out.append(
+            {
+                "key": r["key"],
+                "last_modified": r["last_modified"],
+                "seen_utc": r["seen_utc"],
+                **payload,
+                "sender_only": bool(r["sender_only"]),
+            }
+        )
+    return out
 
 
 def upi_distinct(
-    limit: int = 300, offset: int = 0, exclude: Collection[str] = ()
+    limit: int = 300,
+    offset: int = 0,
+    exclude: Collection[str] = (),
+    hide_senders: bool = True,
 ) -> list[dict]:
     """One row per unique VPA (case-insensitive): slip count, summed amount,
     first/last seen, plus the newest slip's key/payee as the sample evidence.
     Mule-side only (collection QRs + deposit-slip recipients; withdrawal-slip
     VPAs are gambler payout accounts, excluded). Origin tells which evidence
-    kinds a VPA appears in. Single-pass window query — no per-VPA lookups."""
+    kinds a VPA appears in. Single-pass window query — no per-VPA lookups.
+    2026-09-11: VPAs seen ONLY as sender (someone's "Paid by" VPA — innocent
+    counterparties) are hidden by default via the has_sender/has_bene window
+    flags; has_sender is also returned so mixed rows badge "also seen as
+    sender". Unknowns (no role tags) are kept for triage."""
     xclause, xargs = _vpa_exclude_clause(exclude)
+    part = "PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))"
     rows = (
         connect()
         .execute(
-            """
+            f"""
         SELECT vpa, slips, total_inr, with_amount, first_seen, last_seen,
-               key, payee_name, amount_inr, last_modified, origin
+               key, payee_name, amount_inr, last_modified, origin,
+               has_bene, has_sender
         FROM (
           SELECT LOWER(json_extract(extract_json,'$.vpa')) AS vpa,
-                 key, last_modified,
-                 json_extract(extract_json,'$.payee_name') AS payee_name,
-                 CAST(json_extract(extract_json,'$.amount_inr') AS REAL) AS amount_inr,
-                 CASE WHEN MAX(CASE WHEN json_extract(extract_json,'$.kind')='qr' THEN 1 ELSE 0 END) OVER (
-                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) = 1
-                      AND MAX(CASE WHEN json_extract(extract_json,'$.kind')='deposit' THEN 1 ELSE 0 END) OVER (
-                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) = 1
-                  THEN 'qr+deposit'
-                  WHEN MAX(CASE WHEN json_extract(extract_json,'$.kind')='qr' THEN 1 ELSE 0 END) OVER (
-                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) = 1
-                  THEN 'qr' ELSE 'deposit' END AS origin,
-                 ROW_NUMBER() OVER (
-                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))
-                   ORDER BY last_modified DESC) AS rn,
-                 COUNT(*) OVER (
-                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS slips,
-                 SUM(CAST(json_extract(extract_json,'$.amount_inr') AS REAL)) OVER (
-                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS total_inr,
-                 SUM(CASE WHEN json_extract(extract_json,'$.amount_inr') IS NOT NULL
-                          THEN 1 ELSE 0 END) OVER (
-                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS with_amount,
-                 MIN(last_modified) OVER (
-                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS first_seen,
-                 MAX(last_modified) OVER (
-                   PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))) AS last_seen
-            FROM objects
-            WHERE extract_json IS NOT NULL
-              AND json_extract(extract_json,'$.kind') IN ('qr','deposit')
-              AND json_extract(extract_json,'$.vpa') IS NOT NULL
-              """
+                  key, last_modified,
+                  json_extract(extract_json,'$.payee_name') AS payee_name,
+                  CAST(json_extract(extract_json,'$.amount_inr') AS REAL) AS amount_inr,"""
+            + f"""
+                  MAX(CASE WHEN {_vpa_role_row_expr("beneficiary")} THEN 1 ELSE 0 END) OVER (
+                    {part}) AS has_bene,
+                  MAX(CASE WHEN {_vpa_role_row_expr("sender")} THEN 1 ELSE 0 END) OVER (
+                    {part}) AS has_sender,"""
+            + """
+                  CASE WHEN MAX(CASE WHEN json_extract(extract_json,'$.kind')='qr' THEN 1 ELSE 0 END) OVER ("""
+            + part
+            + """) = 1
+                       AND MAX(CASE WHEN json_extract(extract_json,'$.kind')='deposit' THEN 1 ELSE 0 END) OVER ("""
+            + part
+            + """) = 1
+                   THEN 'qr+deposit'
+                   WHEN MAX(CASE WHEN json_extract(extract_json,'$.kind')='qr' THEN 1 ELSE 0 END) OVER ("""
+            + part
+            + """) = 1
+                   THEN 'qr' ELSE 'deposit' END AS origin,
+                  ROW_NUMBER() OVER ("""
+            + part
+            + """
+                    ORDER BY last_modified DESC) AS rn,
+                  COUNT(*) OVER ("""
+            + part
+            + """) AS slips,
+                  SUM(CAST(json_extract(extract_json,'$.amount_inr') AS REAL)) OVER ("""
+            + part
+            + """) AS total_inr,
+                  SUM(CASE WHEN json_extract(extract_json,'$.amount_inr') IS NOT NULL
+                           THEN 1 ELSE 0 END) OVER ("""
+            + part
+            + """) AS with_amount,
+                  MIN(last_modified) OVER ("""
+            + part
+            + """) AS first_seen,
+                  MAX(last_modified) OVER ("""
+            + part
+            + """) AS last_seen
+             FROM objects
+             WHERE extract_json IS NOT NULL
+               AND json_extract(extract_json,'$.kind') IN ('qr','deposit')
+               AND json_extract(extract_json,'$.vpa') IS NOT NULL
+               """
             + _vpa_junk_clause()
             + xclause
             + """
-          ) WHERE rn = 1
+          ) WHERE rn = 1"""
+            + (
+                " AND NOT (has_sender = 1 AND COALESCE(has_bene, 0) = 0)"
+                if hide_senders
+                else ""
+            )
+            + """
         ORDER BY last_seen DESC LIMIT ? OFFSET ?
         """,
             (*xargs, limit, offset),
@@ -2503,13 +2580,17 @@ def upi_distinct(
     return [dict(r) for r in rows]
 
 
-def upi_counts(exclude: Collection[str] = (), which: str = "both") -> dict:
+def upi_counts(
+    exclude: Collection[str] = (), which: str = "both", hide_senders: bool = True
+) -> dict:
     """Exact totals backing UPI-tab pagination (same filters as the queries).
 
     2026-09-11: the tab shows only newest-500 without this — officers could
     not reach the other ~10k VPAs. feed_total counts slip rows, distinct_total
     counts unique VPAs; both honor the NEW-only exclusion. `which` limits the
     full-table scans (each is seconds on 1.5M rows): "feed", "distinct", "both".
+    hide_senders=True (default) drops sender-only rows/VPAs from both totals
+    so cards and pages agree with the filtered tab.
     """
     xclause, xargs = _vpa_exclude_clause(exclude)
     c = connect()
@@ -2521,13 +2602,43 @@ def upi_counts(exclude: Collection[str] = (), which: str = "both") -> dict:
         + xclause
     )
     feed_total = distinct_total = 0
+    rowf = (" AND " + _vpa_sender_only_row_filter()) if hide_senders else ""
     if which in ("both", "feed"):
-        feed_total = c.execute("SELECT COUNT(*) " + base, xargs).fetchone()[0]
+        feed_total = c.execute("SELECT COUNT(*) " + base + rowf, xargs).fetchone()[0]
     if which in ("both", "distinct"):
-        distinct_total = c.execute(
-            "SELECT COUNT(DISTINCT LOWER(json_extract(extract_json,'$.vpa'))) " + base,
-            xargs,
-        ).fetchone()[0]
+        if not hide_senders:
+            distinct_total = c.execute(
+                "SELECT COUNT(DISTINCT LOWER(json_extract(extract_json,'$.vpa'))) "
+                + base,
+                xargs,
+            ).fetchone()[0]
+        else:
+            # Exclude VPAs seen ONLY as sender across all their sightings.
+            x2clause, x2args = _vpa_exclude_clause(exclude)
+            base2 = (
+                "FROM objects WHERE extract_json IS NOT NULL"
+                " AND json_extract(extract_json,'$.kind') IN ('qr','deposit')"
+                " AND json_extract(extract_json,'$.vpa') IS NOT NULL"
+                + _vpa_junk_clause()
+                + x2clause
+            )
+            sender_vpas = (
+                "SELECT LOWER(json_extract(extract_json,'$.vpa')) "
+                + base2
+                + " GROUP BY 1 HAVING SUM(CASE WHEN "
+                + _vpa_role_row_expr("sender")
+                + " THEN 1 ELSE 0 END) > 0 AND SUM(CASE WHEN "
+                + _vpa_role_row_expr("beneficiary")
+                + " THEN 1 ELSE 0 END) = 0"
+            )
+            distinct_total = c.execute(
+                "SELECT COUNT(DISTINCT LOWER(json_extract(extract_json,'$.vpa'))) "
+                + base
+                + " AND LOWER(json_extract(extract_json,'$.vpa')) NOT IN ("
+                + sender_vpas
+                + ")",
+                (*xargs, *x2args),
+            ).fetchone()[0]
     return {"feed_total": feed_total, "distinct_total": distinct_total}
 
 
