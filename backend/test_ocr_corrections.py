@@ -24,6 +24,7 @@ from .enrich import (  # noqa: E402
     extract_vpa_details,
     extract_vpas,
 )
+from . import db  # noqa: E402
 
 # Officer-verified Navi UPI slip (deposit/1789102839824.png): hero shows
 # ₹12,000, tesseract ate ₹ into a leading 2 → '212,000' twice (hero +
@@ -192,6 +193,62 @@ class BankReceiptTests(unittest.TestCase):
     def test_equals_sign_amount_read(self):
         # Tesseract renders ₹ as '=' on this receipt ("Txn Amount =2000.0000").
         self.assertEqual(extract_amount(self.SLIP), 2000.0)
+
+
+class UpiPaginationTests(unittest.TestCase):
+    """Officer case 2026-09-11: UPI tab capped at newest-500 with no pages —
+    10k+ VPAs unreachable. limit/offset/counts must page the full set."""
+
+    PREFIX = "deposit/pg-20260911-"
+
+    @classmethod
+    def setUpClass(cls):
+        for i in range(5):
+            key = f"{cls.PREFIX}{i}.png"
+            db.upsert_objects(
+                [
+                    {
+                        "key": key,
+                        "top_prefix": "deposit/",
+                        "size": 100,
+                        # distinct timestamps → deterministic newest-first order
+                        "last_modified": f"2026-09-11T10:00:0{i}Z",
+                        "etag": "test",
+                    }
+                ]
+            )
+            db.mark_enriched(
+                key,
+                {"kind": "deposit", "vpa": f"pguser{i}@okaxis", "amount_inr": 100 + i},
+            )
+
+    def _mine(self, rows):
+        return [r for r in rows if (r.get("key") or "").startswith(self.PREFIX)]
+
+    def test_feed_pages_are_disjoint_and_cover(self):
+        p1 = self._mine(db.upi_feed(2, 0))
+        p2 = self._mine(db.upi_feed(2, 2))
+        p3 = self._mine(db.upi_feed(2, 4))
+        # newest-first: i=4,3 on page 1 — but only among OUR rows after filtering
+        self.assertEqual(len(p1) + len(p2) + len(p3), 5)
+        keys = [r["key"] for r in p1 + p2 + p3]
+        self.assertEqual(len(set(keys)), 5)
+        self.assertEqual(p1[0]["key"], f"{self.PREFIX}4.png")
+
+    def test_counts_drop_by_excluded_set(self):
+        all5 = {f"pguser{i}@okaxis" for i in range(5)}
+        before = db.upi_counts()
+        after = db.upi_counts(all5)
+        self.assertEqual(before["feed_total"] - after["feed_total"], 5)
+        self.assertEqual(before["distinct_total"] - after["distinct_total"], 5)
+        # excluded VPAs never surface, even on later pages
+        hidden = self._mine(db.upi_feed(10**9, 10**9 - 5, all5))
+        self.assertEqual(hidden, [])
+
+    def test_which_limits_scans(self):
+        c = db.upi_counts(which="feed")
+        self.assertGreater(c["feed_total"], 0)
+        self.assertEqual(c["distinct_total"], 0)
 
 
 if __name__ == "__main__":

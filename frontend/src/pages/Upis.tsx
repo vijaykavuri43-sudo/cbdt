@@ -13,17 +13,21 @@ function folderOf(key: string): string {
 }
 
 export function Upis() {
-  const [data, setData] = useState<{ master_size: number; items: UpiRow[]; new_not_in_master: number } | null>(null)
+  const PAGE_SIZE = 500
+  const [data, setData] = useState<{ master_size: number; items: UpiRow[]; new_not_in_master: number; new_total?: number; total?: number } | null>(null)
   const [onlyNew, setOnlyNew] = useState(false)
   const [distinct, setDistinct] = useState(false)
+  const [page, setPage] = useState(0)
   const [selected, setSelected] = useState<UpiRow | null>(null)
   const [imgErr, setImgErr] = useState(false)
 
   const refresh = useCallback(() => {
-    api<any>('/api/upis', distinct ? { limit: 500, distinct: 1 } : { limit: 500 }).then(setData).catch(() => {})
-  }, [distinct])
+    api<any>('/api/upis', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, distinct: distinct ? 1 : 0, new_only: onlyNew ? 1 : 0 }).then(setData).catch(() => {})
+  }, [distinct, onlyNew, page])
   useEffect(refresh, [refresh])
   useEffect(() => { setImgErr(false) }, [selected?.key])
+  // Newest-first feed grows over time — jumping pages re-syncs; toggles restart at page 0
+  useEffect(() => { setPage(0) }, [distinct, onlyNew])
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelected(null) }
@@ -31,7 +35,11 @@ export function Upis() {
     return () => window.removeEventListener('keydown', h)
   }, [])
 
-  const items = (data?.items ?? []).filter((i) => (onlyNew ? !i.known_mule : true))
+  const items = data?.items ?? []
+  const total = data?.total ?? items.length
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const from = total === 0 ? 0 : page * PAGE_SIZE + 1
+  const to = Math.min(total, page * PAGE_SIZE + items.length)
   const seen = new Set<string>()
 
   function exportTsv() {
@@ -70,7 +78,7 @@ export function Upis() {
         <div className="lf-controls-left">
           <button className={`ex-toggle ${!onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(false)}>All · {data?.items.length ?? 0}</button>
           <button className={`ex-toggle ${onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(true)}>
-            ⚠ NEW only · {data?.new_not_in_master ?? 0}
+            ⚠ NEW only · {(data?.new_total ?? data?.new_not_in_master ?? 0).toLocaleString()}
           </button>
           <button className={`ex-toggle ${distinct ? 'ex-toggle-on' : ''}`} onClick={() => setDistinct((d) => !d)} title="One row per unique VPA with slip count + summed amount — the officer action list">
             ⇄ {distinct ? 'Unique VPAs' : 'Per-slip rows'}
@@ -80,12 +88,13 @@ export function Upis() {
 
       <div className="st-cards" style={{ marginBottom: 16 }}>
         <div className="st-card st-card-accent">
-              <div className="st-card-label">{distinct ? 'Unique VPAs' : 'Slip rows'}</div>
-          <div className="st-card-value accent">{items.length.toLocaleString()}</div>
+              <div className="st-card-label">{distinct ? 'Unique VPAs (all pages)' : 'Slip rows (all pages)'}</div>
+          <div className="st-card-value accent">{total.toLocaleString()}</div>
+          <div className="st-card-sub">Page {page + 1} of {pageCount} · showing {from.toLocaleString()}–{to.toLocaleString()}</div>
         </div>
         <div className="st-card st-card-warn">
           <div className="st-card-label">New — not in master</div>
-          <div className="st-card-value warn">{(data?.new_not_in_master ?? 0).toLocaleString()}</div>
+          <div className="st-card-value warn">{(data?.new_total ?? data?.new_not_in_master ?? 0).toLocaleString()}</div>
           <div className="st-card-sub">Register in registry</div>
         </div>
         <div className="st-card">
@@ -139,6 +148,12 @@ export function Upis() {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+        <button className="btn" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>← Prev</button>
+        <button className="btn" disabled={page + 1 >= pageCount} onClick={() => setPage((p) => p + 1)}>Next →</button>
+        <span className="small dim">Page {page + 1} of {pageCount} · showing {from.toLocaleString()}–{to.toLocaleString()} of {total.toLocaleString()}</span>
       </div>
 
       {selected && (

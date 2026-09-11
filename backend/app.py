@@ -2434,26 +2434,40 @@ def extraction_status(_=Depends(auth)):
 
 
 @app.get("/api/upis")
-def upis_api(limit: int = 300, distinct: bool = False, _=Depends(auth)):
+def upis_api(
+    limit: int = 500,
+    offset: int = 0,
+    distinct: bool = False,
+    new_only: bool = False,
+    _=Depends(auth),
+):
+    """Paginated UPI tab (2026-09-11: newest-500 cap hid ~10k VPAs — the tab
+    now pages through the full set; new_only filters server-side BEFORE
+    limit/offset so pages stay full)."""
     master = downloads_master()
+    exclude = master if new_only else set()
+    limit = max(1, min(limit, 2000))
+    offset = max(0, offset)
     if distinct:
-        items = db.upi_distinct(limit)
-        for it in items:
-            vpa = (it.get("vpa") or "").lower()
-            it["known_mule"] = bool(vpa and vpa in master)
-        new = [i for i in items if not i.get("known_mule")]
-        return {
-            "master_size": len(master),
-            "items": items,
-            "new_not_in_master": len(new),
-            "distinct": True,
-        }
-    items = db.upi_feed(limit)
+        items = db.upi_distinct(limit, offset, exclude)
+    else:
+        items = db.upi_feed(limit, offset, exclude)
     for it in items:
         vpa = (it.get("vpa") or "").lower()
         it["known_mule"] = bool(vpa and vpa in master)
-    new = [i for i in items if not i.get("known_mule")]
-    return {"master_size": len(master), "items": items, "new_not_in_master": len(new)}
+    totals = db.upi_counts(exclude, which="distinct" if distinct else "feed")
+    total = totals["distinct_total"] if distinct else totals["feed_total"]
+    new_total = total if new_only else db.upi_counts(master, which="feed")["feed_total"]
+    return {
+        "master_size": len(master),
+        "items": items,
+        "new_not_in_master": sum(1 for i in items if not i.get("known_mule")),
+        "new_total": new_total,
+        "distinct": distinct,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+    }
 
 
 def downloads_master() -> set[str]:

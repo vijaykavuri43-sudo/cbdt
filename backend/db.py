@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Collection, Optional
 
 from . import config
 
@@ -2119,10 +2119,32 @@ def _vpa_junk_clause() -> str:
     )
 
 
-def upi_feed(limit: int = 300) -> list[dict]:
+def _vpa_exclude_clause(exclude: Collection[str] = ()) -> tuple[str, tuple]:
+    """NOT IN clause for already-known mules (NEW-only tab filter).
+
+    2026-09-11: the UPI tab paginates 10k+ VPAs server-side, so the NEW-only
+    filter must apply BEFORE limit/offset — client-side filtering would show
+    half-empty pages. Master lists are small (hundreds); well under the
+    SQLite variable limit.
+    """
+    exc = sorted({str(v).lower() for v in exclude if v})
+    if not exc:
+        return "", ()
+    return (
+        " AND LOWER(json_extract(extract_json,'$.vpa')) NOT IN ("
+        + ",".join("?" for _ in exc)
+        + ")",
+        tuple(exc),
+    )
+
+
+def upi_feed(
+    limit: int = 300, offset: int = 0, exclude: Collection[str] = ()
+) -> list[dict]:
     """Mule-side VPAs only: collection QR images + deposit-slip recipients
     (money paid TO this VPA). Withdrawal-slip VPAs are excluded — those are
     gambler payout accounts, not mules."""
+    xclause, xargs = _vpa_exclude_clause(exclude)
     rows = (
         connect()
         .execute(
@@ -2130,8 +2152,9 @@ def upi_feed(limit: int = 300) -> list[dict]:
             " WHERE extract_json IS NOT NULL AND json_extract(extract_json,'$.kind') IN ('qr','deposit')"
             " AND json_extract(extract_json,'$.vpa') IS NOT NULL"
             + _vpa_junk_clause()
-            + " ORDER BY last_modified DESC LIMIT ?",
-            (limit,),
+            + xclause
+            + " ORDER BY last_modified DESC LIMIT ? OFFSET ?",
+            (*xargs, limit, offset),
         )
         .fetchall()
     )
@@ -2146,12 +2169,15 @@ def upi_feed(limit: int = 300) -> list[dict]:
     ]
 
 
-def upi_distinct(limit: int = 300) -> list[dict]:
+def upi_distinct(
+    limit: int = 300, offset: int = 0, exclude: Collection[str] = ()
+) -> list[dict]:
     """One row per unique VPA (case-insensitive): slip count, summed amount,
     first/last seen, plus the newest slip's key/payee as the sample evidence.
     Mule-side only (collection QRs + deposit-slip recipients; withdrawal-slip
     VPAs are gambler payout accounts, excluded). Origin tells which evidence
     kinds a VPA appears in. Single-pass window query — no per-VPA lookups."""
+    xclause, xargs = _vpa_exclude_clause(exclude)
     rows = (
         connect()
         .execute(
@@ -2191,15 +2217,44 @@ def upi_distinct(limit: int = 300) -> list[dict]:
               AND json_extract(extract_json,'$.vpa') IS NOT NULL
               """
             + _vpa_junk_clause()
+            + xclause
             + """
           ) WHERE rn = 1
-        ORDER BY last_seen DESC LIMIT ?
+        ORDER BY last_seen DESC LIMIT ? OFFSET ?
         """,
-            (limit,),
+            (*xargs, limit, offset),
         )
         .fetchall()
     )
     return [dict(r) for r in rows]
+
+
+def upi_counts(exclude: Collection[str] = (), which: str = "both") -> dict:
+    """Exact totals backing UPI-tab pagination (same filters as the queries).
+
+    2026-09-11: the tab shows only newest-500 without this — officers could
+    not reach the other ~10k VPAs. feed_total counts slip rows, distinct_total
+    counts unique VPAs; both honor the NEW-only exclusion. `which` limits the
+    full-table scans (each is seconds on 1.5M rows): "feed", "distinct", "both".
+    """
+    xclause, xargs = _vpa_exclude_clause(exclude)
+    c = connect()
+    base = (
+        "FROM objects WHERE extract_json IS NOT NULL"
+        " AND json_extract(extract_json,'$.kind') IN ('qr','deposit')"
+        " AND json_extract(extract_json,'$.vpa') IS NOT NULL"
+        + _vpa_junk_clause()
+        + xclause
+    )
+    feed_total = distinct_total = 0
+    if which in ("both", "feed"):
+        feed_total = c.execute("SELECT COUNT(*) " + base, xargs).fetchone()[0]
+    if which in ("both", "distinct"):
+        distinct_total = c.execute(
+            "SELECT COUNT(DISTINCT LOWER(json_extract(extract_json,'$.vpa'))) " + base,
+            xargs,
+        ).fetchone()[0]
+    return {"feed_total": feed_total, "distinct_total": distinct_total}
 
 
 def wallet_feed(limit: int = 300) -> list[dict]:
