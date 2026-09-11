@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { api, objectUrl, CAN_PLAY_WEBM_OPUS, type ExtractPayload, type ObjRow } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { extOf, fmtBytes, fmtTime, kindOf, shortKey } from '../lib/format'
@@ -79,6 +79,9 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
   }
 
   const isPdf = obj.key.toLowerCase().endsWith('.pdf')
+  // Slip-first layout: image + extract side-by-side (slip left, facts right)
+  // so officers read the slip without scrolling past badge clutter (2026-09-11).
+  const sideBySide = kind === 'image' && !!obj.extract && !isSheet(obj.key)
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -135,7 +138,7 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
           </div>
         </div>
 
-        {obj.extract && (
+        {!sideBySide && obj.extract && (
           <div className="extract-panel">
             <span className="badge">{obj.extract.kind === 'qr' ? 'QR DECODE' : obj.extract.kind === 'ocr' ? 'OCR' : obj.extract.kind?.toUpperCase()}</span>
             {obj.extract.amount_inr != null && (
@@ -188,7 +191,7 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
         )}
 
         <div className="modal-body" style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          <div style={{ flex: '1 1 520px', minWidth: 320, overflow: 'auto', maxHeight: '68vh', display: 'flex', justifyContent: 'center' }}>
+          <div style={{ flex: sideBySide ? '1 1 560px' : '1 1 520px', minWidth: 320, overflow: 'auto', maxHeight: '70vh', display: 'flex', justifyContent: 'center' }}>
             {isSheet(obj.key) ? (
               <div style={{ width: '100%' }}>
                 <SheetViewer obj={obj} />
@@ -266,13 +269,120 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
             ) : null}
           </div>
           <div style={{ flex: '0 0 260px', minWidth: 220, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {kind === 'image' && (
-              <div className="small dim" style={{ lineHeight: 1.6 }}>
-                Tip: <span className="kbd">+</span> / <span className="kbd">−</span> to zoom, drag image, <span className="kbd">Esc</span> to close.
-              </div>
+            {sideBySide && obj.extract ? (
+              <ExtractFacts x={obj.extract} objKey={obj.key} copied={copied} onCopy={copy} />
+            ) : (
+              kind === 'image' && (
+                <div className="small dim" style={{ lineHeight: 1.6 }}>
+                  Tip: <span className="kbd">+</span> / <span className="kbd">−</span> to zoom, drag image, <span className="kbd">Esc</span> to close.
+                </div>
+              )
             )}
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/** Right-hand facts column for the slip-first popup layout: one compact row
+ * per field, copy buttons inline, raw OCR text collapsed (no scroll clutter). */
+function ExtractFacts({ x, objKey, copied, onCopy }: {
+  x: ExtractPayload
+  objKey: string
+  copied: string
+  onCopy: (v: string, label: string) => void
+}) {
+  const anyX = x as any
+  const row: CSSProperties = {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    gap: 8, padding: '7px 10px', borderRadius: 8,
+    background: 'rgba(255,255,255,.035)', border: '1px solid rgba(255,255,255,.07)',
+  }
+  const label: CSSProperties = {
+    fontSize: 10, letterSpacing: '.08em', color: 'var(--dim, #8b93a7)',
+    textTransform: 'uppercase', flexShrink: 0,
+  }
+  const val: CSSProperties = {
+    fontSize: 13, textAlign: 'right', overflow: 'hidden',
+    textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%',
+  }
+  const miniBtn: CSSProperties = { padding: '1px 7px', fontSize: 10, flexShrink: 0 }
+  const twin = anyX.twin_artifact
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+      <div style={{ ...row, flexDirection: 'column', alignItems: 'stretch', gap: 2 }}>
+        <span style={label}>Amount</span>
+        {x.amount_inr != null ? (
+          <span className="mono" style={{ fontSize: 24, fontWeight: 700, color: 'var(--money, #4ade80)' }}>
+            ₹ {x.amount_inr.toLocaleString('en-IN')}
+          </span>
+        ) : (
+          <span className="dim" style={{ fontSize: 14 }}>— not found <span className="tiny">(use Re-run OCR above)</span></span>
+        )}
+        {twin && (
+          <span className="tiny" style={{ color: 'var(--warn, #fbbf24)' }}>
+            auto-corrected: tesseract {Number(twin.artifact).toLocaleString('en-IN')} → {Number(twin.true_amount).toLocaleString('en-IN')} (₹-glyph misread)
+          </span>
+        )}
+        {anyX.glyph_collision && (
+          <span className="tiny" style={{ color: 'var(--warn, #fbbf24)' }}>glyph collision — verify against slip</span>
+        )}
+      </div>
+      {x.vpa ? (
+        <div style={row}>
+          <span style={label}>VPA</span>
+          <span className="mono" style={val} title={x.vpa}>{x.vpa}{x.new_mule ? ' (NEW)' : ''}</span>
+          <button className="btn" style={miniBtn} onClick={() => onCopy(x.vpa!, 'vpa-f')}>{copied === 'vpa-f' ? '✓' : 'Copy'}</button>
+        </div>
+      ) : (
+        <div style={row}><span style={label}>VPA</span><span className="dim">—</span></div>
+      )}
+      {x.utr && (
+        <div style={row}>
+          <span style={label}>UTR</span>
+          <span className="mono" style={val} title={x.utr}>{x.utr}</span>
+          <button className="btn" style={miniBtn} onClick={() => onCopy(x.utr!, 'utr-f')}>{copied === 'utr-f' ? '✓' : 'Copy'}</button>
+        </div>
+      )}
+      {(x.payee_name || anyX.beneficiary_name) && (
+        <div style={row}>
+          <span style={label}>Payee</span>
+          <span style={val} title={x.payee_name || anyX.beneficiary_name}>{x.payee_name || anyX.beneficiary_name}</span>
+        </div>
+      )}
+      {(x.wallets ?? []).slice(0, 3).map((w: any) => {
+        const addr = String(w?.address ?? '').trim()
+        if (!addr) return null
+        return (
+          <div style={row} key={addr}>
+            <span style={label}>{w.network ?? 'wallet'}</span>
+            <span className="mono" style={val} title={addr}>{addr.slice(0, 18)}{addr.length > 18 ? '…' : ''}</span>
+            <button className="btn" style={miniBtn} onClick={() => onCopy(addr, `w-f-${addr}`)}>{copied === `w-f-${addr}` ? '✓' : 'Copy'}</button>
+          </div>
+        )
+      })}
+      <div style={row}>
+        <span style={label}>Engine</span>
+        <span className="tiny dim" style={{ textAlign: 'right' }}>
+          {x.kind === 'qr' ? 'QR decode' : x.engine || x.kind}{x.confidence ? ` · ${x.confidence}` : ''}
+        </span>
+      </div>
+      {anyX.amount_rejected_inr != null && (
+        <div className="tiny" style={{ color: 'var(--warn, #fbbf24)' }}>
+          rejected ₹{Number(anyX.amount_rejected_inr).toLocaleString('en-IN')} (outside sanity bound)
+        </div>
+      )}
+      {(x.text_sample || x.raw_text) && (
+        <details className="tiny dim" style={{ ...row, display: 'block' }}>
+          <summary style={{ cursor: 'pointer' }}>OCR text</summary>
+          <div className="mono" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 6, maxHeight: 180, overflow: 'auto' }}>
+            {x.text_sample || x.raw_text}
+          </div>
+        </details>
+      )}
+      <div className="tiny dim" style={{ lineHeight: 1.6 }}>
+        <span className="kbd">+</span> / <span className="kbd">−</span> zoom · <span className="kbd">Esc</span> close · key: <span className="mono">{objKey.split('/').pop()}</span>
       </div>
     </div>
   )

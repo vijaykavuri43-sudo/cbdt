@@ -56,6 +56,46 @@ _KNOWN_UPI_SUFFIXES = {
     "jio",
     "freecharge",
 }
+# Status/UI words that OCR glues to a preceding token ("1336@completed",
+# "clothe@completed" — verified 2026-09-11 on deposit slips). No UPI handle
+# is ever one of these, so any vpa@<word> match is discarded outright.
+_VPA_STATUS_WORDS = {
+    "completed",
+    "complete",
+    "success",
+    "successful",
+    "failed",
+    "failure",
+    "pending",
+    "processing",
+    "processed",
+    "confirmed",
+    "received",
+    "sent",
+    "payment",
+    "payments",
+    "transaction",
+    "transactions",
+    "transferred",
+    "debited",
+    "credited",
+    "receipt",
+    "invoice",
+    "statement",
+    "balance",
+    "amount",
+    "status",
+    "history",
+    "details",
+    "detail",
+    "refund",
+    "refunded",
+    "cashback",
+    "reward",
+    "rewards",
+    "offer",
+    "offers",
+}
 IFSC_RE = re.compile(r"\b([A-Z]{4})\s*0\s*([A-Z0-9]{6})\b", re.IGNORECASE)
 ACCOUNT_CONTEXT_RE = re.compile(
     r"(?:account\s*(?:number|no\.?|#)?|a/?c\s*(?:number|no\.?)?)\s*[:=\-]?\s*([Xx*0-9][Xx*0-9\s\-]{5,24})",
@@ -303,6 +343,11 @@ AMOUNT_PATTERNS = [
     re.compile(r"\b([0-9]{1,3}(?: [0-9]{3})+(?:\.[0-9]{1,2})?)\b"),
     # Bare comma amounts (2,000 / 12,345.00) — scored lower, boosted only near Paid-to / Payment context; UTRs have no commas so safe.
     re.compile(r"\b([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?)\b"),
+    # Rs/INR-prefixed without an "amount" label ("Rs.2,000", "INR 2000" on
+    # GPay/bank slips) — 2026-09-11: bare misses like these surfaced as empty (—) amounts.
+    re.compile(
+        r"(?:\brs\.?\b|\binr\b)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", re.IGNORECASE
+    ),
 ]
 # Context clues that an amount is NOT the principal transaction — balance, promo/ads
 _BALANCE_CTX = re.compile(r"balance\s*[:>\-]?\s*[₹%]?\s*[0-9,]*", re.IGNORECASE)
@@ -312,6 +357,15 @@ _SPENT_CTX = re.compile(
 )
 _PAYMENT_CTX = re.compile(
     r"payment\s+successful|paid\s+to|paid\s+by|transaction\s+successful|view\s+details",
+    re.IGNORECASE,
+)
+# In-app ad banners beside the receipt ("iPhone 16 Pro ₹50,000 Buy now",
+# verified 2026-09-11: beat the true ₹2,000 principal when sitting near the
+# header). Narrow ±30-char window; word-boundaries so "premium"/"wholesale"
+# never match. Silent drop (no Gemini trigger — ads are certain decoys).
+_AD_CTX_RE = re.compile(
+    r"buy\s*now|shop\s*now|add\s*to\s*cart|\bemi\b|discount|\bmrp\b|\bsale\b"
+    r"|deal\s+of\s+the|coupon|cashback|order\s*now|limited\s*(period|offer)|hurry\b",
     re.IGNORECASE,
 )
 UTR_RE = re.compile(
@@ -339,9 +393,12 @@ def fetch_bytes(s3: Any, key: str) -> bytes:
 
 def extract_vpas(text: str) -> list[str]:
     """Extract UPI VPAs, handling OCR split '@' and filtering email artifacts."""
+    # Tesseract often reads @ as © on small phone screenshots — recover those
+    # (2026-09-11: VPAs missed entirely → empty UPI column on deposit rows).
+    norm = (text or "").replace("©", "@")
     # Normalise stray spaces around @ introduced by tesseract line breaks
     # but keep original for other extractors
-    norm = re.sub(r"\s*@\s*", "@", text)
+    norm = re.sub(r"\s*@\s*", "@", norm)
     out: list[str] = []
     seen: set[str] = set()
     for m in VPA_RE.finditer(norm):
@@ -351,6 +408,9 @@ def extract_vpas(text: str) -> list[str]:
         if not plausible_vpa(raw):
             continue
         handle = raw.split("@", 1)[1] if "@" in raw else ""
+        # Status/UI word glued by OCR ("1336@completed") — never a real handle
+        if handle in _VPA_STATUS_WORDS:
+            continue
         # Reject common email providers — they are not UPI mule rails
         if (
             handle in _EMAIL_VPA_BLACKLIST
@@ -399,10 +459,18 @@ def extract_vpas(text: str) -> list[str]:
     return filtered
 
 
-def extract_vpa_details(text: str) -> list[dict]:
-    """Return normalized VPAs with payer/beneficiary role provenance."""
-    norm = re.sub(r"\s*@\s*", "@", text)
-    allowed = set(extract_vpas(norm))
+def extract_vpa_details(text: str, allowed: Optional[set] = None) -> list[dict]:
+    """Return normalized VPAs with payer/beneficiary role provenance.
+
+    Pass the already-computed extract_vpas() set as `allowed` to skip a
+    duplicate full-text VPA sweep (2026-09-11: ocr_slip ran the VPA_RE scan
+    twice per slip — once here, once in extract_vpas).
+    """
+    # Same normalization as extract_vpas (©→@ recovery + space collapse) so a
+    # caller-passed `allowed` set always matches this scan's tokens.
+    norm = re.sub(r"\s*@\s*", "@", (text or "").replace("©", "@"))
+    if allowed is None:
+        allowed = set(extract_vpas(norm))
     details: list[dict] = []
     seen: set[str] = set()
     for match in VPA_RE.finditer(norm):
@@ -442,34 +510,34 @@ def detect_amount_currency(text: str, start: int, end: int) -> str:
     return "INR"
 
 
-def _collect_amount_candidates(
-    flat: str,
-) -> list[tuple[float, int, int, int, str, str]]:
-    """Score every amount candidate in flattened text.
+_AMOUNT_PATTERN_WEIGHTS = {
+    0: 10,  # txn/transaction amount label
+    1: 5,  # amount label
+    2: 6,  # ₹/Rs/INR/= prefix
+    3: 7,  # tilde ~3,000 — principal on PhonePe/GooglePay slips
+    4: 6,  # "=2,500" — tesseract reads ₹ as '=' (verified PhonePe misread)
+    5: 4,  # spaced thousands "1 000" / "2 000"
+    7: 5,  # Rs./INR-prefixed without label
+    # default 3: bare 2,000 — fallback when ₹ missed by OCR
+}
 
-    Returns (value, score, start, end, raw, currency) best-first. Currency is
-    detected per-match; crypto amounts use CRYPTO_MAX_AMOUNT so a "69.5 USDT"
-    principal is never killed by the INR bound.
+
+def _scan_amount_matches(flat: str) -> list[dict]:
+    """Single full-text amount sweep backing picker AND audit (2026-09-11b:
+    ocr_slip ran this 8-pattern sweep TWICE per slip — once for the winner,
+    once for the audit trail — roughly doubling post-OCR regex CPU).
+
+    Each dict carries: value, score (picker formula), s, e, match, ccy,
+    dropped (picker skips it — same blacklist conditions as before),
+    rejected + reason (narrow balance/promo flags — these drive the UI
+    'ignored' badge AND Gemini adjudication, unchanged), audit_score (legacy
+    audit formula so the UI candidate order is preserved), context.
+    Out-of-bound values and far-from-context bare numbers stay silent.
     """
-    candidates: list[tuple[float, int, int, int, str, str]] = []
-    # Pre-compute payment keyword positions for proximity scoring
     pay_positions = [m.start() for m in _PAYMENT_CTX.finditer(flat)]
+    scanned: list[dict] = []
     for pi, pattern in enumerate(AMOUNT_PATTERNS):
-        if pi == 0:
-            weight = 10
-        elif pi == 1:
-            weight = 5
-        elif pi == 2:
-            weight = 6
-        elif pi == 3:
-            weight = 7  # tilde ~3,000 — principal on PhonePe/GooglePay slips
-        elif pi == 4:
-            weight = 6  # "=2,500" — tesseract reads ₹ as '=' (verified PhonePe misread)
-        elif pi == 5:
-            weight = 4  # spaced thousands "1 000" / "2 000"
-        else:
-            weight = 3  # bare 2,000 — fallback when ₹ missed by OCR
-
+        weight = _AMOUNT_PATTERN_WEIGHTS.get(pi, 3)
         for m in pattern.finditer(flat):
             raw = m.group(1).replace(",", "").replace(" ", "")
             try:
@@ -491,75 +559,128 @@ def _collect_amount_candidates(
             ctx_after = flat[e : e + 60]
             ctx_before_low = ctx_before.lower()
             ctx_after_low = ctx_after.lower()
-            # Blacklist ONLY if amount is itself the balance/promo value, not merely nearby.
-            # For "Balance: ₹355" the 355's ctx_before ends with "balance:" / "balance: ₹"
+            # Blacklist ONLY if amount is itself the balance/promo value.
+            dropped, reason = False, ""
             if re.search(
                 r"balance\s*[:>\-]?\s*[₹%]?\s*$", ctx_before_low.strip()[-28:]
             ):
-                continue
-            # Promo "You have spent X less" — the X is directly after "spent"
-            if "you have spent" in ctx_before_low[-45:] or re.search(
+                dropped, reason = True, "balance"
+            elif "you have spent" in ctx_before_low[-45:] or re.search(
                 r"spent\s*[%₹]?\s*$", ctx_before_low.strip()[-30:]
             ):
-                continue
-            # Also catch "spent ... less" split across amount (rare) via combined check but only when spent is just before
-            if _SPENT_CTX.search(ctx_before_low[-50:] + " " + m.group(0).lower()):
-                # ensure spent is immediate predecessor, not 60 chars after
+                dropped, reason = True, "spent-promo"
+            elif _SPENT_CTX.search(ctx_before_low[-50:] + " " + m.group(0).lower()):
+                # ensure spent is immediate predecessor, not 60 chars after;
+                # otherwise fall through to the sponsored/up-to checks below
                 if "spent" in ctx_before_low[-40:]:
-                    continue
-            # Fallback narrow: if amount sits inside sponsored promo footer
-            if "sponsored" in ctx_before_low[-35:] or "sponsored" in ctx_after_low[:35]:
-                # sponsored amounts are never transaction principal
+                    dropped, reason = True, "spent-promo"
+            if not dropped and (
+                "sponsored" in ctx_before_low[-35:] or "sponsored" in ctx_after_low[:35]
+            ):
                 if "sponsored" in (ctx_before_low[-35:] + ctx_after_low[:35]):
-                    # only reject if nearby, not distant ₹200 case — check distance already narrow
                     if "sponsored" in ctx_before_low or "sponsored" in ctx_after_low:
-                        # be conservative: only if amount is within 30 chars of sponsored
                         if (
                             "sponsored" in ctx_before_low[-30:]
                             or "sponsored" in ctx_after_low[:30]
                         ):
-                            continue
-            # Promo footer "up to ₹5,000" / "Enjoy seamless ..." — never principal
-            if (
+                            dropped, reason = True, "sponsored"
+                        else:
+                            dropped, reason = False, ""
+                    else:
+                        dropped, reason = False, ""
+                else:
+                    pass
+            if not dropped and (
                 "up to" in ctx_before_low[-30:]
                 and "seamless" in (ctx_before_low + ctx_after_low).lower()[:60]
             ):
-                continue
-            if "up to" in ctx_before_low[-28:] and "%" in m.group(0):
-                continue
-            # Bare comma / spaced amounts outside payment context are likely table/noise — penalize far distance
-            if pi in (5, 6):  # spaced thousands / bare comma — no rupee glyph
+                dropped, reason = True, "promo-cap"
+            # In-app ad / shopping banner price — never the deposit principal
+            if not dropped and (
+                _AD_CTX_RE.search(ctx_before_low[-30:])
+                or _AD_CTX_RE.search(ctx_after_low[:30])
+            ):
+                dropped, reason = True, "ad-promo"
+            if not dropped and "up to" in ctx_before_low[-28:] and "%" in m.group(0):
+                dropped, reason = True, "promo-cap"
+            if not dropped and pi in (5, 6):  # spaced/bare — no currency glyph
                 if pay_positions:
                     nearest = min(abs(s - p) for p in pay_positions)
                     if nearest > 250:
-                        # too far from any payment cue — likely footer list or debited duplicate
-                        continue
-                else:
-                    # no payment cue at all — only keep tilde/bare if Paid-to context nearby
-                    if (
-                        "paid to" not in ctx_before_low[-80:].lower()
-                        and "paid to" not in ctx_after_low[:80].lower()
-                    ):
-                        if "~" not in flat[max(0, s - 5) : e + 5]:
-                            continue
+                        dropped, reason = True, "far-context"
+                elif (
+                    "paid to" not in ctx_before_low[-80:].lower()
+                    and "paid to" not in ctx_after_low[:80].lower()
+                ):
+                    if "~" not in flat[max(0, s - 5) : e + 5]:
+                        dropped, reason = True, "far-context"
             score = weight
-            # Proximity boost: near "Payment successful" / "View details"
             if pay_positions:
                 nearest = min(abs(s - p) for p in pay_positions)
                 if nearest < 80:
                     score += 20
                 elif nearest < 180:
                     score += 8
-            # Standalone large-font amount tends to have whitespace / newline around ₹200
-            # In flat text, it appears as "Payment successful 1 Sep ... ₹200 View details"
-            # Give extra if ctx contains view details shortly after
             if "view details" in ctx_after.lower()[:40]:
                 score += 6
-            # Penalise amounts that look like % spill from OCR (mis-read ₹ → %)
             if m.group(0).strip().startswith("%"):
                 score -= 8
-            # Prefer amounts with ₹/Rs prefix over bare numbers, but pattern already encodes that
-            candidates.append((value, score, s, e, m.group(0), ccy))
+            # Narrow audit flags (legacy semantics): only balance / spent /
+            # sponsored surface as 'ignored' and trigger Gemini adjudication.
+            rejected = reason in ("balance", "spent-promo", "sponsored")
+            audit_score = (
+                weight
+                + (
+                    8
+                    if pay_positions and min(abs(s - p) for p in pay_positions) < 180
+                    else 0
+                )
+                - (50 if rejected else 0)
+            )
+            scanned.append(
+                {
+                    "value": value,
+                    "score": score,
+                    "s": s,
+                    "e": e,
+                    "match": m.group(0),
+                    "ccy": ccy,
+                    "dropped": dropped,
+                    "rejected": rejected,
+                    "reason": reason,
+                    "audit_score": audit_score,
+                    "context": (flat[max(0, s - 50) : e + 50]).lower()[:80],
+                }
+            )
+    return scanned
+
+
+def _project_audit(d: dict) -> dict:
+    """Audit-trail view of one scanned match (stable UI shape)."""
+    return {
+        "raw": d["match"],
+        "value": d["value"],
+        "score": d["audit_score"],
+        "rejected": d["rejected"],
+        "context": d["context"],
+    }
+
+
+def _collect_amount_candidates(
+    flat: str,
+) -> list[tuple[float, int, int, int, str, str]]:
+    """Score every amount candidate in flattened text.
+
+    Returns (value, score, start, end, raw, currency) best-first. Currency is
+    detected per-match; crypto amounts use CRYPTO_MAX_AMOUNT so a "69.5 USDT"
+    principal is never killed by the INR bound. Thin filter over the shared
+    _scan_amount_matches sweep (single full-text pass per slip).
+    """
+    candidates = [
+        (d["value"], d["score"], d["s"], d["e"], d["match"], d["ccy"])
+        for d in _scan_amount_matches(flat)
+        if not d["dropped"]
+    ]
     # Best-first: highest score, ties by earliest position then smallest value
     candidates.sort(key=lambda x: (-x[1], x[2], x[0]))
     return candidates
@@ -648,6 +769,14 @@ def detect_twin_artifact(text: str, amount: Optional[float]) -> Optional[dict]:
     Y == X[-4:] exists elsewhere in the text. PhonePe slips print the true
     amount twice (Paid row + Debited row), so a genuine 5-digit amount would
     NOT have a shorter same-suffix sibling — X is a ₹-eaten artifact of Y.
+    2026-09-11: extended to 6-digit X ("lakh-eaten": ₹12,000 hero read as
+    '212,000', ₹→2 prepended — officer-verified Navi UPI slip showing
+    ₹2,12,000). 2026-09-11b: generalized over Y lengths 4–6 (lakh/crore-eaten
+    uniformly) instead of hardcoded branches — same guards throughout.
+    X matches in ANY grouping ('2,12,000' / '212,000' / '2 12 000'); Y must
+    appear delimited ('12,000') so a bare UTR fragment can never qualify, and
+    Y hits in a balance context ("Balance: ₹12,000" next to a genuine
+    ₹2,12,000) are excluded.
     Returns {'artifact': X, 'true_amount': Y} or None.
     """
     if not text or amount is None:
@@ -656,102 +785,66 @@ def detect_twin_artifact(text: str, amount: Optional[float]) -> Optional[dict]:
         iv = int(amount)
     except Exception:
         return None
-    if not (10000 <= iv <= 99999) or float(iv) != float(amount):
+    if float(iv) != float(amount):
         return None
-    xs, ys = str(iv), str(iv)[-4:]
+    xs = str(iv)
+    if not (5 <= len(xs) <= 8):
+        return None
     flat = " ".join(text.split())
-    # count exact whole-token occurrences of X (comma or bare form)
-    xhits = len(
-        re.findall(
-            r"(?<![\d,])"
-            + re.escape(xs[:2])
-            + r"[, ]?"
-            + re.escape(xs[2:])
-            + r"(?![\d,])",
-            flat,
-        )
-    )
-    if xhits == 0:
-        xhits = len(re.findall(r"(?<![\d])" + re.escape(xs) + r"(?![\d])", flat))
+
+    def _digit_run(digits: str) -> str:
+        # digits with optional OCR separators in ANY positions
+        return r"[, ]?".join(re.escape(d) for d in digits)
+
+    # count exact whole-token occurrences of X (any comma/space grouping)
+    xhits = len(re.findall(r"(?<![\d,])" + _digit_run(xs) + r"(?![\d,])", flat))
     if xhits < 2:
         return None
-    yhits = re.findall(
-        r"(?<![\d,])" + re.escape(ys[:1]) + r"," + re.escape(ys[1:]) + r"(?![\d,])",
-        flat,
-    )
-    if not yhits:
-        return None
-    return {
-        "artifact": xs,
-        "true_amount": int(ys),
-        "x_hits": xhits,
-        "y_hits": len(yhits),
-    }
+    # Try shorter same-suffix siblings, longest first (Y = X[-6:] … X[-4:]).
+    for ylen in (6, 5, 4):
+        ys = xs[-ylen:]
+        if len(ys) < 4 or int(ys) < 1000 or ys == xs:
+            continue
+        ypat = r"(?<![\d,])" + _digit_run(ys) + r"(?![\d,])"
+        yhits = 0
+        for m in re.finditer(ypat, flat):
+            token = m.group(0)
+            if "," not in token and " " not in token.strip():
+                continue  # bare digit run — could be a UTR fragment
+            before = flat[max(0, m.start() - 20) : m.start()].lower()
+            after = flat[m.end() : m.end() + 20].lower()
+            if re.search(
+                r"(?:balance|cashback|reward|offer|up to)\s*[:>\-]?\s*[₹%=~]?\s*$",
+                before.strip()[-16:],
+            ):
+                continue  # Y is a balance/promo readout, not the debited twin
+            if re.match(r"\s*(?:cashback|reward|offer|balance)\b", after.strip()[:16]):
+                continue  # decoy word follows Y ("₹1,234 cashback")
+            yhits += 1
+        if yhits:
+            return {
+                "artifact": xs,
+                "true_amount": int(ys),
+                "x_hits": xhits,
+                "y_hits": yhits,
+            }
+    return None
 
 
 def extract_amount_candidates(text: str) -> list[dict]:
-    """Return all scored candidates for audit/UI (ignored amounts)."""
+    """Return all scored candidates for audit/UI (ignored amounts).
+
+    Projection over the shared _scan_amount_matches sweep — no second
+    full-text pass. UI shape unchanged (raw/value/score/rejected/context).
+    """
     if not text:
         return []
     flat = " ".join(text.split())
-    out: list[dict] = []
-    pay_positions = [m.start() for m in _PAYMENT_CTX.finditer(flat)]
-    for pi, pattern in enumerate(AMOUNT_PATTERNS):
-        if pi == 0:
-            weight = 10
-        elif pi == 1:
-            weight = 5
-        elif pi == 2:
-            weight = 6
-        elif pi == 3:
-            weight = 7
-        else:
-            weight = 3
-        for m in pattern.finditer(flat):
-            raw = m.group(1).replace(",", "").replace(" ", "")
-            try:
-                value = float(raw)
-            except ValueError:
-                continue
-            if (
-                not (0 < value <= config.MAX_AMOUNT_INR)
-                or len(raw.split(".", 1)[0]) > 9
-            ):
-                continue
-            s, e = m.start(), m.end()
-            ctx_before_low = flat[max(0, s - 40) : s].lower()
-            ctx_after_low = flat[e : e + 40].lower()
-            # Narrow audit rejection: only mark as rejected if immediately in balance/promo phrase
-            is_bal = bool(
-                re.search(
-                    r"balance\s*[:>\-]?\s*[₹%]?\s*$", ctx_before_low.strip()[-28:]
-                )
-            )
-            is_spent = bool(
-                "you have spent" in ctx_before_low[-45:]
-                or re.search(r"spent\s*[%₹]?\s*$", ctx_before_low.strip()[-30:])
-            )
-            is_sponsored = bool(
-                "sponsored" in ctx_before_low[-30:] or "sponsored" in ctx_after_low[:30]
-            )
-            rejected = bool(is_bal or is_spent or is_sponsored)
-            score = weight + (
-                8
-                if pay_positions and min(abs(s - p) for p in pay_positions) < 180
-                else 0
-            )
-            if rejected:
-                score -= 50
-            ctx_full = (flat[max(0, s - 50) : e + 50]).lower()
-            out.append(
-                {
-                    "raw": m.group(0),
-                    "value": value,
-                    "score": score,
-                    "rejected": rejected,
-                    "context": ctx_full[:80],
-                }
-            )
+    out = [
+        _project_audit(d)
+        for d in _scan_amount_matches(flat)
+        if not (d["dropped"] and not d["rejected"])
+    ]
     out.sort(key=lambda x: -x["score"])
     return out
 
@@ -993,7 +1086,7 @@ def decode_qr_image(data: bytes, allow_gemini: bool = True) -> dict:
                     "role": "beneficiary",
                     "role_confidence": "high",
                 }
-                for detail in extract_vpa_details(text)
+                for detail in extract_vpa_details(text, set(vpas))
             ]
         pn = re.search(r"[?&]pn=([^&]+)", text)
         if pn:
@@ -1737,9 +1830,22 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
                 timeout=60,
             )
             text = r.stdout or ""
-            # Fallback: if tesseract returns near-empty (e.g. green header
-            # washed out), retry with psm 11 (sparse text) once
-            if len(text.strip()) < 12:
+            # Single shared amount sweep straight after pass 1: the winner,
+            # the retry decision, and the UI audit trail all derive from it
+            # (2026-09-11b: three full-text sweeps per slip → one).
+            flat = " ".join(text.split())
+            scanned = _scan_amount_matches(flat)
+            # Fallback: first pass yielded nothing usable (washed-out green
+            # header, faint ₹) and output is short — retry with psm 11
+            # (sparse text) once. Skipped when pass 1 already found an
+            # amount/UTR/VPA (saves a full tesseract pass on good slips) and
+            # when text is long (sparse-text mode won't help a dense slip).
+            if len(text.strip()) < 300 and (
+                not any(not d["dropped"] for d in scanned)
+                and not UTR_RE.search(text)
+                and not NUM12_RE.search(text)
+                and not extract_vpas(text)
+            ):
                 r2 = subprocess.run(
                     [
                         "tesseract",
@@ -1758,11 +1864,20 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
                 )
                 if len((r2.stdout or "").strip()) > len(text.strip()):
                     text = r2.stdout or text
-        out["text_sample"] = " ".join(text.split())[:400]
+                    flat = " ".join(text.split())
+                    scanned = _scan_amount_matches(flat)
+        out["text_sample"] = flat[:400]
         wallets = extract_wallets(text)
         if wallets:
             out["wallets"] = wallets
-        tesseract_amount, tesseract_ccy = extract_amount_with_currency(text)
+        accepted = sorted(
+            (d for d in scanned if not d["dropped"]),
+            key=lambda d: (-d["score"], d["s"], d["value"]),
+        )
+        if accepted:
+            tesseract_amount, tesseract_ccy = accepted[0]["value"], accepted[0]["ccy"]
+        else:
+            tesseract_amount, tesseract_ccy = None, "INR"
         out["amount_value"] = tesseract_amount
         out["amount_currency"] = tesseract_ccy
         # amount_inr feeds ₹ totals — set ONLY when the principal really is
@@ -1773,7 +1888,14 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             out["txids"] = txids
         # Audit: keep ignored promo/balance candidates for dashboard transparency
         try:
-            cands = extract_amount_candidates(text)
+            cands = sorted(
+                (
+                    _project_audit(d)
+                    for d in scanned
+                    if not (d["dropped"] and not d["rejected"])
+                ),
+                key=lambda c: -c["score"],
+            )
             # Keep at most 3 rejected for UI
             rejected = [c for c in cands if c["rejected"]][:3]
             if rejected:
@@ -1834,7 +1956,7 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
         if vpas:
             out["vpa"] = vpas[0]
             out["vpas"] = vpas
-            out["vpa_details"] = extract_vpa_details(text)
+            out["vpa_details"] = extract_vpa_details(text, set(vpas))
         accounts = extract_bank_accounts(text)
         if accounts:
             out["bank_accounts"] = accounts

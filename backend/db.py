@@ -1591,6 +1591,8 @@ def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
     text_sample is only the first 400 chars, so the twin signature (X repeated
     + shorter sibling Y) must be visible there; undecidable rows are counted
     as need_reocr (re-OCR when Vision quota returns) and left untouched.
+    2026-09-11: range extended to 6 digits — the lakh-eaten case (₹12,000 →
+    '212,000', officer-verified) repairs via the same signature.
     """
     from .enrich import detect_twin_artifact  # lazy: enrich imports db
 
@@ -1606,7 +1608,7 @@ def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
     rows = c.execute(
         "SELECT o.key AS key, o.extract_json AS extract_json FROM objects o"
         " JOIN (SELECT DISTINCT source_key FROM payment_transactions"
-        "  WHERE amount_inr BETWEEN 10000 AND 99999) p ON p.source_key=o.key"
+        "  WHERE amount_inr BETWEEN 10000 AND 999999) p ON p.source_key=o.key"
         " WHERE o.extract_json IS NOT NULL"
         " AND json_extract(o.extract_json,'$.kind') IN ('deposit','withdrawal')"
         " AND json_extract(o.extract_json,'$.engine')='tesseract'"
