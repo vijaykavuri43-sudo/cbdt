@@ -1662,6 +1662,156 @@ def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
     }
 
 
+_MALFORMED_NUM_RE = re.compile(r"\d[\d,]*\.?\d*")
+_MALFORMED_REF_RE = re.compile(
+    r"(?:\bref\b\.?|\breference\b|\brrn\b|ref\.?\s*(?:no|number|num))\s*"
+    r"[a-z]*\s*[«»:=~#\-]?\s*=?\s*$",
+    re.IGNORECASE,
+)
+_MALFORMED_AD_RE = re.compile(
+    r"up\s*to|upto|getupto|postpaid|pre[\s-]?approved"
+    r"|instant\s+(loan|credit|approval)|credit\s+(limit|line|on\s+upi)"
+    r"|buy\s*now|\bemi\b|discount|cashback",
+    re.IGNORECASE,
+)
+
+
+def _malformed_evidence(sample: str, stored: float) -> Optional[dict]:
+    """Point at the culprit token for a suspect stored amount.
+
+    Returns {rule, evidence} when the digit string matching `stored` is found
+    in the text sample inside a known-decoy context, else None (undecidable —
+    needs a Vision re-read of the pixels).
+    """
+    for m in _MALFORMED_NUM_RE.finditer(sample):
+        tok = m.group(0)
+        try:
+            val = float(tok.replace(",", ""))
+        except ValueError:
+            continue
+        if val != stored:
+            continue
+        s, e = m.start(), m.end()
+        before = sample[max(0, s - 40) : s]
+        after = sample[e : e + 25]
+        before_low = before.lower()
+        if "," in tok:
+            from .enrich import detect_bad_grouping  # lazy: enrich imports db
+
+            if detect_bad_grouping(tok):
+                return {"rule": "bad-comma", "evidence": tok}
+        if _MALFORMED_REF_RE.search(before_low[-35:]):
+            return {"rule": "ref-number", "evidence": tok}
+        if _MALFORMED_AD_RE.search(before_low[-40:]):
+            return {"rule": "ad-context", "evidence": tok}
+        if after.lower().lstrip("~ ").startswith("scratch"):
+            return {"rule": "scratch-promo", "evidence": tok}
+        if re.match(r"[\w.\-]*@", sample[e : e + 12]):
+            return {"rule": "vpa-digits", "evidence": tok}
+        # '=' echo: long comma-less run right after '=' while the sample holds
+        # another validly-grouped amount ('/21,000 = 8460704' stored 8.46M
+        # over TRUE 21,000; verified 2026-09-11).
+        digits = tok.replace(",", "").split(".")[0]
+        if "," not in tok and len(digits) >= 7 and re.search(r"=\s*$", before):
+            others = [
+                t for t in _MALFORMED_NUM_RE.findall(sample) if "," in t and t != tok
+            ]
+            if others:
+                return {"rule": "ref-echo", "evidence": tok}
+    # Truncated ref ids: extractor keeps ≤9 int digits, so a stored amount can
+    # be a PREFIX of a longer ref run ('Ref. No: 613726905' stored 6137269;
+    # 'Ref. No: 313103306197' stored 3131033; verified 2026-09-11).
+    stored_digits = str(int(stored))
+    for m in re.finditer(r"\d[\d,]*", sample):
+        tok_digits = m.group(0).replace(",", "")
+        if len(tok_digits) <= len(stored_digits):
+            continue
+        if not tok_digits.startswith(stored_digits):
+            continue
+        s = m.start()
+        before_low = sample[max(0, s - 40) : s].lower()
+        if _MALFORMED_REF_RE.search(before_low[-35:]) or re.search(
+            r"=\s*$", sample[max(0, s - 3) : s]
+        ):
+            return {"rule": "ref-number", "evidence": m.group(0)}
+        if sample[m.end() : m.end() + 25].lower().lstrip("~ ").startswith("scratch"):
+            return {"rule": "scratch-promo", "evidence": m.group(0)}
+    return None
+
+
+def repair_malformed_amounts(dry_run: bool = True, limit: int = 20000) -> dict:
+    """Batch repair persisted OCR-decoy amounts (verified 2026-09-11 top-30
+    audit: bad-comma 10-100x inflation, loan/postpaid ad picks, ref/RRN ids,
+    scratch ids, VPA-digit runs — ~Rs.10.3cr of inflation in the top 30
+    rows alone).
+
+    Suspects: tesseract amounts >= 100000. Decidable only when the culprit
+    digit string is visible in the stored text sample inside a decoy context
+    (else need_reocr). Decided rows are nulled for Gemini re-adjudication —
+    the true value is NOT guessed. Mirrors repair_twin_artifacts (indexed
+    candidate scan, two-phase decide/write).
+    """
+    scanned = repaired = need_reocr = 0
+    samples: list[dict] = []
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    c = connect()
+    rows = c.execute(
+        "SELECT o.key AS key, o.extract_json AS extract_json FROM objects o"
+        " JOIN (SELECT DISTINCT source_key FROM payment_transactions"
+        "  WHERE amount_inr >= 100000) p ON p.source_key=o.key"
+        " WHERE o.extract_json IS NOT NULL"
+        " AND json_extract(o.extract_json,'$.kind') IN ('deposit','withdrawal')"
+        " AND json_extract(o.extract_json,'$.engine')='tesseract'"
+        " AND json_extract(o.extract_json,'$.malformed_amount') IS NULL"
+        " LIMIT ?",
+        (limit,),
+    ).fetchall()
+    # Phase 1 (no lock): decide. Phase 2 (live only, locked): write.
+    fixes: list[tuple[str, dict, dict]] = []
+    for r in rows:
+        try:
+            p = json.loads(r["extract_json"])
+        except Exception:
+            continue
+        stored = p.get("amount_inr")
+        if stored is None:
+            continue
+        scanned += 1
+        hit = _malformed_evidence(p.get("text_sample") or "", float(stored))
+        if not hit:
+            need_reocr += 1
+            continue
+        repaired += 1
+        if len(samples) < 15:
+            samples.append({"key": r["key"], "from": stored, **hit})
+        if dry_run:
+            continue
+        p["amount_tesseract_raw"] = stored
+        p["amount_inr"] = None
+        p["needs_gemini"] = True
+        p["malformed_amount"] = {**hit, "repaired_utc": now, "repaired_from": "batch"}
+        fixes.append((r["key"], p, hit))
+    if fixes:
+        with _writer_lock:
+            wc = connect()
+            for key, p, _hit in fixes:
+                wc.execute(
+                    "UPDATE objects SET extract_json=? WHERE key=?",
+                    (json.dumps(p, ensure_ascii=False), key),
+                )
+                _replace_payment_rows(wc, key, p)
+            wc.commit()
+    totals = {} if dry_run else refresh_payment_summaries()
+    return {
+        "scanned": scanned,
+        "repaired": repaired,
+        "need_reocr": need_reocr,
+        "dry_run": dry_run,
+        "samples": samples,
+        **totals,
+    }
+
+
 def refresh_payment_summaries() -> dict:
     """Materialize common dashboard aggregates; live rows refresh every minute."""
     refreshed = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

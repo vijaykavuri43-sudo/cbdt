@@ -361,13 +361,56 @@ _PAYMENT_CTX = re.compile(
 )
 # In-app ad banners beside the receipt ("iPhone 16 Pro ₹50,000 Buy now",
 # verified 2026-09-11: beat the true ₹2,000 principal when sitting near the
-# header). Narrow ±30-char window; word-boundaries so "premium"/"wholesale"
+# header; "Get up to ₹60,000 credit on UPI / Unlock Paytm Postpaid" banner,
+# verified 2026-09-11: tilde-pattern beat the true ₹450 principal).
+# Narrow ±30-char window; word-boundaries so "premium"/"wholesale"
 # never match. Silent drop (no Gemini trigger — ads are certain decoys).
 _AD_CTX_RE = re.compile(
     r"buy\s*now|shop\s*now|add\s*to\s*cart|\bemi\b|discount|\bmrp\b|\bsale\b"
-    r"|deal\s+of\s+the|coupon|cashback|order\s*now|limited\s*(period|offer)|hurry\b",
+    r"|deal\s+of\s+the|coupon|cashback|order\s*now|limited\s*(period|offer)|hurry\b"
+    r"|\bup\s*to\b|\bupto\b|getupto|get\s*up\s*to|postpaid|pre[\s-]?approved"
+    r"|instant\s+(loan|credit|approval)|credit\s+(limit|line|on\s+upi)",
     re.IGNORECASE,
 )
+# Generic "up to / upto <amount>" cap decoy — the Navi loan ad
+# ("Get upto INR 20,00,000.00 instant", verified 2026-09-11: beat every true
+# principal on 12 slips) and Paytm Postpaid banner ("~60,000 credit",
+# verified 2026-09-11: beat the true ₹450). Fires on the cap phrase itself,
+# no promo-footer words required.
+_UPTO_CAP_RE = re.compile(r"up\s*to|upto|getupto", re.IGNORECASE)
+# Reference/RRN context — a bare digit run right after ref/RRN wording is a
+# transaction/reference id, never the principal ("RRNNumber « = 6252477"
+# stored 6.25M over TRUE 1,500; "Ref. No: 613726905" stored 6.1M;
+# verified 2026-09-11).
+_REF_CTX_RE = re.compile(
+    r"(?:\bref\b\.?|\breference\b|\brrn\b|ref\.?\s*(?:no|number|num))\s*"
+    r"[a-z]*\s*[«»:=~#\-]?\s*=?\s*$",
+    re.IGNORECASE,
+)
+# Scratch-card promo context — number followed by SCRATCH is the game id
+# ("~ 6137269 SCRATCH", verified 2026-09-11).
+_SCRATCH_CTX_RE = re.compile(r"^\s*~?\s*scratch", re.IGNORECASE)
+# VPA tail — digits running into @ belong to a VPA local part, never an
+# amount ("rs3689580-1@okaxis" stored 3.69M twice, verified 2026-09-11).
+_VPA_TAIL_RE = re.compile(r"[\w.\-]*@")
+# Indian (7,14,000) vs western (714,000) digit grouping.
+_IND_GROUP_RE = re.compile(r"^\d{1,2}(,\d{2})*(,\d{3})$")
+_WEST_GROUP_RE = re.compile(r"^\d{1,3}(,\d{3})+$")
+
+
+def detect_bad_grouping(num: str) -> bool:
+    """True when a comma-bearing digit string matches NEITHER Indian NOR
+    western grouping — OCR ate/added a digit ('%714,0000' 10x'd a ₹7.14L
+    slip to ₹71.4L; '%50080,00' 100x'd ₹50,080 to ₹50.08L; '%36,000,00'
+    100x'd ₹36,000; verified 2026-09-11). No-comma strings are unjudgeable
+    here (bare true amounts like 710000 exist) → False.
+    """
+    if not num or "," not in num:
+        return False
+    head = num.split(".", 1)[0].strip()
+    return not (_IND_GROUP_RE.match(head) or _WEST_GROUP_RE.match(head))
+
+
 UTR_RE = re.compile(
     r"\b(?:UTR|utr|Ref\.?(?: no)?|reference)\s*[:#\-]?\s*([A-Z0-9]{8,16})\b",
     re.IGNORECASE,
@@ -603,6 +646,50 @@ def _scan_amount_matches(flat: str) -> list[dict]:
                 dropped, reason = True, "ad-promo"
             if not dropped and "up to" in ctx_before_low[-28:] and "%" in m.group(0):
                 dropped, reason = True, "promo-cap"
+            # Malformed comma grouping — OCR ate/added a digit, value is 10-100x
+            # off ('%714,0000' → 71.4L for true 7.14L; verified 2026-09-11).
+            # The winner can never be trusted → silent drop (Gemini re-reads
+            # the pixels when quota allows).
+            if not dropped and detect_bad_grouping(m.group(1)):
+                dropped, reason = True, "bad-grouping"
+            # VPA local-part digits — number runs into @ ('rs3689580-1@okaxis'
+            # stored 3.69M twice; verified 2026-09-11).
+            if not dropped and _VPA_TAIL_RE.match(flat[e : e + 12]):
+                dropped, reason = True, "vpa-digits"
+            # Reference / RRN / ref-no context — bare run is a transaction id
+            # ('RRNNumber « = 6252477' over TRUE 1,500; 'Ref. No: 613726905'
+            # over TRUE 1,500; verified 2026-09-11).
+            if not dropped and _REF_CTX_RE.search(ctx_before_low[-35:]):
+                dropped, reason = True, "ref-number"
+            # Scratch-card promo id ('~ 6137269 SCRATCH'; verified 2026-09-11).
+            if not dropped and _SCRATCH_CTX_RE.match(ctx_after_low[:25]):
+                dropped, reason = True, "scratch-promo"
+            # Generic up-to cap without promo-footer words (Navi loan ad
+            # 'Get upto INR 20,00,000'; verified 2026-09-11).
+            if not dropped and _UPTO_CAP_RE.search(ctx_before_low[-40:]):
+                dropped, reason = True, "ad-cap"
+            # '=' echo of a long bare run — transaction/ref id, not a principal
+            # ('= 8460704' stored 8.46M over TRUE 21,000; verified 2026-09-11).
+            # Comma-bearing '= 21,00,000' (true 21L IMPS) is exempt: Indians
+            # write commas on real principals; 7+ digit comma-less runs don't.
+            g0 = m.group(0).strip()
+            bare_digits = m.group(1).replace(",", "").replace(" ", "").split(".")[0]
+            if (
+                not dropped
+                and g0.startswith("=")
+                and "," not in m.group(1)
+                and len(bare_digits) >= 7
+            ):
+                dropped, reason = True, "ref-echo"
+            # Token-glued digits — run attaches to letters that aren't a
+            # currency prefix ('towards7105960' over TRUE 1,20,000; verified
+            # 2026-09-11). Rs/INR-glued ('Rs20000') stay: legit shorthand.
+            if not dropped:
+                pre_letters = re.search(r"[A-Za-z]{2,}$", ctx_before[-6:])
+                if pre_letters and not re.search(
+                    r"(?:rs|inr)\.?$", ctx_before, re.IGNORECASE
+                ):
+                    dropped, reason = True, "token-digits"
             if not dropped and pi in (5, 6):  # spaced/bare — no currency glyph
                 if pay_positions:
                     nearest = min(abs(s - p) for p in pay_positions)
@@ -709,7 +796,9 @@ def extract_amount(text: str) -> Optional[float]:
     if not text:
         return None
     picked = _pick_principal(_collect_amount_candidates(" ".join(text.split())))
-    return picked[0] if picked else None
+    if picked:
+        return picked[0]
+    return extract_amount_in_words(text)
 
 
 def extract_amount_with_currency(text: str) -> tuple[Optional[float], str]:
@@ -717,7 +806,99 @@ def extract_amount_with_currency(text: str) -> tuple[Optional[float], str]:
     if not text:
         return (None, "INR")
     picked = _pick_principal(_collect_amount_candidates(" ".join(text.split())))
-    return picked if picked else (None, "INR")
+    if picked:
+        return picked
+    # Fallback: amount printed only in words ("Rupees Four Hundred Fifty Only").
+    # Digit candidates yield nothing here (verified 2026-09-11: Paytm slip whose
+    # only digits were a ~60,000 postpaid ad, now correctly skipped). The words
+    # phrase is authoritative — prefer it over leaving the row amountless.
+    words_amt = extract_amount_in_words(text)
+    return (words_amt, "INR") if words_amt else (None, "INR")
+
+
+_AMOUNT_WORD_ONES = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+}
+_AMOUNT_WORD_TENS = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+_AMOUNT_WORD_SCALES = {
+    "hundred": 100,
+    "thousand": 1000,
+    "lakh": 100000,
+    "lac": 100000,
+    "lacs": 100000,
+    "lakhs": 100000,
+    "crore": 10000000,
+    "crores": 10000000,
+}
+
+
+def _words_to_number(words: str) -> Optional[int]:
+    """Parse English number words (Indian scale) → int; None if unparseable."""
+    total = 0
+    current = 0
+    seen = False
+    for tok in re.split(r"[\s\-]+", (words or "").strip().lower()):
+        if not tok or tok == "and":
+            continue
+        if tok in _AMOUNT_WORD_ONES:
+            current += _AMOUNT_WORD_ONES[tok]
+            seen = True
+        elif tok in _AMOUNT_WORD_TENS:
+            current += _AMOUNT_WORD_TENS[tok]
+            seen = True
+        elif tok in _AMOUNT_WORD_SCALES:
+            scale = _AMOUNT_WORD_SCALES[tok]
+            if scale == 100:
+                current = max(current, 1) * scale
+            else:
+                total += max(current, 1) * scale
+                current = 0
+            seen = True
+        else:
+            return None
+    return (total + current) if seen else None
+
+
+def extract_amount_in_words(text: str) -> Optional[float]:
+    """Amount from the 'Rupees <words> Only' construction; None if absent."""
+    if not text:
+        return None
+    flat = " ".join(text.split())
+    m = re.search(r"rupees\s+([a-zA-Z\s\-]+?)\s+only\b", flat, re.IGNORECASE)
+    if not m:
+        return None
+    val = _words_to_number(m.group(1))
+    if val is None or not (0 < val <= 99999999):
+        return None
+    return float(val)
 
 
 def detect_glyph_collision(text: str) -> Optional[dict]:

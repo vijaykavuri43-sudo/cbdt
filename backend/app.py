@@ -1948,6 +1948,25 @@ def enrich_repair_twins(
         raise HTTPException(500, f"repair-twins failed: {e}")
 
 
+@app.post("/api/enrich/repair-grouping")
+def enrich_repair_grouping(
+    dry_run: int = Query(1, ge=0, le=1),
+    limit: int = Query(20000, ge=1, le=100000),
+    _=Depends(auth),
+):
+    """Repair persisted OCR-decoy amounts (bad-comma 10-100x inflation,
+    loan/postpaid ad picks, ref/RRN ids, scratch ids, VPA-digit runs).
+
+    dry_run=1 (default) scans and reports without writing. dry_run=0 nulls
+    decidable rows for Gemini re-adjudication and rebuilds their payment
+    rows + summaries. Undecidable rows are counted as need_reocr.
+    """
+    try:
+        return db.repair_malformed_amounts(dry_run=bool(dry_run), limit=limit)
+    except Exception as e:
+        raise HTTPException(500, f"repair-grouping failed: {e}")
+
+
 # ---------------- SSE live feed ----------------
 @app.get("/api/events")
 async def events(_=Depends(auth)):
