@@ -101,6 +101,42 @@ export function objectUrl(key: string, download = false, thumb = 0, format = '')
 export const CAN_PLAY_WEBM_OPUS: boolean =
   typeof Audio !== 'undefined' && new Audio().canPlayType('audio/webm; codecs="opus"') !== ''
 
+function _canPlay(mime: string): boolean {
+  try {
+    if (typeof Audio === 'undefined') return false
+    return new Audio().canPlayType(mime) !== ''
+  } catch {
+    return false
+  }
+}
+
+// Per-extension native-playability probe. AMR and 3GP have effectively no
+// native browser support, so they ALWAYS go through ?format=wav (ffmpeg on
+// the server) instead of rendering a dead 0:00 player. WebM/Opus/Ogg/M4A
+// are probed live so capable browsers keep the zero-latency native path.
+export function canPlayExtNative(ext: string): boolean {
+  const e = ext.toLowerCase()
+  if (e === '.amr' || e === '.3gp' || e === '.3g2') return false
+  if (e === '.wav') return _canPlay('audio/wav')
+  if (e === '.mp3') return _canPlay('audio/mpeg')
+  if (e === '.webm' || e === '.opus') return CAN_PLAY_WEBM_OPUS
+  if (e === '.ogg' || e === '.oga') return _canPlay('audio/ogg; codecs="opus"') || _canPlay('audio/ogg')
+  if (e === '.m4a' || e === '.mp4') return _canPlay('audio/mp4') || _canPlay('audio/x-m4a')
+  if (e === '.flac') return _canPlay('audio/flac')
+  return true
+}
+
+// Smart voice-note URL: transcoded WAV when the browser cannot decode the
+// native codec, direct stream otherwise (lowest latency). Cached per-format
+// on the server so the transcode happens once per clip.
+export function voiceSrc(key: string): string {
+  const base = key.split('/').pop() || ''
+  const i = base.lastIndexOf('.')
+  const ext = i >= 0 ? base.slice(i).toLowerCase() : ''
+  if (ext && !canPlayExtNative(ext)) return objectUrl(key, false, 0, 'wav')
+  return objectUrl(key)
+}
+
 export function eventsUrl(): string {
   const at = authParams()
   return `/api/events${at ? '?' + at : ''}`

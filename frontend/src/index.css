@@ -423,6 +423,9 @@ input[type="text"]::placeholder { color: var(--dim); }
 .ch-msg:hover .ch-time-gutter { opacity: 1; }
 /* Voice note the browser refused to decode: explicit fallback, not dead 0:00. */
 .ch-audio-err { border-color: var(--bad); }
+/* Lazy voice-note player (2026-09-12): min-height so rows don't jump when the
+   <audio> element mounts on scroll-into-view; wraps on narrow screens. */
+.vn-wrap { min-height: 44px; flex-wrap: wrap; }
 .ch-way { color: var(--accent); font-weight: 700; font-size: 12px; }
 .ch-sender.to { color: var(--accent); }
 .ch-avatar {

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, eventsUrl, objectUrl, post, CAN_PLAY_WEBM_OPUS, type ObjRow } from '../lib/api'
+import { api, eventsUrl, objectUrl, post, type ObjRow } from '../lib/api'
 import { extOf, fmtBytes, fmtTime } from '../lib/format'
 import { Preview } from '../components/Preview'
+import { VoiceNote } from '../components/VoiceNote'
 
 function parseParticipants(key: string): { from: string; to: string | null; fileLabel: string } {
   const base = key.split('/').pop() || ''
@@ -50,9 +51,6 @@ export function Chat() {
   const [preview, setPreview] = useState<ObjRow | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [liveCount, setLiveCount] = useState(0)
-  // Keys whose <audio> element fired onError (codec the browser can't decode,
-  // e.g. AMR, or a stale-cache wrong content-type) -> render download fallback.
-  const [audioErr, setAudioErr] = useState<Record<string, boolean>>({})
   // Keys whose thumbnail failed to load (object still landing in the mirror,
   // deleted upstream, etc.) -> show an explicit note instead of broken-img.
   const [imgErr, setImgErr] = useState<Record<string, boolean>>({})
@@ -186,20 +184,7 @@ export function Chat() {
                           onError={() => setImgErr((m) => (m[o.key] ? m : { ...m, [o.key]: true }))} />
                       )
                     ) : isVoice ? (
-                      audioErr[o.key] ? (
-                        <div className="ch-audio-wrap ch-audio-err">
-                          <span style={{ fontSize: 12 }}>⚠</span>
-                          <span className="tiny dim">browser can't preview this clip</span>
-                          <a className="btn" style={{ padding: '2px 8px', fontSize: 11, height: 24 }} href={objectUrl(o.key, true)} download title="Download with evidence hash">⛨ Download</a>
-                        </div>
-                      ) : (
-                        <div className="ch-audio-wrap">
-                          <span style={{ fontSize: 14 }}>🎙️</span>
-                          <audio controls src={!CAN_PLAY_WEBM_OPUS && ['.wav', '.webm', '.opus'].includes(extOf(o.key)) ? objectUrl(o.key, false, 0, 'wav') : objectUrl(o.key)} className="ch-audio" preload="metadata"
-                            onError={() => setAudioErr((m) => (m[o.key] ? m : { ...m, [o.key]: true }))} />
-                          <span className="tiny dim mono">{fmtBytes(o.size)}</span>
-                        </div>
-                      )
+                      <VoiceNote objKey={o.key} size={o.size} />
                     ) : (
                       <a onClick={() => setPreview(o)} style={{ color: 'var(--accent)', cursor: 'pointer', fontSize: 12 }}>
                         Open file ({fmtBytes(o.size)})

@@ -3,6 +3,7 @@ import { api, eventsUrl, objectUrl } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { fileColor, fileIcon, fmtBytes, fmtTime, kindOf } from '../lib/format'
 import { Preview } from '../components/Preview'
+import { VoiceNote } from '../components/VoiceNote'
 
 interface FeedEvt {
   type: string
@@ -261,7 +262,7 @@ function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen
       )}
       {kind === 'audio' && (
         <div className="lf-audio-wrap">
-          <audio className="lf-audio" controls preload="metadata" src={objectUrl(evt.key)} />
+          <VoiceNote objKey={evt.key} size={evt.size} compact />
         </div>
       )}
       {kind !== 'image' && kind !== 'audio' && (

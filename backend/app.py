@@ -1107,14 +1107,16 @@ def _range_response(body: bytes, media: str, base_headers: dict, range_header: s
 
 
 def _transcode_wav(data: bytes) -> bytes | None:
-    """Transcode Opus-in-WebM bytes to WAV (Safari voice-note fix).
+    """Transcode voice-note bytes to WAV (universal voice-note fix).
 
-    WhatsApp voice notes are Opus-in-WebM misnamed .wav; the backend
-    correctly serves audio/webm, but Safari cannot decode WebM/Opus, so
-    officers on iPhones see 'browser can't preview this clip'. A mono
-    16kHz WAV plays everywhere. Small clips transcode in ~ms; the
-    result flows through the normal disk cache. Returns None when
-    ffmpeg is missing or the transcode fails (caller serves original).
+    WhatsApp voice notes arrive as Opus-in-WebM misnamed .wav, AMR, 3GP,
+    raw Opus/Ogg, or M4A — none of which plays everywhere (Safari cannot
+    decode WebM/Opus or AMR; many desktop browsers cannot decode AMR/3GP).
+    An officer pressing play on such a clip used to see 0:00 forever.
+    A mono 16kHz WAV plays everywhere. Small clips transcode in ~ms; the
+    result flows through the normal disk cache (keyed per ?format=wav so a
+    transcode never poisons plain requests). Returns None when ffmpeg is
+    missing or the transcode fails (caller serves original).
     """
     import shutil
     import subprocess
@@ -1149,6 +1151,27 @@ def _transcode_wav(data: bytes) -> bytes | None:
         return None
     except Exception:
         return None
+
+
+# Media types that NO browser plays reliably as voice notes (WebM/Opus on
+# Safari, AMR/3GP almost everywhere, raw Ogg/Opus + M4A on older stacks).
+# Served natively where possible for zero latency, transcoded to WAV via
+# ?format=wav on demand. Genuine RIFF WAV and MP3 play everywhere natively
+# and skip the transcode untouched. Voice-note 0:00/delay fix 2026-09-12.
+_NEEDS_WAV_TRANSCODE = frozenset(
+    {
+        "audio/webm",
+        "audio/amr",
+        "audio/3gpp",
+        "video/3gpp",
+        "audio/ogg",
+        "audio/opus",
+        "audio/mp4",
+        "audio/x-m4a",
+        "audio/aac",
+        "audio/flac",
+    }
+)
 
 
 def _serve_cached(
@@ -1227,8 +1250,15 @@ def _sniff_media(head: bytes) -> str | None:
         return "video/x-msvideo"
     if len(head) >= 12 and head[4:8] == b"ftyp":
         brand = head[8:12]
-        if brand in (b"M4A ", b"mp42", b"isom", b"msf1"):
+        if brand in (b"M4A ", b"mp42", b"isom", b"msf1", b"M4B ", b"heix"):
             return "audio/mp4"
+        if brand[:3] in (b"3gp", b"3g2", b"3ge", b"3gs"):
+            # WhatsApp-era .3gp / .amr-mode voice notes: browsers (esp.
+            # Safari/Chrome) cannot decode these reliably -> transcode path.
+            # Voice-note delay/0:00 fix 2026-09-12: sniff must name them so
+            # the ?format=wav transcode triggers instead of serving a
+            # natively-unplayable stream the <audio> tag shows as 0:00.
+            return "audio/3gpp"
         return "video/mp4"
     if head[:3] == b"ID3" or (
         len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0
@@ -1333,7 +1363,7 @@ def get_object(
     request: Request,
     download: int = 0,
     thumb: int = Query(0, ge=0, le=1024),
-    format: str = Query("", pattern="^(|wav)$"),
+    format: str = Query("", pattern="^(|wav|mp3)$"),
     _=Depends(auth),
 ):
     global _objcache_writes
@@ -1553,9 +1583,14 @@ def get_object(
         # bytes in hand: magic wins over any stored/ext guess (fixes QR-as-text)
         out_media = _sniff_media(data[:32]) or media
         body = data
-        if format == "wav" and out_media == "audio/webm" and not integrity_reason:
-            # Safari can't decode WebM/Opus: serve a transcoded WAV instead.
-            # Genuine RIFF WAVs (out_media audio/wav) skip this untouched.
+        if (
+            format == "wav"
+            and out_media in _NEEDS_WAV_TRANSCODE
+            and not integrity_reason
+        ):
+            # Browser can't decode this codec natively (WebM/Opus on Safari,
+            # AMR/3GP almost everywhere): serve a transcoded WAV instead.
+            # Genuine RIFF WAVs + MP3 (audio/wav, audio/mpeg) skip this untouched.
             wav = _transcode_wav(data)
             if wav is not None:
                 body = wav

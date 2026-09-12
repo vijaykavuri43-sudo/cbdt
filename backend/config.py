@@ -225,7 +225,18 @@ HOT_PREFIXES = [
 QR_PREFIXES = ("bankingqr/", "qrcode/", "payment/", "paymentgateway/")
 OCR_PREFIXES = ("deposit/", "withdrawal/")
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
-AUDIO_EXTS = {".wav", ".mp3", ".ogg", ".amr"}
+AUDIO_EXTS = {
+    ".wav",
+    ".mp3",
+    ".ogg",
+    ".amr",
+    ".m4a",
+    ".opus",
+    ".webm",
+    ".3gp",
+    ".flac",
+    ".oga",
+}
 TEXT_EXTS = {".txt", ".json", ".csv", ".xml", ".log", ".md", ".html", ".js", ".css"}
 
 DEFAULT_PREFIXES = [

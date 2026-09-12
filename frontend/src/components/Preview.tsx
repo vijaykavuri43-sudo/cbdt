@@ -1,8 +1,9 @@
 import { useEffect, useState, type CSSProperties } from 'react'
-import { api, objectUrl, CAN_PLAY_WEBM_OPUS, type ExtractPayload, type ObjRow } from '../lib/api'
+import { api, objectUrl, type ExtractPayload, type ObjRow } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { extOf, fmtBytes, fmtTime, kindOf, shortKey } from '../lib/format'
 import { SheetViewer } from './SheetViewer'
+import { VoiceNote } from './VoiceNote'
 
 const SHEET_EXTS = new Set(['.csv', '.xlsx', '.xls'])
 
@@ -239,14 +240,9 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
                 />
               )
             ) : kind === 'audio' ? (
-              mediaErr ? (
-                <div style={{ textAlign: 'center', padding: '32px 16px', width: '100%' }}>
-                  <div className="small" style={{ marginBottom: 12 }}>browser can't preview this clip</div>
-                  <a className="btn btn-primary" href={objectUrl(obj.key, true)} download>⛨ Download</a>
-                </div>
-              ) : (
-                <audio controls preload="metadata" src={CAN_PLAY_WEBM_OPUS ? objectUrl(obj.key) : objectUrl(obj.key, false, 0, 'wav')} style={{ width: '100%' }} onError={() => setMediaErr(true)} />
-              )
+              <div style={{ width: '100%' }}>
+                <VoiceNote objKey={obj.key} size={obj.size} />
+              </div>
             ) : kind === 'video' ? (
               mediaErr ? (
                 <div style={{ textAlign: 'center', padding: '32px 16px', width: '100%' }}>
