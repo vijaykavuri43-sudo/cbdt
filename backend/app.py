@@ -2342,51 +2342,31 @@ _WALLET_EXPORT_COLUMNS = (
 
 @app.get("/api/export/wallets")
 def export_wallets(_=Depends(auth)):
-    """Full crypto-wallet exhibit (ALL rows): live-extracted addresses plus the
-    known-operator master list, each with source + absolute dashboard link.
+    """Full crypto-wallet exhibit (ALL rows): every address decoded from a live
+    bucket image, each with its exact source file + absolute dashboard link.
+    No external reference lists — Origin is always an S3 bucket object.
     Opens in Excel."""
 
     def build():
-        from .evidence import load_master_wallet_rows
-
-        master = downloads_wallet_master()
-        master_rel = config.MASTER_WALLET_CSV.name
         rows = []
         for it in db.wallet_feed(10**9):
             addr = it.get("address") or ""
-            known = bool(addr and addr.lower() in master)
             key = it.get("key") or ""
+            role = it.get("role") or ""
             rows.append(
                 {
                     "address": addr,
                     "network": it.get("network") or "",
-                    "label": "known_operator" if known else "",
+                    "label": it.get("standard") or (f"role:{role}" if role else ""),
                     "confidence": it.get("confidence") or "",
-                    "status": "known_operator" if known else "NEW",
+                    "status": "EXTRACTED",
                     "source_file": key,
                     "qr_uploaded_utc": it.get("last_modified") or "",
                     "seen_utc": it.get("seen_utc") or "",
                     "dashboard_source_link": _source_link(key) if key else "",
                     "case": config.CASE_ID,
                     "auth_ref": config.AUTH_REF,
-                    "fact_type": "fact" if known else "ai_lead",
-                }
-            )
-        for m in load_master_wallet_rows():
-            rows.append(
-                {
-                    "address": m.get("address") or "",
-                    "network": m.get("network") or "",
-                    "label": m.get("label") or "",
-                    "confidence": m.get("confidence") or "",
-                    "status": "known_operator_master",
-                    "source_file": master_rel,
-                    "qr_uploaded_utc": "",
-                    "seen_utc": "",
-                    "dashboard_source_link": "",
-                    "case": m.get("case_ids") or config.CASE_ID,
-                    "auth_ref": config.AUTH_REF,
-                    "fact_type": m.get("fact_type") or "fact",
+                    "fact_type": "ai_lead",
                 }
             )
         return rows
@@ -2663,26 +2643,12 @@ def wallets_full_scan_status(_=Depends(auth)):
 
 @app.get("/api/wallets")
 def wallets_api(limit: int = Query(300, le=2000), _=Depends(auth)):
-    """Live crypto-wallet feed: TRON/ERC20/BTC addresses extracted from QRs,
-    deposit slips and crypto chat screenshots; cross-checked against the LE
-    submission master (17-CRYPTO-WALLETS.csv) — known operator wallets badged."""
-    master = downloads_wallet_master()
+    """Crypto-wallet exhibit, bucket-native: every row is one TRON/ERC20/BTC
+    address decoded from a QR / deposit-slip / crypto chat image in the live
+    GCS bucket. Each item carries its exact source object key, so every row
+    in the Crypto tab has view-proof. No external reference lists."""
     items = db.wallet_feed(limit)
     stats = db.wallet_stats()
-    for it in items:
-        addr = (it.get("address") or "").lower()
-        it["known_operator"] = bool(addr and addr in master)
-    new = [i for i in items if not i.get("known_operator")]
-    # mastering: include provenance rows so dashboard stays useful even when
-    # live extraction has not yet drained the 1M+ backlog (hits currently nil).
-    try:
-        from .evidence import load_master_wallet_rows
-
-        master_rows = load_master_wallet_rows()
-        master_rel = config.MASTER_WALLET_CSV.name
-    except Exception:
-        master_rows = []
-        master_rel = "LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv"
     # Source stats for officer: enrichment backlog explains nil hits.
     try:
         enr = db.enrichment_progress()
@@ -2695,23 +2661,13 @@ def wallets_api(limit: int = Query(300, le=2000), _=Depends(auth)):
     except Exception:
         extraction_status = {}
     return {
-        "master_size": len(master),
-        "master_rows": master_rows,
-        "master_source": master_rel,
         "items": items,
-        "new_not_in_master": len(new),
         "wallet_hits_total": stats["wallet_hits"],
         "distinct_wallets": stats["distinct_wallets"],
         "by_network": stats["by_network"],
         "extraction_status": extraction_status,
         "source": str(config.SOURCE_ID),
     }
-
-
-def downloads_wallet_master() -> set[str]:
-    from .evidence import load_master_wallets
-
-    return load_master_wallets()
 
 
 # ---------------- downloads / evidence ----------------

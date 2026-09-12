@@ -3,6 +3,9 @@ import { api, eventsUrl, exportWalletsUrl, objectUrl, post, tabHidden } from '..
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { fmtMoney } from '../lib/format'
 
+// Every row is one address decoded from a live bucket image (QR / slip /
+// crypto chat screenshot). Origin is ALWAYS the exact S3 bucket object key —
+// so every row has view proof. No external reference lists.
 interface WalletRow {
   key: string
   last_modified: string
@@ -18,26 +21,10 @@ interface WalletRow {
   amount_value?: number | null
   amount_currency?: string | null
   txids?: string[] | string | null
-  known_operator?: boolean
   kind?: string | null
 }
-interface MasterWalletRow {
-  entity_id: string
-  network: string
-  address: string
-  address_lower: string
-  label: string
-  case_ids: string
-  confidence: string
-  fact_type: string
-  notes: string
-}
 interface WalletsResp {
-  master_size: number
-  master_rows: MasterWalletRow[]
-  master_source: string
   items: WalletRow[]
-  new_not_in_master: number
   wallet_hits_total: number
   distinct_wallets: number
   by_network: { network: string; count: number }[]
@@ -63,7 +50,6 @@ interface FullScanStatus {
 export function Wallets() {
   const [data, setData] = useState<WalletsResp | null>(null)
   const [scan, setScan] = useState<FullScanStatus | null>(null)
-  const [onlyNew, setOnlyNew] = useState(false)
 
   const refresh = useCallback(() => {
     api<WalletsResp>('/api/wallets', { limit: 1000 }).then(setData).catch(() => {})
@@ -105,50 +91,33 @@ export function Wallets() {
     }
   }
 
-  const liveItems = (data?.items ?? []).filter((i) => (onlyNew ? !i.known_operator : true))
-  // Single merged table: authoritative master rows first (badged), then live hits.
-  const merged = [
-    ...((onlyNew ? [] : (data?.master_rows ?? [])).map((r: any) => ({
-      _src: 'master' as const,
-      key: 'master:' + r.address,
-      address: r.address,
-      network: r.network,
-      label: r.label || '',
-      caseIds: r.case_ids || '',
-      detail: r.notes || '',
-      status: `${r.confidence ?? ''} · ${r.fact_type ?? ''}`.replace(/^ · | · $/g, '') || 'master',
-      txids: null as any,
-      last_modified: '',
-    }))),
-    ...liveItems.map((r: any) => ({ ...r, _src: 'live' as const })),
-  ]
+  // Rows missing a bucket key carry no proof — keep them out of the exhibit.
+  const rows = (data?.items ?? []).filter((i) => (i.key || '').trim() !== '')
 
   function exportMergedCsv() {
-    // One officer download: every row in the merged table (master + live).
+    // One officer download: every row in the table below with exact source.
     const q = (v: any) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
-    const header = 'Address,Network,Label,Origin,Detail,Status,Case,Arkham,Tronscan\n'
-    const rows = merged
+    const header = 'Address,Network,Label,Origin,Detail,Status,Arkham,Tronscan\n'
+    const body = rows
       .map((r: any) => {
-        const origin = r._src === 'master' ? (data?.master_source ?? 'LE-master') : r.key
-        const detail = r._src === 'master' ? r.detail : (r.amount_value ?? r.amount_inr ?? '')
-        const status = r._src === 'master' ? ('master · ' + r.status) : (r.known_operator ? 'known-operator' : 'NEW')
         return [
-          q(r.address), q(r.network), q(r.label || r.standard || ''),
-          q(origin), q(detail), q(status), q(r.caseIds || ''),
+          q(r.address), q(r.network), q(r.standard || ''),
+          q(r.key || ''), q(r.amount_value ?? r.amount_inr ?? ''),
+          q(r.confidence || 'EXTRACTED'),
           q(r.address ? arkhamAddressUrl(r.address) : ''),
           q(bestTronscanUrl(r.address, r.txids) ?? ''),
         ].join(',')
       })
       .join('\n')
-    const blob = new Blob([header + rows], { type: 'text/csv' })
+    const blob = new Blob([header + body], { type: 'text/csv' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `crypto-wallets-merged-${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `crypto-wallets-${new Date().toISOString().slice(0, 10)}.csv`
     a.click()
   }
   function exportFullCsv() {
-    // Full officer exhibit: ALL live wallets + known-operator master with
-    // source file + dashboard link per row — server streams CSV (Excel-ready)
+    // Full officer exhibit: every wallet with exact source file + dashboard
+    // link per row — server streams CSV (Excel-ready)
     const a = document.createElement('a')
     a.href = exportWalletsUrl()
     a.download = `crypto-wallets-full-${new Date().toISOString().slice(0, 10)}.csv`
@@ -163,16 +132,15 @@ export function Wallets() {
           <div>
             <h1 className="pg-header-title">Crypto Wallets</h1>
             <div className="pg-header-sub">
-              Live source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}</span> · TRON / EVM / BTC from QR · slips · all chat_file images (full-scan) · vs{' '}
-              {(data?.master_size ?? 0).toLocaleString()} known operator (merged below) · master: <span className="mono">{data?.master_source ?? 'LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv'}</span>
+              Source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}</span> · TRON / EVM / BTC decoded from QR · slips · all chat_file images (full-scan) · every row = one bucket object with view proof
             </div>
           </div>
         </div>
         <div className="pg-header-right">
           <button className="btn" onClick={refresh} style={{ fontSize: 11, marginRight: 8 }}>↻ Refresh</button>
           <button className="btn" onClick={startFullScan} style={{ fontSize: 11, marginRight: 8, borderColor: scan?.running ? 'var(--accent)' : undefined, opacity: scan?.running ? 0.6 : 1 }} disabled={!!scan?.running}>{scan?.running ? `⏳ scanning ${scan.scanned.toLocaleString()}` : '◉ Full wallet scan (GCS)'}</button>
-          <button className="btn" onClick={exportFullCsv} title="Full wallet list (live + master) with source file + dashboard link per row — officer exhibit, opens in Excel" style={{ fontSize: 11, marginRight: 8 }}>⬇ Export FULL CSV (LE)</button>
-          <button className="btn" onClick={exportMergedCsv} title="Every row in the table below (master + live) as one CSV — opens in Excel" style={{ fontSize: 11 }}>⬇ Export table CSV ({merged.length})</button>
+          <button className="btn" onClick={exportFullCsv} title="Full wallet list with exact source file + dashboard link per row — officer exhibit, opens in Excel" style={{ fontSize: 11, marginRight: 8 }}>⬇ Export FULL CSV</button>
+          <button className="btn" onClick={exportMergedCsv} title="Every row in the table below as one CSV — opens in Excel" style={{ fontSize: 11 }}>⬇ Export table CSV ({rows.length})</button>
         </div>
       </div>
 
@@ -191,19 +159,14 @@ export function Wallets() {
 
       <div className="st-cards" style={{ marginBottom: 14 }}>
         <div className="st-card st-card-accent">
-          <div className="st-card-label">Wallets in table (master + live)</div>
-          <div className="st-card-value accent">{merged.length.toLocaleString()}</div>
-          <div className="st-card-sub">total hits {data?.wallet_hits_total ?? 0} · distinct {data?.distinct_wallets ?? 0} · every hit = live object</div>
-        </div>
-        <div className="st-card st-card-warn">
-          <div className="st-card-label">NEW — not in master</div>
-          <div className="st-card-value warn">{(data?.new_not_in_master ?? 0).toLocaleString()}</div>
-          <div className="st-card-sub">master is only badge — source is GCS files</div>
+          <div className="st-card-label">Wallet hits (bucket-decoded)</div>
+          <div className="st-card-value accent">{(data?.wallet_hits_total ?? rows.length).toLocaleString()}</div>
+          <div className="st-card-sub">distinct addresses {data?.distinct_wallets ?? 0} · every hit = live bucket object</div>
         </div>
         <div className="st-card">
-          <div className="st-card-label">Master (badge only)</div>
-          <div className="st-card-value">{(data?.master_size ?? 0).toLocaleString()}</div>
-          <div className="st-card-sub">from {data?.master_source ?? '17-CRYPTO-WALLETS.csv'} · merged in the table below</div>
+          <div className="st-card-label">Distinct addresses</div>
+          <div className="st-card-value">{(data?.distinct_wallets ?? 0).toLocaleString()}</div>
+          <div className="st-card-sub">each with exact source file + view proof</div>
         </div>
         <div className="st-card">
           <div className="st-card-label">GCS Enrichment (live source)</div>
@@ -225,12 +188,7 @@ export function Wallets() {
 
       <div className="lf-controls">
         <div className="lf-controls-left">
-          <button className={`ex-toggle ${!onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(false)}>
-            All · {merged.length}
-          </button>
-          <button className={`ex-toggle ${onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(true)}>
-            ⚠ NEW only · {data?.new_not_in_master ?? 0}
-          </button>
+          <span className="small dim">All rows: bucket-decoded wallets — exact source file + view proof + Arkham + Tronscan.</span>
         </div>
         <span className="small dim">Live hits: QR/slip/chat extraction; nil right now is backlog — {data?.extraction_status?.pending?.toLocaleString() ?? '—'} pending enrich.</span>
       </div>
@@ -249,31 +207,24 @@ export function Wallets() {
             </tr>
           </thead>
           <tbody>
-            {merged.map((r: any) => (
-              <tr key={r.key + (r.address ?? '')} style={r._src === 'master' ? { background: 'rgba(46,184,126,0.05)' } : undefined}>
-                <td className="mono" style={{ fontWeight: r.known_operator || r._src === 'master' ? 400 : 700, wordBreak: 'break-all' }}>{r.address}{r.checksum === 'invalid' && <span title="On-chain checksum failed — OCR-degraded read, treat as unverified"> ⚠</span>}</td>
+            {rows.map((r: any) => (
+              <tr key={r.key + (r.address ?? '')}>
+                <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>{r.address}{r.checksum === 'invalid' && <span title="On-chain checksum failed — OCR-degraded read, treat as unverified"> ⚠</span>}</td>
                 <td>{r.network ?? '—'}</td>
-                <td className="small">{r._src === 'master' ? (r.label || '—') : (r.standard ?? '—')}</td>
-                <td className="small dim mono" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r._src === 'master' ? (data?.master_source ?? 'LE-master') : r.key}>
-                  {r._src === 'master' ? <span className="ex-badge" style={{ borderColor: 'var(--accent2)', color: 'var(--accent2)' }} title={data?.master_source ?? ''}>LE master</span> : (r.key ?? '').split('/').pop()}
-                  {r._src === 'master' && r.caseIds ? <span className="small dim mono" style={{ marginLeft: 6 }}>{r.caseIds}</span> : null}
+                <td className="small">{r.standard ?? '—'}</td>
+                <td className="small dim mono" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key || ''}>
+                  {(r.key ?? '').split('/').pop()}
                 </td>
-                <td className="small dim" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r._src === 'master' ? (r.detail || '') : (r.role === 'sender' ? 'From · sender' : r.role === 'beneficiary' ? 'To · recipient' : '')}>
-                  {r._src === 'master' ? (r.detail || '—') : fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency ?? (r.amount_inr != null ? 'INR' : null))}
+                <td className="small dim" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.role === 'sender' ? 'From · sender' : r.role === 'beneficiary' ? 'To · recipient' : ''}>
+                  {fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency ?? (r.amount_inr != null ? 'INR' : null))}
                 </td>
                 <td>
-                  {r._src === 'master' ? (
-                    <span className="ex-badge" style={{ borderColor: 'var(--accent2)', color: 'var(--accent2)' }} title="Authoritative LE submission list — used for all cross-checks">{r.status}</span>
-                  ) : r.known_operator ? (
-                    <span className="ex-badge" style={{ borderColor: 'var(--accent2)', color: 'var(--accent2)' }}>known operator</span>
-                  ) : (
-                    <span className="ex-badge ex-badge-new">NEW</span>
-                  )}
+                  <span className="ex-badge" title="Extraction confidence from the bucket image">{r.confidence || 'EXTRACTED'}{r.ocr_recovered ? ' · OCR' : ''}</span>
                 </td>
-                <td style={{ whiteSpace: 'nowrap' }}>{r._src === 'live' && <><a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view proof</a>{' · '}</>}{r.address && <><a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(r.address, r.txids) ?? '#'} target="_blank" rel="noreferrer" className="small">{tronscanLabel(r.txids)}</a></>}</td>
+                <td style={{ whiteSpace: 'nowrap' }}><a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view proof</a>{' · '}{r.address && <><a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(r.address, r.txids) ?? '#'} target="_blank" rel="noreferrer" className="small">{tronscanLabel(r.txids)}</a></>}</td>
               </tr>
             ))}
-            {merged.length === 0 && (
+            {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="dp-empty">
                   <div className="dp-empty-icon">₿</div>
