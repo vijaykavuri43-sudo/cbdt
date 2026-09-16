@@ -43,11 +43,11 @@ export function Cashflow() {
         <div className="st-card st-card-warn"><div className="st-card-label">Net retained</div><div className="st-card-value warn money">{fmtINR(cashIn - cashOut)}</div><div className="tiny dim">request queue adds {fmtINR(reqIn)} ({(get('DepositRequest')?.txns ?? 0).toLocaleString()} rows)</div></div>
       </div>
       <section className="money-section"><div className="money-section-head"><strong>Daily cash (by export date)</strong></div>
-        <div className="dp-table-wrap"><table className="dp-table"><thead><tr><th>Day (UTC)</th><th className="num">Files</th><th className="num">Cash in</th><th className="num">Cash out</th><th className="num">Net</th></tr></thead>
+        <div className="dp-table-wrap"><table className="dp-table"><colgroup><col style={{ width: 140 }} /><col style={{ width: 90 }} /><col style={{ width: 170 }} /><col style={{ width: 170 }} /><col style={{ width: 170 }} /></colgroup><thead><tr><th scope="col">Day (UTC)</th><th scope="col" className="num">Files</th><th scope="col" className="num">Cash in</th><th scope="col" className="num">Cash out</th><th scope="col" className="num">Net</th></tr></thead>
           <tbody>{(data?.by_day ?? []).map((r) => <tr key={r.day}><td className="mono">{r.day}</td><td className="num">{r.files}</td><td className="num money">{fmtINR(r.cash_in)}</td><td className="num money">{fmtINR(r.cash_out)}</td><td className="num money">{fmtINR(r.cash_in - r.cash_out)}</td></tr>)}</tbody></table></div>
       </section>
       <section className="money-section"><div className="money-section-head"><strong>Top crediting branches (sender)</strong></div>
-        <div className="dp-table-wrap"><table className="dp-table"><thead><tr><th>Branch / sender</th><th className="num">Credits</th><th className="num">Cash</th></tr></thead>
+        <div className="dp-table-wrap"><table className="dp-table"><colgroup><col /><col style={{ width: 130 }} /><col style={{ width: 180 }} /></colgroup><thead><tr><th scope="col">Branch / sender</th><th scope="col" className="num">Credits</th><th scope="col" className="num">Cash</th></tr></thead>
           <tbody>{(data?.by_sender ?? []).map((r) => <tr key={r.sender}><td className="mono">{r.sender}</td><td className="num">{r.txns.toLocaleString()}</td><td className="num money">{fmtINR(r.cash)}</td></tr>)}</tbody></table></div>
       </section>
     </>
