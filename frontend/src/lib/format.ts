@@ -32,6 +32,30 @@ export function fmtTime(ts?: string | null): string {
   return ts.replace('T', ' ').replace('Z', '')
 }
 
+const IST_OFFSET_MS = 5.5 * 3600 * 1000
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** Backend timestamps are UTC (bucket last-modified = upload time).
+ *  Officers read slips in IST (phone screenshots show IST) — so primary
+ *  display is IST: "16 Sep 2026, 06:21 IST". 2026-09-16: a 6:20am GPay slip
+ *  showed "modified 2026-09-16 00:51:14" (UTC, unlabeled) and looked wrong —
+ *  00:51 UTC *is* 06:21 IST. Never show a bare UTC time again. */
+export function fmtIST(ts?: string | null): string {
+  if (!ts) return '—'
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return ts
+  const t = new Date(d.getTime() + IST_OFFSET_MS)
+  return `${t.getUTCDate()} ${MON[t.getUTCMonth()]} ${t.getUTCFullYear()}, ${pad2(t.getUTCHours())}:${pad2(t.getUTCMinutes())} IST`
+}
+
+/** Dual display for evidence headers: IST first (matches slip screenshots),
+ *  UTC in parens (matches bucket/API records). */
+export function fmtBoth(ts?: string | null): string {
+  if (!ts) return '—'
+  return `${fmtIST(ts)} (${fmtTime(ts)} UTC)`
+}
+
 export function shortKey(key: string, max = 64): string {
   if (key.length <= max) return key
   return key.slice(0, 24) + ' … ' + key.slice(-36)

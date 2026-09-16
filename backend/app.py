@@ -265,6 +265,22 @@ def startup():
 
     threading.Thread(target=_repair, daemon=True).start()
 
+    # 2026-09-16: prebuild the heavy officer aggregates in the background so
+    # the first tab open after a restart never pays the cold-cache inline
+    # build (ledger/gateway summaries scan ~660k rows — past the 25s frontend
+    # timeout — which rendered Cash Flow as a timeout error).
+    def _warm():
+        try:
+            from . import gateway, ledger
+
+            cached("ledger:summary", 300.0, ledger.summary)
+            cached("gateway:summary", 300.0, gateway.summary)
+            print("[warmup] ledger+gateway summaries prebuilt")
+        except Exception as e:
+            print(f"[warmup] summary prebuild failed: {e}")
+
+    threading.Thread(target=_warm, daemon=True, name="summary-warmup").start()
+
     if os.environ.get("S3LM_NO_AUTOSTART") != "1":
         collector.start_background()
 
@@ -2489,8 +2505,12 @@ def upis_api(
     """Paginated UPI tab (2026-09-11: newest-500 cap hid ~10k VPAs — the tab
     now pages through the full set; new_only filters server-side BEFORE
     limit/offset so pages stay full; hide_senders drops sender-only VPAs —
-    innocent gambler counterparties — from items AND totals, same place)."""
-    master = downloads_master()
+    innocent gambler counterparties — from items AND totals, same place.
+    2026-09-16: the two upi_counts aggregates (up to ~4 full-table scans over
+    ~1.5M rows) are cached 120s via singleflight+stale — an uncached tab load
+    exceeded the 25s frontend timeout and rendered as all-zeros. Items stay
+    live per request (one paged query); counts tolerate bounded staleness."""
+    master = cached("upis:master", 300.0, downloads_master)
     exclude = master if new_only else set()
     limit = max(1, min(limit, 2000))
     offset = max(0, offset)
@@ -2501,8 +2521,12 @@ def upis_api(
     for it in items:
         vpa = (it.get("vpa") or "").lower()
         it["known_mule"] = bool(vpa and vpa in master)
-    totals = db.upi_counts(
-        exclude, which="distinct" if distinct else "feed", hide_senders=hide_senders
+    totals = cached(
+        f"upis:counts:{'new' if new_only else 'all'}:{1 if distinct else 0}:{1 if hide_senders else 0}",
+        120.0,
+        lambda: db.upi_counts(
+            exclude, which="distinct" if distinct else "feed", hide_senders=hide_senders
+        ),
     )
     total = totals["distinct_total"] if distinct else totals["feed_total"]
     new_total = (
@@ -2510,8 +2534,14 @@ def upis_api(
         if new_only
         # Same view grain as the tab (distinct vs feed) — a feed-grist NEW
         # count beside a unique-VPA tab was a stale mismatch (2026-09-11).
-        else db.upi_counts(
-            master, which="distinct" if distinct else "feed", hide_senders=hide_senders
+        else cached(
+            f"upis:counts:new:{1 if distinct else 0}:{1 if hide_senders else 0}",
+            120.0,
+            lambda: db.upi_counts(
+                master,
+                which="distinct" if distinct else "feed",
+                hide_senders=hide_senders,
+            ),
         )["distinct_total" if distinct else "feed_total"]
     )
     return {
@@ -2739,6 +2769,47 @@ def evidence_log(tail: int = 50, _=Depends(auth)):
         "tail": [
             json.loads(x) for x in monitor_lines[-tail:] if x.strip().startswith("{")
         ]
+    }
+
+
+@app.get("/api/evidence/exhibit")
+def evidence_exhibit(_=Depends(auth)):
+    """One-click officer exhibit manifest (2026-09-16: the Evidence tab showed
+    only raw job rows + an event tail — no case framing, no export. This
+    returns the case header + custody coverage + download-job accounting so
+    the tab can render a prosecution-ready summary and a CSV export)."""
+    now = datetime.utcnow()
+    try:
+        lines = open(config.EVIDENCE_LOG, encoding="utf-8").read().splitlines()
+    except OSError:
+        lines = []
+    events = [x for x in lines if x.strip().startswith("{")]
+    kinds: dict[str, int] = {}
+    hashed = 0
+    for ln in events[-5000:]:
+        try:
+            e = json.loads(ln)
+        except Exception:
+            continue
+        kinds[str(e.get("event") or "unknown")] += 1
+        if e.get("artifact_sha256"):
+            hashed += 1
+    jobs = list(downloads.jobs.values())
+    return {
+        "fact_type": "fact",
+        "case_id": config.CASE_ID,
+        "authorization_ref": config.AUTH_REF,
+        "generated_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_ist": (now + timedelta(hours=5, minutes=30)).strftime(
+            "%d %b %Y, %H:%M IST"
+        ),
+        "custody_events_total": len(events),
+        "custody_events_by_type": kinds,
+        "artifacts_sha256": hashed,
+        "download_jobs": len(jobs),
+        "download_jobs_complete": sum(1 for j in jobs if j.get("status") == "complete"),
+        "objects_indexed": db.get_meta("objects_total") or 0,
+        "app_version": app.version,
     }
 
 

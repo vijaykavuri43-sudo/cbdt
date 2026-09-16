@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, eventsUrl, objectUrl } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
-import { fileColor, fileIcon, fmtBytes, fmtTime, kindOf } from '../lib/format'
+import { fileColor, fileIcon, fmtBoth, fmtBytes, fmtIST, kindOf } from '../lib/format'
 import { Preview } from '../components/Preview'
 import { VoiceNote } from '../components/VoiceNote'
 
@@ -313,10 +313,10 @@ function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen
         <div className="mono tiny dim" style={{ marginTop: 2, opacity: .6 }}>{prefix}</div>
         <div className="lf-meta">
           <span>{fmtBytes(evt.size)}</span>
-          <span title={evt.last_modified && evt.seen_utc ? `Original: ${fmtTime(evt.last_modified).slice(0, 16)} · In mirror since: ${fmtTime(evt.seen_utc).slice(0, 16)}` : ''}>
-            {fmtTime(evt.last_modified || evt.seen_utc).slice(0, 16)}
+          <span title={evt.last_modified && evt.seen_utc ? `Uploaded (bucket): ${fmtBoth(evt.last_modified)} · In mirror since: ${fmtBoth(evt.seen_utc)}` : ''}>
+            {fmtIST(evt.last_modified || evt.seen_utc)}
             {evt.last_modified && evt.seen_utc && evt.seen_utc.slice(0, 10) !== evt.last_modified.slice(0, 10) && (
-              <> · ⏫ {fmtTime(evt.seen_utc).slice(5, 16)}</>
+              <> · ⏫ {fmtIST(evt.seen_utc)}</>
             )}
           </span>
           <a onClick={onOpen}>inspect</a>

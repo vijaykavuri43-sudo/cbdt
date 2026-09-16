@@ -584,11 +584,26 @@ def detect_bad_grouping(num: str) -> bool:
 
 
 UTR_RE = re.compile(
-    r"\b(?:UTR|utr|Ref\.?(?: no)?|reference)\s*[:#\-]?\s*([A-Z0-9]{8,16})\b",
+    # 2026-09-16: GPay/PhonePe slips label it "UPI transaction ID" /
+    # "Transaction ID" (e.g. "UPI transaction ID 129679804197" on a
+    # ₹1,500 Union Bank deposit slip) — the old pattern only knew
+    # UTR/Ref/reference, so labeled UTRs fell through to the bare
+    # 12-digit fallback where the "bank account" guard killed them.
+    r"\b(?:UTR|utr|UPI\s*transaction\s*ID|transaction\s*ID|txn\s*(?:ID|no)|Ref\.?(?: no)?|reference)\s*[:#\-]?\s*([A-Z0-9]{8,16})\b",
     re.IGNORECASE,
 )
 # Strict 12-digit UTR fallback — but must not be an account/phone/aadhaar
 NUM12_RE = re.compile(r"\b(\d{12})\b")
+# UTR-label proximity: when a bare 12-digit number sits right after an
+# explicit UTR-ish label, it is the UTR even if an account/balance keyword
+# appears nearby ("...deposit of money to X's bank account | UPI transaction
+# ID 129679804197", verified 2026-09-16). Checked against the last ~30 chars
+# before the candidate so the label must be immediately adjacent.
+_UTR_LABEL_NEAR_RE = re.compile(
+    r"(?:\butr\b|upi\s*transaction\s*id|transaction\s*id|txn\s*(?:id|no)|"
+    r"\bref\b\.?|reference|\brrn\b)\s*[:#\-]?\s*$",
+    re.IGNORECASE,
+)
 # OCR confusable normalisation for digit strings (O→0, I/l→1) when flanked by digits
 _OCR_DIGIT_FIX = str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1", "|": "1"})
 _ACCOUNT_KEYWORDS_RE = re.compile(
@@ -2331,14 +2346,20 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
                 # Some banks emit alphanumeric UTR-like refs — keep as-is if labeled
                 utr_candidate = cand
         if not utr_candidate:
-            # Bare 12-digit fallback — skip if clearly an account/balance context
+            # Bare 12-digit fallback — skip if clearly an account/balance context.
+            # 2026-09-16: a UTR label in the immediate window ("UPI transaction
+            # ID 129679804197" sitting right after "...confirmed deposit of
+            # money to ...'s bank account") OVERRIDES the account-keyword guard —
+            # the specific label wins over the generic context word.
             for mn in NUM12_RE.finditer(text):
                 cand_digits = mn.group(1)
                 s, e = mn.start(), mn.end()
                 before = text[max(0, s - 40) : s].lower()
                 after = text[e : e + 20].lower()
                 # Skip if preceded by account/aadhaar/phone keywords
-                if _ACCOUNT_KEYWORDS_RE.search(before):
+                if _ACCOUNT_KEYWORDS_RE.search(
+                    before
+                ) and not _UTR_LABEL_NEAR_RE.search(before[-30:]):
                     continue
                 if "aadhaar" in before or "aadhar" in before:
                     continue

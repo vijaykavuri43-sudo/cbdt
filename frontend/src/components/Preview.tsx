@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { api, objectUrl, type ExtractPayload, type ObjRow } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
-import { extOf, fmtBytes, fmtTime, kindOf, shortKey } from '../lib/format'
+import { extOf, fmtBoth, fmtBytes, kindOf, shortKey } from '../lib/format'
 import { SheetViewer } from './SheetViewer'
 import { VoiceNote } from './VoiceNote'
 
@@ -97,8 +97,8 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
                 {copied === 'key' ? '✓ Copied' : 'Copy key'}
               </button>
             </div>
-            <div className="small dim">
-              {fmtBytes(obj.size)} · modified {fmtTime(obj.last_modified)} · {kind}
+            <div className="small dim" title="Bucket upload time (object last-modified) — IST matches the slip screenshot, UTC matches bucket/API records">
+              {fmtBytes(obj.size)} · uploaded {fmtBoth(obj.last_modified)} · {kind}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>

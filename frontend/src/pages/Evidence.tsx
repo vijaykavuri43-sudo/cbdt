@@ -12,12 +12,14 @@ interface LogEntry {
 export function Evidence() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [log, setLog] = useState<LogEntry[]>([])
+  const [exhibit, setExhibit] = useState<any>(null)
   const [keysText, setKeysText] = useState('')
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(() => {
     api<any>('/api/download/jobs').then((d) => setJobs(d.jobs ?? [])).catch(() => {})
     api<any>('/api/evidence/log', { tail: 30 }).then((d) => setLog(d.tail ?? [])).catch(() => {})
+    api<any>('/api/evidence/exhibit').then(setExhibit).catch(() => {})
   }, [])
   useEffect(refresh, [refresh])
   useEffect(() => { const t = setInterval(() => { if (!tabHidden()) refresh() }, 3000); return () => clearInterval(t) }, [refresh])
@@ -34,6 +36,22 @@ export function Evidence() {
   const activeJobs = jobs.filter((j) => j.status !== 'complete')
   const doneJobs = jobs.filter((j) => j.status === 'complete')
 
+  function downloadCustodyCsv() {
+    // Officer exhibit: the chain-of-custody tail as an Excel-ready CSV.
+    api<any>('/api/evidence/log', { tail: 2000 }).then((d) => {
+      const rows: LogEntry[] = d.tail ?? []
+      const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`
+      const csv = ['utc,event,source_key,artifact_path,artifact_sha256']
+        .concat(rows.map((e) => [e.utc, e.event, e.source_key ?? '', e.artifact_path ?? '', e.artifact_sha256 ?? ''].map(esc).join(',')))
+        .join('\n')
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+      a.download = `chain-of-custody-${new Date().toISOString().slice(0, 10)}.csv`
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+    }).catch((e) => alert(String(e)))
+  }
+
   return (
     <>
       <div className="pg-header">
@@ -44,7 +62,28 @@ export function Evidence() {
             <div className="pg-header-sub">Every fetch is sha256-hashed with case authorization reference</div>
           </div>
         </div>
+        <div className="pg-header-right">
+          <button className="btn" onClick={downloadCustodyCsv} title="Chain-of-custody log as CSV — officer exhibit, opens in Excel" style={{ fontSize: 11 }}>⬇ Custody log CSV</button>
+        </div>
       </div>
+
+      {/* Case exhibit manifest — what this tab is FOR: prosecution-ready framing */}
+      {exhibit && (
+        <div className="st-panel">
+          <div className="st-panel-head">
+            <span className="st-panel-title">Case exhibit manifest</span>
+            <span className="small dim">generated {exhibit.generated_ist} ({exhibit.generated_utc})</span>
+          </div>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12 }}>
+            <span><span className="tiny dim">CASE </span><b className="mono">{exhibit.case_id}</b></span>
+            <span><span className="tiny dim">AUTH </span><b className="mono">{exhibit.authorization_ref}</b></span>
+            <span><span className="tiny dim">CUSTODY EVENTS </span><b>{(exhibit.custody_events_total ?? 0).toLocaleString()}</b></span>
+            <span><span className="tiny dim">SHA256 ARTIFACTS </span><b>{(exhibit.artifacts_sha256 ?? 0).toLocaleString()}</b></span>
+            <span><span className="tiny dim">DOWNLOADS </span><b>{exhibit.download_jobs_complete}/{exhibit.download_jobs} complete</b></span>
+            <span><span className="tiny dim">OBJECTS </span><b>{(exhibit.objects_indexed ?? 0).toLocaleString()}</b></span>
+          </div>
+        </div>
+      )}
 
       {/* Queue input */}
       <div className="st-panel">

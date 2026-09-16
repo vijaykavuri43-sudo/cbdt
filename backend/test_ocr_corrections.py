@@ -15,8 +15,12 @@ os.environ["S3LM_DATA"] = _tmp.name
 os.environ["S3LM_REFERENCE_ROOT"] = str(Path(_tmp.name) / "no-references")
 
 from .enrich import (  # noqa: E402
+    _ACCOUNT_KEYWORDS_RE,
+    _UTR_LABEL_NEAR_RE,
     _collect_amount_candidates,
     _scan_amount_matches,
+    NUM12_RE,
+    UTR_RE,
     detect_twin_artifact,
     extract_amount,
     extract_bank_accounts,
@@ -318,6 +322,51 @@ class Round2AmountGuardTests(unittest.TestCase):
                 self.assertTrue(
                     key.startswith("withdrawal/") or key.startswith("deposit/")
                 )
+
+
+class UpiTransactionIdUtrTests(unittest.TestCase):
+    """2026-09-16 officer slip deposit/1789519873770.jpg (₹1,500, 6:20am).
+
+    Tesseract text carries 'UPI transaction ID 129679804197' right after
+    "...deposit of money to THAKOR KIRABHAI DINESHBHAI's bank account".
+    The old UTR_RE knew only UTR/Ref/reference, and the bare-12-digit
+    fallback's account-guard killed the number because of 'bank account' —
+    so utr came out null and the slip could not join to ledger rows.
+    """
+
+    SLIP = (
+        "To THAKOR KIRABHAI DINESHBHAI 1,500 Completed 16 Sept 2026, 6:20am "
+        "Union Bank of India 5547 Payment of 21,500 completed Receiver bank "
+        "has confirmed deposit of money to THAKOR KIRABHAI DINESHBHAI bank "
+        "account UPI transaction ID 129679804197 To: THAKOR KIRABHAI "
+        "DINESHBHAI 0901@okbizaxis From: KOTHAPALLI RAVITEJA"
+    )
+
+    def test_labeled_upi_transaction_id_matches(self):
+        m = UTR_RE.search(self.SLIP)
+        self.assertIsNotNone(m)
+        assert m is not None
+        self.assertEqual(m.group(1), "129679804197")
+
+    def test_account_guard_yields_to_adjacent_utr_label(self):
+        m = NUM12_RE.search(self.SLIP)
+        self.assertIsNotNone(m)
+        assert m is not None
+        before = self.SLIP[max(0, m.start() - 40) : m.start()].lower()
+        # The guard WOULD fire on 'bank account' ...
+        self.assertTrue(bool(_ACCOUNT_KEYWORDS_RE.search(before)))
+        # ... but the adjacent label overrides it, so the digit run is kept.
+        self.assertTrue(bool(_UTR_LABEL_NEAR_RE.search(before[-30:])))
+        self.assertEqual(m.group(1), "129679804197")
+
+    def test_long_alphanumeric_gateway_txn_id_not_a_utr(self):
+        # PhonePe 'Transaction ID T2609160800210373921631' (22 chars) must
+        # not match the 8–16 capture — gateway order ids are not UTRs.
+        text = "Transaction Successful Paid to AMAR RAJ 2,000 A PhonePe Transaction ID T2609160800210373921631 Debited from"
+        self.assertIsNone(UTR_RE.search(text))
+
+    def test_plain_utr_label_still_matches(self):
+        self.assertEqual(UTR_RE.search("UTR 123456789012").group(1), "123456789012")  # type: ignore[union-attr]
 
 
 if __name__ == "__main__":

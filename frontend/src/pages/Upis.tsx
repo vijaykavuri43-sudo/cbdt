@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, exportUpisUrl, objectUrl } from '../lib/api'
-import { fmtINR, fmtTime } from '../lib/format'
+import { fmtBoth, fmtINR, fmtIST } from '../lib/format'
 
 interface UpiRow {
   key: string; last_modified: string; vpa?: string; payee_name?: string; amount_inr?: number | null; known_mule?: boolean; raw_text?: string | null; kind?: string; origin?: string
@@ -20,12 +20,23 @@ export function Upis() {
   const [distinct, setDistinct] = useState(true)
   const [hideSenders, setHideSenders] = useState(true)
   const [page, setPage] = useState(0)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  const refresh = useCallback(() => {
+    // 2026-09-16: NEVER swallow fetch errors into an all-zeros screen again —
+    // a timed-out backend used to render "0 VPAs / 0 known mules" with the
+    // misleading "No decoded VPAs yet" empty state. Surface + Retry instead.
+    // 60s budget: the distinct aggregate scans ~1.5M rows on a cold cache.
+    setError('')
+    setLoading(true)
+    api<any>('/api/upis', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, distinct: distinct ? 1 : 0, new_only: onlyNew ? 1 : 0, hide_senders: hideSenders ? 1 : 0 }, 60000)
+      .then((d) => { setData(d); setLoading(false) })
+      .catch((e) => { setError(String(e)); setLoading(false) })
+  }, [distinct, onlyNew, hideSenders, page])
   const [selected, setSelected] = useState<UpiRow | null>(null)
   const [imgErr, setImgErr] = useState(false)
 
-  const refresh = useCallback(() => {
-    api<any>('/api/upis', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, distinct: distinct ? 1 : 0, new_only: onlyNew ? 1 : 0, hide_senders: hideSenders ? 1 : 0 }).then(setData).catch(() => {})
-  }, [distinct, onlyNew, hideSenders, page])
   useEffect(refresh, [refresh])
   useEffect(() => { setImgErr(false) }, [selected?.key])
   // Newest-first feed grows over time — jumping pages re-syncs; toggles restart at page 0
@@ -64,9 +75,11 @@ export function Upis() {
           </div>
         </div>
         <div className="pg-header-right">
+          <button className="btn" onClick={refresh} title="Reload the VPA list" style={{ fontSize: 11 }}>↻ Refresh</button>
           <button className="btn" onClick={exportFullCsv} title="Full VPA list (old + new) with source file + dashboard link per row — officer exhibit, opens in Excel" style={{ fontSize: 11 }}>⬇ Export FULL CSV (LE)</button>
         </div>
       </div>
+      {error && <div className="money-error">Could not load UPI mules: {error} <button className="btn" style={{ marginLeft: 8 }} onClick={refresh}>Retry</button></div>}
 
       <div className="lf-controls">
         <div className="lf-controls-left">
@@ -130,17 +143,17 @@ export function Upis() {
                     }
                   </td>
                   {distinct
-                    ? <td className="small dim">{r.first_seen ? fmtTime(r.first_seen) : '—'} → {r.last_seen ? fmtTime(r.last_seen) : '—'} <span className="ex-badge" title={r.origin === 'qr+deposit' ? 'Seen on collection QRs AND deposit slips' : r.origin === 'qr' ? 'Seen on collection QRs' : 'Seen on deposit slips (money paid to this VPA)'}>{r.origin ?? '—'}</span>{r.has_sender ? <span className="ex-badge ex-badge-new" title="This VPA also appears on the Paid-by side of some slip — mixed role, verify before action">also sender</span> : null}</td>
+                    ? <td className="small dim" title="First → last seen, IST">{r.first_seen ? fmtIST(r.first_seen) : '—'} → {r.last_seen ? fmtIST(r.last_seen) : '—'} <span className="ex-badge" title={r.origin === 'qr+deposit' ? 'Seen on collection QRs AND deposit slips' : r.origin === 'qr' ? 'Seen on collection QRs' : 'Seen on deposit slips (money paid to this VPA)'}>{r.origin ?? '—'}</span>{r.has_sender ? <span className="ex-badge ex-badge-new" title="This VPA also appears on the Paid-by side of some slip — mixed role, verify before action">also sender</span> : null}</td>
                     : <td className="small dim mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}><span className="ex-badge" title={r.kind === 'deposit' ? 'Deposit slip — money paid to this VPA' : 'Collection QR image'}>{r.kind === 'deposit' ? 'slip' : 'QR'}</span> {r.key}</td>}
                   {distinct
                     ? <td className="small dim mono" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key}>{r.key.split('/').pop()}</td>
-                    : <td className="small dim">{fmtTime(r.last_modified)}</td>}
+                    : <td className="small dim" title="Upload time, IST">{fmtIST(r.last_modified)}</td>}
                   <td><button className="btn" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setSelected(r)}>view</button></td>
                 </tr>
               )
             })}
             {items.length === 0 && (
-              <tr><td colSpan={7} className="dp-empty"><div className="dp-empty-icon">💳</div>No decoded VPAs yet — enrichment runs on bankingqr/, qrcode/, deposit/ slips</td></tr>
+              <tr><td colSpan={7} className="dp-empty"><div className="dp-empty-icon">💳</div>{loading ? 'Loading decoded VPAs…' : error ? 'Load failed — press Retry above.' : 'No decoded VPAs yet — enrichment runs on bankingqr/, qrcode/, deposit/ slips'}</td></tr>
             )}
           </tbody>
         </table>
@@ -193,7 +206,7 @@ export function Upis() {
                   ['Source file', selected.key],
                   ['Source folder', folderOf(selected.key)],
                   ['Evidence type', selected.kind === 'deposit' ? 'Deposit slip (money paid to this VPA)' : 'Collection QR image'],
-                  ['Uploaded', fmtTime(selected.last_modified)],
+                  ['Uploaded', fmtBoth(selected.last_modified)],
                   ['Amount', selected.amount_inr != null ? fmtINR(selected.amount_inr) : '—'],
                   ['Status', selected.known_mule ? 'known mule' : 'NEW — not in master'],
                 ].map(([k, v]) => (

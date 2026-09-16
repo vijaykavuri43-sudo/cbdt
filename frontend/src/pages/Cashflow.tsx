@@ -16,7 +16,9 @@ export function Cashflow() {
   const [error, setError] = useState('')
   const refresh = useCallback(() => {
     setError('')
-    api<Summary>('/api/ledger/summary').then(setData).catch((e) => setError(String(e)))
+    // 60s budget (2026-09-16): a cold-cache rebuild after a restart scans
+    // ~660k ledger rows and exceeds the default 25s timeout.
+    api<Summary>('/api/ledger/summary', undefined, 60000).then(setData).catch((e) => setError(String(e)))
   }, [])
   useEffect(refresh, [refresh])
 
