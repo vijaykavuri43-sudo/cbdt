@@ -211,12 +211,6 @@ export function StatusPage() {
           <div className="st-card-sub">{fmtBytes(totalBytes)} total data</div>
         </div>
 
-        <div className="st-card st-card-warn">
-          <div className="st-card-icon">🆕</div>
-          <div className="st-card-label">New since start</div>
-          <div className="st-card-value warn">+{(st?.new_since_start ?? 0).toLocaleString()}</div>
-        </div>
-
         <div className={`st-card st-card-money ${liveConnected && eventPulse ? 'st-card-live' : ''}`}>
           <div className="st-card-icon">💰 {liveConnected && <span className="dot live" style={{ display: 'inline-block', verticalAlign: 'middle', marginLeft: 6 }} />}</div>
           <div className="st-card-label">Gambler funds → receiving rails</div>

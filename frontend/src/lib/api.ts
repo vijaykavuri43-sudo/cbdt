@@ -126,14 +126,20 @@ export function canPlayExtNative(ext: string): boolean {
   return true
 }
 
-// Smart voice-note URL: transcoded WAV when the browser cannot decode the
-// native codec, direct stream otherwise (lowest latency). Cached per-format
-// on the server so the transcode happens once per clip.
+// Voice-note URL: ALWAYS via ?format=wav (reliability fix 2026-09-16).
+//
+// The bucket holds many misnamed containers (.wav-that-is-WebM, .mp3-that-is
+// octet-stream, ...). Serving those natively stalls the <audio> element at
+// 0:00 with no onError on several browsers, so per-extension native probing
+// cannot be trusted. The server only transcodes when sniffed bytes need it
+// (_NEEDS_WAV_TRANSCODE) and serves genuine WAV/MP3/OGG/MP4/M4A/FLAC as-is,
+// so this costs nothing for honest files and guarantees a playable clip.
+// Transcodes are cached per-format server-side (once per clip).
 export function voiceSrc(key: string): string {
   const base = key.split('/').pop() || ''
   const i = base.lastIndexOf('.')
   const ext = i >= 0 ? base.slice(i).toLowerCase() : ''
-  if (ext && !canPlayExtNative(ext)) return objectUrl(key, false, 0, 'wav')
+  if (ext) return objectUrl(key, false, 0, 'wav')
   return objectUrl(key)
 }
 

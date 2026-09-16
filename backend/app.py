@@ -1106,8 +1106,18 @@ def _range_response(body: bytes, media: str, base_headers: dict, range_header: s
     total = len(body)
     span = _parse_range(range_header, total)
     if span is None:
+        # Full-200 audio/video MUST carry Content-Length + Accept-Ranges
+        # (seek/duration fix 2026-09-16): without a length the <audio>
+        # element shows 0:00, never advances its progress ("not moving
+        # forward") and cannot seek. 206 branch already had both.
         return StreamingResponse(
-            [body].__iter__(), media_type=media, headers=base_headers
+            [body].__iter__(),
+            media_type=media,
+            headers={
+                **base_headers,
+                "Content-Length": str(total),
+                "Accept-Ranges": "bytes",
+            },
         )
     start, end = span
     chunk = body[start : end + 1]
