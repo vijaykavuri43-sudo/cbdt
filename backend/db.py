@@ -2708,12 +2708,16 @@ def upi_counts(
     return {"feed_total": feed_total, "distinct_total": distinct_total}
 
 
-def wallet_feed(limit: int = 300) -> list[dict]:
+def wallet_feed(limit: int = 300, offset: int = 0) -> list[dict]:
     """Every enriched object whose payload contains crypto wallet addresses.
 
     Uses json_each over the wallets[] array; newest first. Each item carries the
     source object key so the officer can open the exact screenshot/QR.
+    2026-09-16: offset added — the tab pages through the full hit set so old
+    wallets never fall off the newest-N window (same fix as UPI tab 2026-09-11).
     """
+    limit = max(1, min(limit, 2000))
+    offset = max(0, offset)
     rows = (
         connect()
         .execute(
@@ -2726,9 +2730,9 @@ def wallet_feed(limit: int = 300) -> list[dict]:
                json_extract(o.extract_json,'$.txids') AS txids
         FROM objects o, json_each(o.extract_json,'$.wallets') je
         WHERE o.extract_json IS NOT NULL
-        ORDER BY o.last_modified DESC LIMIT ?
+        ORDER BY o.last_modified DESC LIMIT ? OFFSET ?
         """,
-            (limit,),
+            (limit, offset),
         )
         .fetchall()
     )
@@ -2787,6 +2791,76 @@ def wallet_stats() -> dict:
         "distinct_wallets": row["distinct_wallets"] or 0,
         "by_network": [{"network": r["net"], "count": r["n"]} for r in by_net],
     }
+
+
+def wallet_distinct(limit: int = 300, offset: int = 0) -> list[dict]:
+    """One row per unique wallet address: hit count, first/last seen, plus the
+    newest hit's key/network/label as the sample evidence. Officers use this to
+    reach old single-hit wallets that drown in the newest-first hit feed.
+    Single-pass window query — no per-address lookups."""
+    limit = max(1, min(limit, 2000))
+    offset = max(0, offset)
+    rows = (
+        connect()
+        .execute(
+            """
+        SELECT address, hits, first_seen, last_seen,
+               key, network, standard, confidence, kind
+        FROM (
+          SELECT json_extract(je.value,'$.address') AS address,
+                 o.key AS key,
+                 o.last_modified AS last_modified,
+                 json_extract(je.value,'$.network') AS network,
+                 json_extract(je.value,'$.standard') AS standard,
+                 json_extract(je.value,'$.confidence') AS confidence,
+                 json_extract(extract_json,'$.kind') AS kind,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY json_extract(je.value,'$.address')
+                   ORDER BY last_modified DESC) AS rn,
+                 COUNT(*) OVER (
+                   PARTITION BY json_extract(je.value,'$.address')) AS hits,
+                 MIN(last_modified) OVER (
+                   PARTITION BY json_extract(je.value,'$.address')) AS first_seen,
+                 MAX(last_modified) OVER (
+                   PARTITION BY json_extract(je.value,'$.address')) AS last_seen
+          FROM objects o, json_each(o.extract_json,'$.wallets') je
+          WHERE o.extract_json IS NOT NULL
+            AND json_extract(je.value,'$.address') IS NOT NULL
+        ) WHERE rn = 1
+        ORDER BY last_seen DESC LIMIT ? OFFSET ?
+        """,
+            (limit, offset),
+        )
+        .fetchall()
+    )
+    return [dict(r) for r in rows]
+
+
+def wallet_counts() -> dict:
+    """Exact totals backing wallet-tab pagination (same filters as queries)."""
+    c = connect()
+    row = c.execute(
+        "SELECT COUNT(*) n,"
+        " COUNT(DISTINCT json_extract(je.value,'$.address')) d"
+        " FROM objects o, json_each(o.extract_json,'$.wallets') je"
+        " WHERE o.extract_json IS NOT NULL"
+    ).fetchone()
+    return {"feed_total": row["n"] or 0, "distinct_total": row["d"] or 0}
+
+
+def live_wallet_addresses() -> set[str]:
+    """Distinct live-decoded wallet addresses (single scan, cached by callers)."""
+    rows = (
+        connect()
+        .execute(
+            "SELECT DISTINCT json_extract(je.value,'$.address') a"
+            " FROM objects o, json_each(o.extract_json,'$.wallets') je"
+            " WHERE o.extract_json IS NOT NULL"
+            " AND json_extract(je.value,'$.address') IS NOT NULL"
+        )
+        .fetchall()
+    )
+    return {str(r["a"]) for r in rows if r["a"]}
 
 
 def pending_slip_count() -> int:

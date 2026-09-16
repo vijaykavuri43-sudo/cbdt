@@ -2420,7 +2420,10 @@ _WALLET_EXPORT_COLUMNS = (
     "label",
     "confidence",
     "status",
+    "origin_kind",
+    "attribution",
     "source_file",
+    "proof_url",
     "qr_uploaded_utc",
     "seen_utc",
     "dashboard_source_link",
@@ -2432,10 +2435,13 @@ _WALLET_EXPORT_COLUMNS = (
 
 @app.get("/api/export/wallets")
 def export_wallets(_=Depends(auth)):
-    """Full crypto-wallet exhibit (ALL rows): every address decoded from a live
-    bucket image, each with its exact source file + absolute dashboard link.
-    No external reference lists — Origin is always an S3 bucket object.
-    Opens in Excel."""
+    """Single officer wallet exhibit (live + identified, no wallet left out).
+
+    Part 1 — every address decoded from a live bucket image (exact source
+    file + dashboard link per row). Part 2 — every previously-identified
+    reference wallet (114-row census) with its original source reference +
+    proof URL; reference rows carry origin_kind=reference so the two
+    provenances never mix silently. Opens in Excel."""
 
     def build():
         rows = []
@@ -2450,13 +2456,39 @@ def export_wallets(_=Depends(auth)):
                     "label": it.get("standard") or (f"role:{role}" if role else ""),
                     "confidence": it.get("confidence") or "",
                     "status": "EXTRACTED",
+                    "origin_kind": "live",
+                    "attribution": "",
                     "source_file": key,
+                    "proof_url": "",
                     "qr_uploaded_utc": it.get("last_modified") or "",
                     "seen_utc": it.get("seen_utc") or "",
                     "dashboard_source_link": _source_link(key) if key else "",
                     "case": config.CASE_ID,
                     "auth_ref": config.AUTH_REF,
                     "fact_type": "ai_lead",
+                }
+            )
+        from .evidence import load_reference_wallets
+
+        for r in load_reference_wallets():
+            key = r.get("proof_s3_key") or ""
+            rows.append(
+                {
+                    "address": r.get("address") or "",
+                    "network": r.get("network") or "",
+                    "label": r.get("role") or "",
+                    "confidence": r.get("confidence") or "",
+                    "status": "REFERENCE",
+                    "origin_kind": "reference",
+                    "attribution": r.get("attribution") or "",
+                    "source_file": key or (r.get("source_ref") or ""),
+                    "proof_url": r.get("proof_url") or "",
+                    "qr_uploaded_utc": "",
+                    "seen_utc": "",
+                    "dashboard_source_link": _source_link(key) if key else "",
+                    "case": config.CASE_ID,
+                    "auth_ref": config.AUTH_REF,
+                    "fact_type": r.get("fact_type") or "fact",
                 }
             )
         return rows
@@ -2746,13 +2778,27 @@ def wallets_full_scan_status(_=Depends(auth)):
 
 
 @app.get("/api/wallets")
-def wallets_api(limit: int = Query(300, le=2000), _=Depends(auth)):
+def wallets_api(
+    limit: int = Query(300, le=2000),
+    offset: int = Query(0, ge=0),
+    distinct: bool = False,
+    _=Depends(auth),
+):
     """Crypto-wallet exhibit, bucket-native: every row is one TRON/ERC20/BTC
     address decoded from a QR / deposit-slip / crypto chat image in the live
     GCS bucket. Each item carries its exact source object key, so every row
-    in the Crypto tab has view-proof. No external reference lists."""
-    items = db.wallet_feed(limit)
+    in the Crypto tab has view-proof. No external reference lists.
+    2026-09-16: paginated (limit/offset) + distinct mode — the tab pages
+    through the FULL set so old wallets never fall off the newest-N window."""
+    limit = max(1, min(limit, 2000))
+    offset = max(0, offset)
+    if distinct:
+        items = db.wallet_distinct(limit, offset)
+    else:
+        items = db.wallet_feed(limit, offset)
     stats = db.wallet_stats()
+    totals = cached("wallets:counts", 120.0, db.wallet_counts)
+    total = totals["distinct_total"] if distinct else totals["feed_total"]
     # Source stats for officer: enrichment backlog explains nil hits.
     try:
         enr = db.enrichment_progress()
@@ -2771,6 +2817,44 @@ def wallets_api(limit: int = Query(300, le=2000), _=Depends(auth)):
         "by_network": stats["by_network"],
         "extraction_status": extraction_status,
         "source": str(config.SOURCE_ID),
+        "distinct": distinct,
+        "limit": limit,
+        "offset": offset,
+        "total": total,
+    }
+
+
+def _live_wallet_set() -> set[str]:
+    return cached("wallets:live-set", 120.0, db.live_wallet_addresses)
+
+
+@app.get("/api/wallets/reference")
+def wallets_reference(_=Depends(auth)):
+    """All previously-identified wallets (reference census, 114 rows).
+
+    Every wallet ever identified across LE-SUBMISSION-MASTER/36 (72),
+    operator/withdrawal/desk proofs, dashboard OCR/QR rails and live rails —
+    each with its original source reference + proof link where one exists.
+    `in_live` flags whether the address is also live-decoded from a bucket
+    image right now, so officers can see coverage: identified vs decoded.
+    Attribution labels are report attributions, NOT proof of ownership.
+    """
+    from .evidence import load_reference_wallets
+
+    live = _live_wallet_set()
+    items = []
+    for r in load_reference_wallets():
+        addr = r.get("address") or ""
+        items.append({**r, "in_live": addr in live})
+    identified = len(items)
+    decoded = sum(1 for i in items if i["in_live"])
+    return {
+        "items": items,
+        "identified_total": identified,
+        "live_decoded": decoded,
+        "missing_from_live": identified - decoded,
+        "fact_type": "fact",
+        "assessment_note": "attribution labels are report attributions, not proof of ownership/control",
     }
 
 

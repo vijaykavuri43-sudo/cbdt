@@ -215,6 +215,54 @@ def load_master_wallet_rows() -> list[dict]:
     return rows
 
 
+def load_reference_wallets() -> list[dict]:
+    """All previously-identified wallets (canonical reference census).
+
+    Source: s3-live-monitor/reference/identified-wallets.csv (built by
+    scripts/build-identified-wallets.py from 36-ALL-IDENTIFIED-WALLETS.csv +
+    WALLET-PROOF-MAP + ALL-WALLETS-MASTER + roll-data extras = 114 rows).
+    These are report attributions with their original proof references —
+    shown in the Crypto tab alongside live bucket decodes so no previously
+    identified wallet ever goes missing from the dashboard.
+    """
+    import csv as _csv
+    import os as _os
+
+    cands = []
+    env = _os.environ.get("S3LM_REFERENCE_WALLETS_CSV", "")
+    if env:
+        cands.append(Path(env))
+    cands.append(config.APP_DIR / "reference" / "identified-wallets.csv")
+    try:
+        cands.append(config.DATA_DIR / "reference" / "identified-wallets.csv")
+    except Exception:
+        pass
+    rows: list[dict] = []
+    for cand in cands:
+        try:
+            if not cand.is_file():
+                continue
+        except OSError:
+            continue
+        try:
+            with open(cand, encoding="utf-8", errors="ignore", newline="") as f:
+                reader = _csv.DictReader(f)
+                if not reader.fieldnames or "address" not in reader.fieldnames:
+                    continue
+                for r in reader:
+                    addr = (r.get("address") or "").strip()
+                    if not addr:
+                        continue
+                    rows.append(
+                        {k: (r.get(k) or "").strip() for k in reader.fieldnames}
+                        | {"address": addr}
+                    )
+        except OSError:
+            continue
+        break
+    return rows
+
+
 def load_master_wallets() -> set[str]:
     """Known operator/hawala crypto wallets from the LE submission master CSV.
 
