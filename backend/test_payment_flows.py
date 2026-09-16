@@ -457,7 +457,10 @@ class CollectorAccuracyTests(unittest.TestCase):
         db.upsert_objects(original)
         changed = [self._obj(1), self._obj(2, etag="v2")]
         collector = Collector(_PagedStore(changed))
-        collector.crawl_once("chat_file/", cap=1000)
+        # quiet=None resolves to True when sweep_complete_utc is unset
+        # (pre-sweep catch-up suppresses SSE publish) — pass quiet=False
+        # to exercise the live publish path as in production post-sweep.
+        collector.crawl_once("chat_file/", cap=1000, quiet=False)
         row = db.get_object_row(changed[1]["key"])
         self.assertEqual(row["etag"], "v2")
         self.assertEqual(collector.state["new_since_start"], 1)

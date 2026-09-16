@@ -51,9 +51,16 @@ class SlipBacklogTests(unittest.TestCase):
     def test_progress_folds_backlog_into_eligible_and_eta(self):
         p = db.enrichment_progress()
         self.assertEqual(p["slip_backlog"], 2)
+        # 2026-09-16: live queue and slip backlog overlap on
+        # deposit/withdrawal/payment images (both loops drain them) —
+        # eligible subtracts the intersection once so coverage/ETA stay
+        # honest. queue_overlap is 0 when SLIP_OCR=1 (live excludes slips).
         self.assertEqual(
             p["eligible_total"],
-            p["enriched_done"] + p["pending_now"] + p["slip_backlog"],
+            p["enriched_done"]
+            + p["pending_now"]
+            + p["slip_backlog"]
+            - p.get("queue_overlap", 0),
         )
         self.assertLess(p["coverage_pct"], 100.0)
 
