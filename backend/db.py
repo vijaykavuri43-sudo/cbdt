@@ -811,30 +811,74 @@ def persist_enriched_batch(items: list[tuple[str, dict | None]]) -> int:
     return done
 
 
+# Fetch-miss errors (object not yet uploaded to the GCS mirror — the s3sync
+# bulk backlog runs hours behind S3) must NEVER go terminal on the same
+# 5-attempt budget as decode errors: attempt 5 lands ~15min after first
+# sighting, long before the mirror catches up, and enriched=1 then drops
+# the evidence forever (live-pipeline review 2026-09-16). Fetch misses get
+# ~72 hourly-capped attempts (~3 days of mirror lag) before going terminal.
+_FETCH_MISS_PREFIXES = ("fetch:", "fetch-pool:")
+_FETCH_MISS_TERMINAL_ATTEMPTS = 72
+_DECODE_TERMINAL_ATTEMPTS = 5
+
+
 def mark_enrichment_error(key: str, error: str):
-    """Retry transient fetch failures with bounded exponential backoff."""
+    """Retry transient fetch failures with bounded exponential backoff.
+
+    Fetch-miss errors (mirror lag) retry ~72x (~3 days, hourly-capped);
+    decode/drain errors go terminal after 5 attempts. Terminal rows keep
+    enrich_error recorded for forensics.
+    """
     with _writer_lock:
         c = connect()
         row = c.execute(
             "SELECT enrich_attempts FROM objects WHERE key=?", (key,)
         ).fetchone()
         attempts = int(row["enrich_attempts"] or 0) + 1 if row else 1
+        fetch_miss = (error or "").startswith(_FETCH_MISS_PREFIXES)
+        limit = (
+            _FETCH_MISS_TERMINAL_ATTEMPTS if fetch_miss else _DECODE_TERMINAL_ATTEMPTS
+        )
+        terminal = attempts >= limit
         delay = min(3600, 30 * (2 ** min(attempts, 7)))
         retry = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + delay))
         c.execute(
             "UPDATE objects SET enriched=?,enrich_attempts=?,enrich_error=?,enrich_retry_utc=?,enriched_utc=? WHERE key=?",
             (
-                1 if attempts >= 5 else 0,
+                1 if terminal else 0,
                 attempts,
                 error[:500],
                 retry,
                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-                if attempts >= 5
+                if terminal
                 else None,
                 key,
             ),
         )
         c.commit()
+
+
+def requeue_fetch_misses(limit: int = 200000) -> dict:
+    """Revive rows poisoned by the pre-fix 5-attempt fetch budget.
+
+    Rows with enriched=1, no payload, and a fetch-miss error went terminal
+    while the GCS mirror was still catching up — the bytes are (now)
+    fetchable but no queue will ever select them. Reset them to pending
+    with a fresh attempt budget so the live/slip loops pick them up.
+    Returns counts; capped by limit. Safe to run on every startup.
+    """
+    with _writer_lock:
+        c = connect()
+        cur = c.execute(
+            "UPDATE objects SET enriched=0, enrich_attempts=0, "
+            "enrich_retry_utc=NULL WHERE rowid IN ("
+            "SELECT rowid FROM objects WHERE enriched=1 "
+            "AND extract_json IS NULL AND enrich_error LIKE 'fetch%' "
+            "LIMIT ?)",
+            (limit,),
+        )
+        c.commit()
+        return {"requeued": cur.rowcount, "limit": limit}
 
 
 def pending_enrichment(limit: int = 20, full_scan: bool = False) -> list[str]:
@@ -2784,16 +2828,32 @@ def enrichment_progress() -> dict:
     )
     pend = pending_enrichment_count()
     slip_backlog = pending_slip_count()
-    eligible = (r["done"] or 0) + pend + slip_backlog
+    # payment/ (and deposit//withdrawal/ when SLIP_OCR is off) images are
+    # counted in BOTH pend and slip_backlog — the live and slip loops both
+    # drain them. Subtract the intersection once so eligible/coverage/ETA
+    # stay honest (2026-09-16). Intersect the live WHERE with the slip
+    # prefixes so this holds under any SLIP_OCR setting.
+    overlap_where, overlap_args = _pending_where(full_scan=False)
+    overlap = (
+        connect()
+        .execute(
+            "SELECT COUNT(*) c FROM objects WHERE (" + overlap_where + ") "
+            "AND top_prefix IN ('deposit/','withdrawal/','payment/')",
+            overlap_args,
+        )
+        .fetchone()["c"]
+    )
+    eligible = (r["done"] or 0) + pend + slip_backlog - overlap
     coverage = round(((r["done"] or 0) / eligible) * 100, 2) if eligible else 100.0
     hourly = r["processed_last_hour"] or 0
-    eta_hours = round((pend + slip_backlog) / hourly, 1) if hourly else None
+    eta_hours = round((pend + slip_backlog - overlap) / hourly, 1) if hourly else None
     return {
         "total": r["total"],
         "enriched_done": r["done"] or 0,
         "with_payload": r["with_payload"] or 0,
         "pending_now": pend,
         "slip_backlog": slip_backlog,
+        "queue_overlap": overlap,
         "eligible_total": eligible,
         "coverage_pct": coverage,
         "processed_last_hour": hourly,

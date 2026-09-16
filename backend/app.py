@@ -262,6 +262,17 @@ def startup():
                 )
         except Exception as e:
             print(f"[maintenance] repair_non_iso_timestamps failed: {e}")
+        try:
+            # 2026-09-16: revive rows poisoned by the pre-fix 5-attempt fetch
+            # budget (fetch-miss went terminal during mirror lag). Runs every
+            # startup; no-op when there is nothing to revive.
+            res = db.requeue_fetch_misses()
+            if res.get("requeued"):
+                print(
+                    f"[maintenance] fetch-miss requeue: {res['requeued']} rows revived"
+                )
+        except Exception as e:
+            print(f"[maintenance] requeue_fetch_misses failed: {e}")
 
     threading.Thread(target=_repair, daemon=True).start()
 
@@ -2015,6 +2026,24 @@ def enrich_repair_twins(
         return db.repair_twin_artifacts(dry_run=bool(dry_run), limit=limit)
     except Exception as e:
         raise HTTPException(500, f"repair-twins failed: {e}")
+
+
+@app.post("/api/enrich/repair-fetch-misses")
+def enrich_repair_fetch_misses(
+    limit: int = Query(200000, ge=1, le=1000000),
+    _=Depends(auth),
+):
+    """Revive evidence rows poisoned by the pre-fix 5-attempt fetch budget.
+
+    Rows with enriched=1, no payload, and a fetch-miss error went terminal
+    while the GCS mirror was still catching up. Resets them to pending with
+    a fresh attempt budget so the live/slip loops pick them up. Also runs
+    automatically on every startup; this endpoint is the manual re-run.
+    """
+    try:
+        return db.requeue_fetch_misses(limit=limit)
+    except Exception as e:
+        raise HTTPException(500, f"repair-fetch-misses failed: {e}")
 
 
 @app.post("/api/enrich/repair-grouping")

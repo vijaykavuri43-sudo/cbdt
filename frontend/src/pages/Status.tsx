@@ -230,8 +230,8 @@ export function StatusPage() {
         <div className="st-card st-card-accent">
           <div className="st-card-icon">🔍</div>
           <div className="st-card-label">Enrichment (OCR/QR)</div>
-          <div className="st-card-value accent">{st?.enrichment.with_payload.toLocaleString() ?? '—'}</div>
-          <div className="st-card-sub">{st?.enrichment.pending_now.toLocaleString() ?? '—'} live queue · {(st?.enrichment.slip_backlog ?? 0).toLocaleString()} older slips backfilling</div>
+          <div className="st-card-value accent">{st?.enrichment?.with_payload?.toLocaleString() ?? '—'}</div>
+          <div className="st-card-sub">{st?.enrichment?.pending_now?.toLocaleString() ?? '—'} live queue · {(st?.enrichment?.slip_backlog ?? 0).toLocaleString()} older slips backfilling</div>
           <div className="tiny dim" style={{ marginTop: 4 }}>{st?.gemini_enabled ? `Gemini ${st?.gemini_model} active` : 'Tesseract only — set GEMINI_API_KEY for verification'}</div>
         </div>
       </div>
