@@ -286,6 +286,17 @@ input[type="text"]::placeholder { color: var(--dim); }
 .st-card-value.warn { color: var(--warn); }
 .st-card-sub { font-size: 11px; color: var(--dim); margin-top: 4px; }
 .st-card-live { border-color: var(--accent) !important; box-shadow: 0 0 0 1px rgba(56,189,248,.18), 0 6px 22px rgba(56,189,248,.1) !important; }
+/* Overview single-row stat strip: 2 live + 5 index cards in one grid row. */
+.st-cards.ov-7 { grid-template-columns: repeat(7, minmax(0, 1fr)); align-items: stretch; }
+.st-cards.ov-7 .st-card { padding: 12px 14px; min-width: 0; }
+.st-cards.ov-7 .st-card-value { font-size: 19px; overflow-wrap: anywhere; }
+.st-cards.ov-7 .st-card-sub, .st-cards.ov-7 .st-card .tiny {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; line-height: 1.35;
+}
+@media (max-width: 1500px) { .st-cards.ov-7 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 1000px) { .st-cards.ov-7 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .st-cards.ov-7 { grid-template-columns: minmax(0, 1fr); } }
 .sync-strip { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; font-size: 11.5px; }
 .sync-metrics { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 8px; }
 .sync-metrics > div { display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel2); }

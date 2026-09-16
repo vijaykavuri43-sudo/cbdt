@@ -189,10 +189,7 @@ export function StatusPage() {
       </div>
 
       {/* Officer briefing — last-24h live money movement + rail triage */}
-      <OfficerStrip />
-
-      {/* Stat cards */}
-      <div className="st-cards">
+      <OfficerStrip>
         <div className={`st-card ${st?.phase === 'live-polling' ? 'st-card-accent' : ''}`}>
           <div className="st-card-icon">📡</div>
           <div className="st-card-label">Collector</div>
@@ -234,7 +231,7 @@ export function StatusPage() {
           <div className="st-card-sub">{st?.enrichment?.pending_now?.toLocaleString() ?? '—'} live queue · {(st?.enrichment?.slip_backlog ?? 0).toLocaleString()} older slips backfilling</div>
           <div className="tiny dim" style={{ marginTop: 4 }}>{st?.gemini_enabled ? `Gemini ${st?.gemini_model} active` : 'Tesseract only — set GEMINI_API_KEY for verification'}</div>
         </div>
-      </div>
+      </OfficerStrip>
 
       {/* Bucket health */}
       <div className="st-panel">

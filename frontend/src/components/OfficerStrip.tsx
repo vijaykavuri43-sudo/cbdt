@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { api, tabHidden } from '../lib/api'
 import { fmtINR, fmtTime } from '../lib/format'
 
@@ -14,7 +14,7 @@ interface RailsList extends Rails { items: RailItem[] }
 // Officer briefing strip: last-24h live-evidence money movement + rail triage
 // counts. Amounts are linked-row sums (operator chips may include bonus — see
 // Ledger tab for ex-bonus cash). Rails stay candidate/analyst-conclusion.
-export function OfficerStrip() {
+export function OfficerStrip({ children }: { children?: ReactNode }) {
   const [dep, setDep] = useState<Flows | null>(null)
   const [wd, setWd] = useState<Flows | null>(null)
   const [alerts, setAlerts] = useState<RailItem[]>([])
@@ -52,9 +52,10 @@ export function OfficerStrip() {
         ))}
       </div>
     )}
-    <section className="st-cards money-cards" style={{ marginBottom: 16 }} title="Officer briefing — last 24h live bucket evidence">
+    <section className="st-cards ov-7" style={{ marginBottom: 16 }} title="Officer briefing — last 24h live bucket evidence + index stats (single row)">
       <div className="st-card st-card-accent"><div className="st-card-label">Live deposits · 24h · history from Jul 22, 2026</div><div className="st-card-value accent">{(dep?.transactions ?? 0).toLocaleString()} txns</div><div className="tiny dim money">{fmtINR(dep?.sum_amount_inr)} · {(dep?.transactions ?? 0) === 0 ? `source quiet since ${fmtTime(dep?.src_newest)}` : `newest slip ${fmtTime(dep?.src_newest)}`}</div></div>
       <div className="st-card st-card-money"><div className="st-card-label">Live withdrawals · 24h</div><div className="st-card-value money">{(wd?.transactions ?? 0).toLocaleString()} txns</div><div className="tiny dim money">{fmtINR(wd?.sum_amount_inr)} · {(wd?.transactions ?? 0) === 0 ? `source quiet since ${fmtTime(wd?.src_newest)}` : `newest slip ${fmtTime(wd?.src_newest)}`}</div></div>
+      {children}
     </section>
     </>
   )
