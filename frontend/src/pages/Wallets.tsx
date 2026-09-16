@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
-import { api, eventsUrl, exportWalletsUrl, objectUrl, post, tabHidden } from '../lib/api'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { api, createRefreshGuard, eventsUrl, exportWalletsUrl, objectUrl, post, tabHidden } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { fmtMoney } from '../lib/format'
 
@@ -87,24 +87,30 @@ export function Wallets() {
   const [page, setPage] = useState(0)
   const [error, setError] = useState('')
   const [ref, setRef] = useState<RefResp | null>(null)
+  const [refError, setRefError] = useState('')
 
   const refresh = useCallback(() => {
     // 2026-09-16: paginated — old wallets never fall off the newest-N window.
     // Distinct mode (default) gives one row per address so old single-hit
     // wallets stay reachable; All-hits mode shows every object×wallet row.
     setError('')
-    api<WalletsResp>('/api/wallets', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, distinct: distinct ? 1 : 0 }, 60000)
+    return api<WalletsResp>('/api/wallets', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, distinct: distinct ? 1 : 0 }, 60000)
       .then(setData)
       .catch((e) => setError(String(e)))
   }, [page, distinct])
   const refreshScan = useCallback(() => {
     api<FullScanStatus>('/api/wallets/full-scan/status').then(setScan).catch(() => {})
   }, [])
-  useEffect(refresh, [refresh])
+  useEffect(() => { refresh() }, [refresh])
   useEffect(() => { setPage(0) }, [distinct])
-  useEffect(() => {
-    api<RefResp>('/api/wallets/reference', {}, 60000).then(setRef).catch(() => {})
+  const loadRef = useCallback(() => {
+    setRefError('')
+    api<RefResp>('/api/wallets/reference', {}, 60000).then(setRef).catch((e) => setRefError(String(e)))
   }, [])
+  useEffect(loadRef, [loadRef])
+  // Storm-guarded live nudges (2026-09-16): SSE bursts share one guard with
+  // the scan poller — no concurrent /api/wallets pile-ups.
+  const guard = useRef(createRefreshGuard(20000))
   useEffect(() => {
     refreshScan()
     const id = setInterval(() => { if (!tabHidden()) refreshScan() }, 3000)
@@ -117,7 +123,7 @@ export function Wallets() {
           const j = JSON.parse(ev.data)
           if (j.type === 'wallet_scan_progress' || j.type === 'wallet_scan_done' || j.type === 'enriched') {
             refreshScan()
-            if (j.type === 'wallet_scan_done' || j.type === 'enriched') refresh()
+            if (j.type === 'wallet_scan_done' || j.type === 'enriched') guard.current.nudge(refresh)
           }
         } catch {}
       }
@@ -287,7 +293,11 @@ export function Wallets() {
           <div>
             <h1 className="pg-header-title">Identified wallets (reference)</h1>
             <div className="pg-header-sub">
-              All {(ref?.identified_total ?? 0).toLocaleString()} previously-identified wallets — hawala, platform-hot, operator, beneficiary, desk, dashboard rails — each with its original source + proof link. {(ref?.live_decoded ?? 0).toLocaleString()} also live-decoded above · {(ref?.missing_from_live ?? 0).toLocaleString()} reference-only (source was a spreadsheet/config or an object outside the bucket mirror — proof link is the evidence, not this tab).
+              {ref
+                ? <>All {ref.identified_total.toLocaleString()} previously-identified wallets — hawala, platform-hot, operator, beneficiary, desk, dashboard rails — each with its original source + proof link. {ref.live_decoded.toLocaleString()} also live-decoded above · {ref.missing_from_live.toLocaleString()} reference-only (source was a spreadsheet/config or an object outside the bucket mirror — proof link is the evidence, not this tab).</>
+                : refError
+                  ? <>Reference list failed to load — press Retry below. Live bucket-decoded wallets above are unaffected.</>
+                  : <>Loading the previously-identified wallet census…</>}
             </div>
           </div>
         </div>
@@ -335,7 +345,9 @@ export function Wallets() {
               <tr>
                 <td colSpan={7} className="dp-empty">
                   <div className="dp-empty-icon">📋</div>
-                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Loading reference wallets…</div>
+                  {refError
+                    ? <><div style={{ fontWeight: 700, marginBottom: 4 }}>Could not load reference wallets: {refError}</div><button className="btn" onClick={loadRef}>Retry</button></>
+                    : <div style={{ fontWeight: 700, marginBottom: 4 }}>Loading reference wallets…</div>}
                 </td>
               </tr>
             )}

@@ -730,6 +730,30 @@ class Collector:
 
         threading.Thread(target=ext_backfill, daemon=True, name="ext-backfill").start()
 
+        def wallet_backfill():
+            # Materialized wallet index (2026-09-16): one-time seed so the
+            # Crypto tab serves indexed ms queries instead of 60s+ json_each
+            # scans. Skips when already done; write-through keeps it fresh.
+            try:
+                if db.wallet_index_ready():
+                    return
+                n = db.backfill_wallet_hits()
+                db.mark_wallet_index_ready()
+                if n:
+                    evidence.append_collection_log(
+                        {
+                            "event": "monitor_wallet_backfill",
+                            "method": "one-time wallet_hits seeding for indexed reads",
+                            "counts": {"hits": n},
+                        }
+                    )
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=wallet_backfill, daemon=True, name="wallet-backfill"
+        ).start()
+
     def stop(self):
         self._stop.set()
         if self.enricher:

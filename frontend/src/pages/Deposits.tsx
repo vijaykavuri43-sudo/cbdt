@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, eventsUrl, exportRailsUrl, objectUrl, tabHidden } from '../lib/api'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { api, createRefreshGuard, eventsUrl, exportRailsUrl, objectUrl, tabHidden } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl } from '../lib/explorers'
 import { fmtINR, fmtTime, shortKey } from '../lib/format'
 
@@ -31,18 +31,21 @@ export function Deposits() {
 
   const refresh = useCallback(() => {
     setError('')
-    Promise.all([
+    return Promise.all([
       api<FlowResp>('/api/money-flows', { direction, rail_type: railType, q: query, limit, offset: page * limit, ...(source ? { source } : {}) }),
       api<MuleResp>('/api/mule-rails', { rail_type: railType === 'unknown' ? '' : railType, q: query, limit: 200, offset: 0, ...(source ? { source } : {}) }),
     ])
       .then(([flows, muleRails]) => { setData(flows); setMules(muleRails); setUpdated(new Date().toLocaleTimeString()) })
       .catch((e) => setError(String(e)))
   }, [direction, railType, source, query, page])
-  useEffect(refresh, [refresh])
-  // Fresh OCR/QR extraction lands continuously — re-pull every 12s + instantly on SSE push
+  useEffect(() => { refresh() }, [refresh])
+  // Fresh OCR/QR extraction lands continuously — re-pull every 12s + on SSE
+  // push. Storm-guarded (2026-09-16): SSE bursts no longer launch concurrent
+  // heavy aggregates — at most one run in flight, SSE nudges on cooldown.
+  const guard = useRef(createRefreshGuard(20000))
   useEffect(() => {
     if (!auto) return
-    const t = setInterval(() => { if (!tabHidden()) refresh() }, 12000)
+    const t = setInterval(() => { if (!tabHidden()) guard.current.tryRun(refresh) }, 12000)
     return () => clearInterval(t)
   }, [auto, refresh])
   useEffect(() => {
@@ -53,7 +56,7 @@ export function Deposits() {
       const onMsg = (e: MessageEvent) => {
         try {
           const d = JSON.parse(e.data)
-          if (d?.type === 'enriched' || d?.type === 'new_object' || d?.type === 'wallet_found') refresh()
+          if (d?.type === 'enriched' || d?.type === 'new_object' || d?.type === 'wallet_found') guard.current.nudge(refresh)
         } catch {}
       }
       es.addEventListener('message', onMsg as any)

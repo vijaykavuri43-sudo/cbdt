@@ -24,6 +24,43 @@ export function tabHidden(): boolean {
   }
 }
 
+// Storm guard for live refresh triggers (2026-09-16: SSE 'enriched' /
+// 'new_object' / 'wallet_found' events fire many times per second during
+// intake; each unguarded trigger launched concurrent heavy aggregates that
+// saturated the backend threadpool and exhausted browser sockets —
+// net::ERR_INSUFFICIENT_RESOURCES. Interval path skips while a run is in
+// flight; SSE nudges additionally respect a cooldown).
+export function createRefreshGuard(cooldownMs = 20000) {
+  let inflight = false
+  let last = 0
+  const settle = (v: unknown) => {
+    if (v && typeof (v as Promise<unknown>).finally === 'function') (v as Promise<unknown>).finally(() => { inflight = false })
+    else inflight = false
+  }
+  return {
+    tryRun(fn: () => unknown) {
+      if (inflight) return
+      inflight = true
+      last = Date.now()
+      try {
+        settle(fn())
+      } catch {
+        inflight = false
+      }
+    },
+    nudge(fn: () => unknown) {
+      if (inflight || Date.now() - last < cooldownMs) return
+      inflight = true
+      last = Date.now()
+      try {
+        settle(fn())
+      } catch {
+        inflight = false
+      }
+    },
+  }
+}
+
 function authParams(): string {
   const t = getToken()
   return t ? `token=${encodeURIComponent(t)}` : ''

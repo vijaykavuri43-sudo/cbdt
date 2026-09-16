@@ -238,6 +238,7 @@ def load_reference_wallets() -> list[dict]:
     except Exception:
         pass
     rows: list[dict] = []
+    found_file = ""
     for cand in cands:
         try:
             if not cand.is_file():
@@ -259,7 +260,14 @@ def load_reference_wallets() -> list[dict]:
                     )
         except OSError:
             continue
+        found_file = str(cand)
         break
+    if not found_file:
+        print(
+            "[wallets] WARNING: identified-wallets.csv not found in "
+            f"{[str(c) for c in cands]} — reference section will be empty",
+            flush=True,
+        )
     return rows
 
 

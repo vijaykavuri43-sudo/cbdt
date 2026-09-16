@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Collection, Optional
+from typing import Any, Collection, Optional
 
 from . import config
 
@@ -210,6 +210,28 @@ CREATE INDEX IF NOT EXISTS idx_obj_root_lm ON objects(last_modified DESC, key DE
 CREATE INDEX IF NOT EXISTS idx_obj_enrich_pick ON objects(top_prefix, seen_utc DESC)
   WHERE enriched = 0 AND extract_json IS NULL;
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
+-- Materialized crypto-wallet index (2026-09-16): json_each scans over 700k+
+-- payloads made /api/wallets time out (60s+ on the VM). One row per
+-- object x wallet hit, written through on every payload persist + one-time
+-- backfill. All wallet reads serve from here (indexed, ms).
+CREATE TABLE IF NOT EXISTS wallet_hits(
+  address TEXT NOT NULL,
+  key TEXT NOT NULL,
+  last_modified TEXT DEFAULT '',
+  seen_utc TEXT DEFAULT '',
+  network TEXT DEFAULT '',
+  standard TEXT DEFAULT '',
+  confidence TEXT DEFAULT '',
+  checksum TEXT DEFAULT '',
+  kind TEXT DEFAULT '',
+  amount_inr REAL,
+  amount_value REAL,
+  amount_currency TEXT DEFAULT '',
+  txids TEXT DEFAULT '',
+  PRIMARY KEY(address, key)
+);
+CREATE INDEX IF NOT EXISTS idx_wh_lm ON wallet_hits(last_modified DESC);
+CREATE INDEX IF NOT EXISTS idx_wh_addr_lm ON wallet_hits(address, last_modified DESC);
 CREATE TABLE IF NOT EXISTS utr_identity(
   utr TEXT PRIMARY KEY,
   gambler TEXT DEFAULT '',
@@ -743,6 +765,109 @@ def get_object_sizes(keys: list[str]) -> dict[str, dict]:
     return out
 
 
+def _sync_wallet_hits(c: sqlite3.Connection, key: str, payload: dict | None) -> int:
+    """Write-through: mirror payload wallets[] into wallet_hits (no clobber issue).
+
+    Caller must hold _writer_lock. Deletes this key's rows then re-inserts
+    from the current payload, so repairs/drops/recoveries stay in sync.
+    Returns rows inserted.
+    """
+    c.execute("DELETE FROM wallet_hits WHERE key=?", (key,))
+    if not isinstance(payload, dict):
+        return 0
+    wallets = payload.get("wallets") or []
+    if not wallets:
+        return 0
+    meta = c.execute(
+        "SELECT last_modified,seen_utc FROM objects WHERE key=?", (key,)
+    ).fetchone()
+    lm = (meta["last_modified"] if meta else "") or ""
+    seen = (meta["seen_utc"] if meta else "") or ""
+    kind = str(payload.get("kind") or "")
+    seen_addrs: set[str] = set()
+    for w in wallets:
+        if not isinstance(w, dict) or not w.get("address"):
+            continue
+        addr = str(w["address"])
+        if addr in seen_addrs:
+            continue
+        seen_addrs.add(addr)
+        txids = w.get("txids", payload.get("txids"))
+        if isinstance(txids, list):
+            txids = json.dumps(txids)
+        try:
+            c.execute(
+                "INSERT OR REPLACE INTO wallet_hits(address,key,last_modified,"
+                "seen_utc,network,standard,confidence,checksum,kind,amount_inr,"
+                "amount_value,amount_currency,txids) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    addr,
+                    key,
+                    lm,
+                    seen,
+                    str(w.get("network") or ""),
+                    str(w.get("standard") or ""),
+                    str(w.get("confidence") or ""),
+                    str(w.get("checksum") or ""),
+                    kind,
+                    payload.get("amount_inr"),
+                    payload.get("amount_value"),
+                    str(payload.get("amount_currency") or ""),
+                    str(txids or ""),
+                ),
+            )
+        except Exception:
+            continue
+    return len(seen_addrs)
+
+
+def backfill_wallet_hits(batch: int = 20000) -> int:
+    """One-time seed of wallet_hits from existing payloads (batched by rowid).
+
+    Only rows whose payload actually contains wallets[] are parsed; the scan
+    touches each payload once. Idempotent (per-key delete+reinsert).
+    """
+    total = 0
+    last_rowid = 0
+    while True:
+        with _writer_lock:
+            c = connect()
+            rows = c.execute(
+                "SELECT rowid,key,extract_json FROM objects"
+                " WHERE rowid > ? AND extract_json IS NOT NULL"
+                " AND json_array_length(extract_json,'$.wallets') > 0"
+                " ORDER BY rowid LIMIT ?",
+                (last_rowid, batch),
+            ).fetchall()
+            if not rows:
+                break
+            for r in rows:
+                try:
+                    p = json.loads(r["extract_json"]) if r["extract_json"] else {}
+                except Exception:
+                    continue
+                try:
+                    total += _sync_wallet_hits(c, r["key"], p) or 0
+                except Exception:
+                    continue
+                last_rowid = r["rowid"]
+            c.commit()
+            if len(rows) < batch:
+                break
+    return total
+
+
+def wallet_index_ready() -> bool:
+    try:
+        return bool(get_meta("wallet_index_v1"))
+    except Exception:
+        return False
+
+
+def mark_wallet_index_ready():
+    set_meta("wallet_index_v1", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+
+
 def mark_enriched(key: str, payload: dict | None):
     """Persist an enrichment payload; amounts are sanity-checked at ingestion.
 
@@ -772,6 +897,7 @@ def mark_enriched(key: str, payload: dict | None):
         )
         if payload:
             _replace_payment_rows(c, key, payload)
+            _sync_wallet_hits(c, key, payload)
         c.commit()
 
 
@@ -810,6 +936,7 @@ def persist_enriched_batch(items: list[tuple[str, dict | None]]) -> int:
             )
             if payload:
                 _replace_payment_rows(c, key, payload)
+                _sync_wallet_hits(c, key, payload)
             done += 1
         c.commit()
     return done
@@ -2144,6 +2271,7 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
                     "UPDATE objects SET extract_json=? WHERE key=?",
                     (json.dumps(p, ensure_ascii=False), key),
                 )
+                _sync_wallet_hits(wc, key, p)
             wc.commit()
     return {
         "scanned": scanned,
@@ -2712,16 +2840,59 @@ def upi_counts(
     return {"feed_total": feed_total, "distinct_total": distinct_total}
 
 
+def _txids_of(raw) -> Any:
+    if not raw:
+        return None
+    try:
+        v = json.loads(raw)
+        return v
+    except Exception:
+        return raw
+
+
 def wallet_feed(limit: int = 300, offset: int = 0) -> list[dict]:
     """Every enriched object whose payload contains crypto wallet addresses.
 
-    Uses json_each over the wallets[] array; newest first. Each item carries the
-    source object key so the officer can open the exact screenshot/QR.
+    Served from the materialized wallet_hits index (ms); legacy json_each
+    scan only until the one-time backfill completes.
     2026-09-16: offset added — the tab pages through the full hit set so old
     wallets never fall off the newest-N window (same fix as UPI tab 2026-09-11).
     """
     limit = max(1, min(limit, 2000))
     offset = max(0, offset)
+    if not wallet_index_ready():
+        return _wallet_feed_legacy(limit, offset)
+    rows = (
+        connect()
+        .execute(
+            "SELECT address,key,last_modified,seen_utc,kind,network,standard,"
+            "confidence,checksum,amount_inr,amount_value,amount_currency,txids"
+            " FROM wallet_hits ORDER BY last_modified DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        .fetchall()
+    )
+    return [
+        {
+            "key": r["key"],
+            "last_modified": r["last_modified"],
+            "seen_utc": r["seen_utc"],
+            "kind": r["kind"],
+            "address": r["address"],
+            "network": r["network"],
+            "standard": r["standard"],
+            "confidence": r["confidence"],
+            "checksum": r["checksum"],
+            "amount_inr": r["amount_inr"],
+            "amount_value": r["amount_value"],
+            "amount_currency": r["amount_currency"],
+            "txids": _txids_of(r["txids"]),
+        }
+        for r in rows
+    ]
+
+
+def _wallet_feed_legacy(limit: int = 300, offset: int = 0) -> list[dict]:
     rows = (
         connect()
         .execute(
@@ -2767,6 +2938,25 @@ def wallet_feed(limit: int = 300, offset: int = 0) -> list[dict]:
 
 
 def wallet_stats() -> dict:
+    """Aggregate counts for the Wallets dashboard cards (indexed, ms)."""
+    if not wallet_index_ready():
+        return _wallet_stats_legacy()
+    c = connect()
+    row = c.execute(
+        "SELECT COUNT(*) n, COUNT(DISTINCT address) d FROM wallet_hits"
+    ).fetchone()
+    by_net = c.execute(
+        "SELECT network net, COUNT(*) n FROM wallet_hits"
+        " GROUP BY network ORDER BY n DESC"
+    ).fetchall()
+    return {
+        "wallet_hits": row["n"] or 0,
+        "distinct_wallets": row["d"] or 0,
+        "by_network": [{"network": r["net"], "count": r["n"]} for r in by_net],
+    }
+
+
+def _wallet_stats_legacy() -> dict:
     """Aggregate counts for the Wallets dashboard cards."""
     row = (
         connect()
@@ -2798,6 +2988,47 @@ def wallet_stats() -> dict:
 
 
 def wallet_distinct(limit: int = 300, offset: int = 0) -> list[dict]:
+    """One row per unique wallet address: hit count, first/last seen, plus the
+    newest hit's key/network/label as the sample evidence. Officers use this to
+    reach old single-hit wallets that drown in the newest-first hit feed.
+    Served from the wallet_hits index (ms)."""
+    limit = max(1, min(limit, 2000))
+    offset = max(0, offset)
+    if not wallet_index_ready():
+        return _wallet_distinct_legacy(limit, offset)
+    c = connect()
+    groups = c.execute(
+        "SELECT address, COUNT(*) hits, MIN(last_modified) first_seen,"
+        " MAX(last_modified) last_seen FROM wallet_hits"
+        " GROUP BY address ORDER BY last_seen DESC LIMIT ? OFFSET ?",
+        (limit, offset),
+    ).fetchall()
+    out = []
+    for g in groups:
+        sample = c.execute(
+            "SELECT key,network,standard,confidence,kind,last_modified"
+            " FROM wallet_hits WHERE address=?"
+            " ORDER BY last_modified DESC LIMIT 1",
+            (g["address"],),
+        ).fetchone()
+        out.append(
+            {
+                "address": g["address"],
+                "hits": g["hits"],
+                "first_seen": g["first_seen"],
+                "last_seen": g["last_seen"],
+                "key": sample["key"] if sample else "",
+                "network": sample["network"] if sample else "",
+                "standard": sample["standard"] if sample else "",
+                "confidence": sample["confidence"] if sample else "",
+                "kind": sample["kind"] if sample else "",
+                "last_modified": sample["last_modified"] if sample else "",
+            }
+        )
+    return out
+
+
+def _wallet_distinct_legacy(limit: int = 300, offset: int = 0) -> list[dict]:
     """One row per unique wallet address: hit count, first/last seen, plus the
     newest hit's key/network/label as the sample evidence. Officers use this to
     reach old single-hit wallets that drown in the newest-first hit feed.
@@ -2841,6 +3072,18 @@ def wallet_distinct(limit: int = 300, offset: int = 0) -> list[dict]:
 
 
 def wallet_counts() -> dict:
+    """Exact totals backing wallet-tab pagination (indexed, ms)."""
+    if not wallet_index_ready():
+        return _wallet_counts_legacy()
+    row = (
+        connect()
+        .execute("SELECT COUNT(*) n, COUNT(DISTINCT address) d FROM wallet_hits")
+        .fetchone()
+    )
+    return {"feed_total": row["n"] or 0, "distinct_total": row["d"] or 0}
+
+
+def _wallet_counts_legacy() -> dict:
     """Exact totals backing wallet-tab pagination (same filters as queries)."""
     c = connect()
     row = c.execute(
@@ -2853,6 +3096,14 @@ def wallet_counts() -> dict:
 
 
 def live_wallet_addresses() -> set[str]:
+    """Distinct live-decoded wallet addresses (indexed, cached by callers)."""
+    if not wallet_index_ready():
+        return _live_wallet_addresses_legacy()
+    rows = connect().execute("SELECT DISTINCT address a FROM wallet_hits").fetchall()
+    return {str(r["a"]) for r in rows if r["a"]}
+
+
+def _live_wallet_addresses_legacy() -> set[str]:
     """Distinct live-decoded wallet addresses (single scan, cached by callers)."""
     rows = (
         connect()
@@ -2936,6 +3187,7 @@ def merge_object_wallets(key: str, wallets: list[dict], kind: str) -> int:
                 " enrich_error=NULL, enrich_retry_utc=NULL WHERE key=?",
                 (json.dumps(payload, ensure_ascii=False), now, key),
             )
+            _sync_wallet_hits(c, key, payload)
             c.commit()
     return added
 

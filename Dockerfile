@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 COPY backend ./backend
 COPY sync ./sync
 COPY scripts ./scripts
+COPY reference ./reference
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
 # data dirs (manifest lives on persistent disk, evidence under /data if mounted)
