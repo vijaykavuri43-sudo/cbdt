@@ -111,6 +111,71 @@ def _parse(key: str, data: bytes) -> tuple[str, list[dict]]:
     return _kind(key), []
 
 
+# Cap: sheets are money evidence first; the wallet scan is a bounded bonus.
+# 400k chars covers bank_data-scale workbooks' address cells without stalling sync.
+_SHEET_SCAN_CHARS = 400_000
+
+
+def _sheet_text(key: str, data: bytes) -> str:
+    """Scannable text of a spreadsheet for wallet-address cells.
+
+    2026-09-16 (root-cause fix RC2): bank_data xlsx carried the 28 hawala
+    wallets in address cells that no pipeline ever scanned — money rows were
+    indexed, wallet cells ignored. Every synced sheet now yields its text
+    here so extract_wallets() sees the same cells an analyst would read.
+    """
+    ext = key.rsplit(".", 1)[-1].lower() if "." in key.rsplit("/", 1)[-1] else ""
+    try:
+        if ext == "xlsx":
+            import openpyxl
+
+            wb = openpyxl.load_workbook(
+                io.BytesIO(data), read_only=True, data_only=True
+            )
+            parts = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    for cell in row:
+                        if cell is None:
+                            continue
+                        s = str(cell).strip()
+                        if s:
+                            parts.append(s)
+                            if sum(map(len, parts)) > _SHEET_SCAN_CHARS:
+                                return "\n".join(parts)
+                    parts.append("")  # row boundary keeps addresses separate
+            return "\n".join(parts)[: _SHEET_SCAN_CHARS + 10_000]
+        if ext in ("csv", "txt", "tsv"):
+            return data.decode("utf-8", errors="replace")[: _SHEET_SCAN_CHARS + 10_000]
+    except Exception:
+        pass
+    return ""
+
+
+def _scan_sheet_wallets(key: str, data: bytes) -> int:
+    """Extract wallet addresses from sheet text into objects.extract_json.
+
+    Merge-only (never clobbers image payloads). Returns wallets newly added.
+    """
+    text = _sheet_text(key, data)
+    if not text:
+        return 0
+    try:
+        from .enrich import extract_wallets  # lazy: enrich imports db
+    except Exception:
+        return 0
+    try:
+        found = extract_wallets(text) or []
+    except Exception:
+        return 0
+    if not found:
+        return 0
+    try:
+        return db.merge_object_wallets(key, found, "sheet")
+    except Exception:
+        return 0
+
+
 def sync_ledger(store, limit_files: int = 25) -> dict:
     """Index up to limit_files new/changed csv-files/ objects. Bounded per call."""
     c = db.connect()
@@ -122,6 +187,7 @@ def sync_ledger(store, limit_files: int = 25) -> dict:
         (limit_files,),
     ).fetchall()
     done, skipped, errors = 0, 0, []
+    sheet_wallets_total = 0
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     with db._writer_lock:
         c = db.connect()
@@ -149,6 +215,12 @@ def sync_ledger(store, limit_files: int = 25) -> dict:
                 data = resp.read()
                 resp.close()
                 kind, rows = _parse(key, data)
+                # Root-cause fix RC2: every synced sheet also yields wallet
+                # addresses (bank_data xlsx cells etc.) into the Crypto tab.
+                try:
+                    sheet_wallets = _scan_sheet_wallets(key, data)
+                except Exception:
+                    sheet_wallets = 0
                 c.execute("DELETE FROM ledger_rows WHERE key=?", (key,))
                 c.executemany(
                     "INSERT INTO ledger_rows(key,row_no,type,sender,gambler,amount,bonus,cash,utr,remark,ts)"
@@ -185,6 +257,7 @@ def sync_ledger(store, limit_files: int = 25) -> dict:
                     ),
                 )
                 done += 1
+                sheet_wallets_total += sheet_wallets or 0
             except Exception as e:  # noqa: BLE001 — per-file fault isolation
                 errors.append(f"{key}: {e}"[:200])
                 try:
@@ -218,6 +291,7 @@ def sync_ledger(store, limit_files: int = 25) -> dict:
         "errors": errors[:10],
         "files_indexed": indexed,
         "files_total": total,
+        "sheet_wallets_added": sheet_wallets_total,
         "synced_utc": now,
     }
 

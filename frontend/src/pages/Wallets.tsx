@@ -317,11 +317,11 @@ export function Wallets() {
                   {w.source_ref || '—'}
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  {w.proof_url
-                    ? <a href={w.proof_url} target="_blank" rel="noreferrer" className="small">S3 proof ↗</a>
-                    : w.proof_s3_key
-                      ? <a href={objectUrl(w.proof_s3_key)} target="_blank" rel="noreferrer" className="small">view proof</a>
-                      : <span className="small dim">report §</span>}
+                  {(w as any).in_mirror && w.proof_s3_key
+                    ? <a href={objectUrl(w.proof_s3_key)} target="_blank" rel="noreferrer" className="small">view proof</a>
+                    : w.proof_url
+                      ? <a href={w.proof_url} target="_blank" rel="noreferrer" className="small" title="Source-bucket URL — verified 2026-09-16 that withdrawal proofs, deposit JSONs and bank_data sheets return 404 (deleted at source); opens only if the object still exists">S3 proof ↗</a>
+                      : <span className="small dim" title="Source object deleted/absent from the bucket — proof preserved in the case file (WALLET-PROOF-MAP + proofs/ + LE reports)">case file</span>}
                   {w.address && <>{' · '}<a href={arkhamAddressUrl(w.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(w.address, null) ?? '#'} target="_blank" rel="noreferrer" className="small">Tronscan ↗</a></>}
                 </td>
                 <td>

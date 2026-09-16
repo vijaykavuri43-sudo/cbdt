@@ -2842,10 +2842,23 @@ def wallets_reference(_=Depends(auth)):
     from .evidence import load_reference_wallets
 
     live = _live_wallet_set()
+    ref_rows = load_reference_wallets()
+    present = db.keys_in_mirror([r.get("proof_s3_key") or "" for r in ref_rows])
     items = []
-    for r in load_reference_wallets():
+    for r in ref_rows:
         addr = r.get("address") or ""
-        items.append({**r, "in_live": addr in live})
+        pk = r.get("proof_s3_key") or ""
+        items.append(
+            {
+                **r,
+                "in_live": addr in live,
+                # Proof key in THIS host's mirror? False usually means the
+                # source object was deleted from the bucket (verified 2026-09-16:
+                # withdrawal proofs, deposit JSONs, bank_data xlsx all 404 on
+                # live S3) — surviving proof is the preserved case file.
+                "in_mirror": pk in present if pk else None,
+            }
+        )
     identified = len(items)
     decoded = sum(1 for i in items if i["in_live"])
     return {

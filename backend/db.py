@@ -42,7 +42,11 @@ def _sanitize_amount(value) -> float | None:
     return num
 
 
-_writer_lock = threading.Lock()
+# RLock (not Lock): writer paths nest — e.g. ledger.sync_ledger holds this
+# while merge_object_wallets re-acquires it. A plain Lock deadlocks there
+# (verified 2026-09-16: sync hung forever). Same-thread re-entry is safe:
+# connections are thread-local, so the same conn is reused.
+_writer_lock = threading.RLock()
 _local = threading.local()
 
 
@@ -2861,6 +2865,79 @@ def live_wallet_addresses() -> set[str]:
         .fetchall()
     )
     return {str(r["a"]) for r in rows if r["a"]}
+
+
+def keys_in_mirror(keys: list[str]) -> set[str]:
+    """Which of these keys exist in this host's mirror (one bounded query)."""
+    keys = [k for k in keys if k]
+    if not keys:
+        return set()
+    out = set()
+    c = connect()
+    for i in range(0, len(keys), 500):
+        chunk = keys[i : i + 500]
+        rows = c.execute(
+            "SELECT key FROM objects WHERE key IN ("
+            + ",".join("?" for _ in chunk)
+            + ")",
+            chunk,
+        ).fetchall()
+        out.update(r["key"] for r in rows)
+    return out
+
+
+def merge_object_wallets(key: str, wallets: list[dict], kind: str) -> int:
+    """Merge sheet/config-decoded wallets into objects.extract_json (no clobber).
+
+    2026-09-16 (root-cause fix): csv-files/ spreadsheets were ledger-indexed
+    for money rows but their wallet-address cells were never scanned — the
+    28 hawala wallets lived only in bank_data xlsx. Same for any future
+    JSON/text rail config. This merges found wallets into the same
+    extract_json wallets[] the Crypto tab reads, so sheet sources surface
+    with view-proof like image decodes. Existing image payloads are only
+    appended to (dedupe by address); never overwritten.
+    Returns number of newly added wallets.
+    """
+    if not wallets:
+        return 0
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    with _writer_lock:
+        c = connect()
+        row = c.execute(
+            "SELECT extract_json,last_modified FROM objects WHERE key=?", (key,)
+        ).fetchone()
+        if row is None:
+            return 0
+        try:
+            payload = json.loads(row["extract_json"]) if row["extract_json"] else {}
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        existing = {
+            str(w.get("address"))
+            for w in (payload.get("wallets") or [])
+            if isinstance(w, dict) and w.get("address")
+        }
+        added = 0
+        for w in wallets:
+            if not isinstance(w, dict) or not w.get("address"):
+                continue
+            if str(w["address"]) in existing:
+                continue
+            (payload.setdefault("wallets", [])).append(w)
+            existing.add(str(w["address"]))
+            added += 1
+        if added:
+            payload["sheet_scan_utc"] = now
+            payload.setdefault("kind", kind)
+            c.execute(
+                "UPDATE objects SET extract_json=?, enriched=1, enriched_utc=?,"
+                " enrich_error=NULL, enrich_retry_utc=NULL WHERE key=?",
+                (json.dumps(payload, ensure_ascii=False), now, key),
+            )
+            c.commit()
+    return added
 
 
 def pending_slip_count() -> int:
