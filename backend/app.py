@@ -2791,7 +2791,9 @@ def evidence_exhibit(_=Depends(auth)):
             e = json.loads(ln)
         except Exception:
             continue
-        kinds[str(e.get("event") or "unknown")] += 1
+        kinds[str(e.get("event") or "unknown")] = (
+            kinds.get(str(e.get("event") or "unknown"), 0) + 1
+        )
         if e.get("artifact_sha256"):
             hashed += 1
     jobs = list(downloads.jobs.values())
