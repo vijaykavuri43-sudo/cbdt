@@ -48,6 +48,7 @@ interface RefWallet {
   proof_url?: string
   fact_type?: string
   in_live?: boolean
+  live_keys?: string[]
 }
 interface RefResp {
   items: RefWallet[]
@@ -88,21 +89,33 @@ export function Wallets() {
   const [error, setError] = useState('')
   const [ref, setRef] = useState<RefResp | null>(null)
   const [refError, setRefError] = useState('')
+  const [q, setQ] = useState('')
+  const [qDebounced, setQDebounced] = useState('')
+  const [network, setNetwork] = useState('')
+  const [sort, setSort] = useState('recent')
 
   const refresh = useCallback(() => {
     // 2026-09-16: paginated — old wallets never fall off the newest-N window.
     // Distinct mode (default) gives one row per address so old single-hit
     // wallets stay reachable; All-hits mode shows every object×wallet row.
+    // 2026-09-17: q/network filters + distinct sort are server-side.
     setError('')
-    return api<WalletsResp>('/api/wallets', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, distinct: distinct ? 1 : 0 }, 60000)
+    return api<WalletsResp>('/api/wallets', { limit: PAGE_SIZE, offset: page * PAGE_SIZE, distinct: distinct ? 1 : 0, q: qDebounced, network, sort }, 60000)
       .then(setData)
       .catch((e) => setError(String(e)))
-  }, [page, distinct])
+  }, [page, distinct, qDebounced, network, sort])
   const refreshScan = useCallback(() => {
     api<FullScanStatus>('/api/wallets/full-scan/status').then(setScan).catch(() => {})
   }, [])
   useEffect(() => { refresh() }, [refresh])
   useEffect(() => { setPage(0) }, [distinct])
+  // Debounce the address/source search so each keystroke isn't a request;
+  // any filter change restarts at page 1.
+  useEffect(() => {
+    const id = setTimeout(() => setQDebounced(q.trim()), 400)
+    return () => clearTimeout(id)
+  }, [q])
+  useEffect(() => { setPage(0) }, [qDebounced, network, sort])
   const loadRef = useCallback(() => {
     setRefError('')
     api<RefResp>('/api/wallets/reference', {}, 60000).then(setRef).catch((e) => setRefError(String(e)))
@@ -202,7 +215,7 @@ export function Wallets() {
         <div className="st-card">
           <div className="st-card-label">Distinct addresses</div>
           <div className="st-card-value">{(data?.distinct_wallets ?? 0).toLocaleString()}</div>
-          <div className="st-card-sub">each with exact source file + view proof</div>
+          <div className="st-card-sub">each with exact source file + view proof{ref ? ` · census ${ref.identified_total.toLocaleString()} identified (${ref.live_decoded.toLocaleString()} live-decoded · ${ref.missing_from_live.toLocaleString()} ref-only)` : ''}</div>
         </div>
         <div className="st-card">
           <div className="st-card-label">GCS Enrichment (live source)</div>
@@ -228,6 +241,39 @@ export function Wallets() {
             ⇄ {distinct ? 'Unique wallets ✓' : 'Group: unique wallets'}
           </button>
           <button className={`ex-toggle ${!distinct ? 'ex-toggle-on' : ''}`} onClick={() => setDistinct(false)} title={`Every object×wallet hit row across all pages (${(data?.wallet_hits_total ?? 0).toLocaleString()} rows, ${PAGE_SIZE} per page)`}>All hits · {(data?.wallet_hits_total ?? 0).toLocaleString()}</button>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search address / source file…"
+            title="Substring match on wallet address or bucket source key (server-side)"
+            style={{ fontSize: 11, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border, #444)', background: 'transparent', color: 'inherit', minWidth: 200 }}
+          />
+          <select
+            value={network}
+            onChange={(e) => setNetwork(e.target.value)}
+            title="Filter by network"
+            style={{ fontSize: 11, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--border, #444)', background: 'transparent', color: 'inherit' }}
+          >
+            <option value="">All networks</option>
+            {(data?.by_network ?? []).map((n) => (
+              <option key={n.network} value={n.network}>{n.network} ({n.count.toLocaleString()})</option>
+            ))}
+          </select>
+          {distinct && (
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              title="Sort unique wallets"
+              style={{ fontSize: 11, padding: '4px 6px', borderRadius: 6, border: '1px solid var(--border, #444)', background: 'transparent', color: 'inherit' }}
+            >
+              <option value="recent">Recent first</option>
+              <option value="hits">Most hits</option>
+              <option value="amount">Largest amount</option>
+            </select>
+          )}
+          {(qDebounced || network) && (
+            <button className="ex-toggle" onClick={() => { setQ(''); setQDebounced(''); setNetwork('') }} title="Clear search + network filter">✕ clear</button>
+          )}
           <span className="small dim">All rows: bucket-decoded wallets — exact source file + view proof + Arkham + Tronscan.</span>
         </div>
         <span className="small dim">Live hits: QR/slip/chat extraction; nil right now is backlog — {data?.extraction_status?.pending?.toLocaleString() ?? '—'} pending enrich.</span>
@@ -284,7 +330,7 @@ export function Wallets() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
         <button className="btn" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>← Prev</button>
         <button className="btn" disabled={page + 1 >= pageCount} onClick={() => setPage((p) => p + 1)}>Next →</button>
-        <span className="small dim">Page {page + 1} of {pageCount} · showing {from.toLocaleString()}–{to.toLocaleString()} of {total.toLocaleString()} {distinct ? 'unique wallets' : 'hits'} (all pages reachable — old wallets included)</span>
+        <span className="small dim">Page {page + 1} of {pageCount} · showing {from.toLocaleString()}–{to.toLocaleString()} of {total.toLocaleString()} {distinct ? 'unique wallets' : 'hits'}{(qDebounced || network) ? ` matching${qDebounced ? ` “${qDebounced}”` : ''}${network ? ` · ${network}` : ''}` : ''} (all pages reachable — old wallets included)</span>
       </div>
 
       <div className="pg-header" style={{ marginTop: 26 }}>
@@ -331,7 +377,9 @@ export function Wallets() {
                     ? <a href={objectUrl(w.proof_s3_key)} target="_blank" rel="noreferrer" className="small">view proof</a>
                     : w.proof_url
                       ? <a href={w.proof_url} target="_blank" rel="noreferrer" className="small" title="Source-bucket URL — verified 2026-09-16 that withdrawal proofs, deposit JSONs and bank_data sheets return 404 (deleted at source); opens only if the object still exists">S3 proof ↗</a>
-                      : <span className="small dim" title="Source object deleted/absent from the bucket — proof preserved in the case file (WALLET-PROOF-MAP + proofs/ + LE reports)">case file</span>}
+                      : (w.live_keys?.length
+                        ? <a href={objectUrl(w.live_keys[0])} target="_blank" rel="noreferrer" className="small" title={`Report citation recorded no bucket key — but this address IS decoded live from ${w.live_keys.length} bucket object(s), newest shown. Server-provided fallback source.`}>live proof ✓</a>
+                        : <span className="small dim" title="No bucket key in the report citation and not decoded from any live bucket image — source is a spreadsheet/config ID, dashboard snapshot, or chat reference; proof preserved in the case file (WALLET-PROOF-MAP + proofs/ + LE reports)">case file</span>)}
                   {w.address && <>{' · '}<a href={arkhamAddressUrl(w.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(w.address, null) ?? '#'} target="_blank" rel="noreferrer" className="small">Tronscan ↗</a></>}
                 </td>
                 <td>

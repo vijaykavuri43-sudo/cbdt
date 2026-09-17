@@ -2445,29 +2445,39 @@ def export_wallets(_=Depends(auth)):
 
     def build():
         rows = []
-        for it in db.wallet_feed(10**9):
-            addr = it.get("address") or ""
-            key = it.get("key") or ""
-            role = it.get("role") or ""
-            rows.append(
-                {
-                    "address": addr,
-                    "network": it.get("network") or "",
-                    "label": it.get("standard") or (f"role:{role}" if role else ""),
-                    "confidence": it.get("confidence") or "",
-                    "status": "EXTRACTED",
-                    "origin_kind": "live",
-                    "attribution": "",
-                    "source_file": key,
-                    "proof_url": "",
-                    "qr_uploaded_utc": it.get("last_modified") or "",
-                    "seen_utc": it.get("seen_utc") or "",
-                    "dashboard_source_link": _source_link(key) if key else "",
-                    "case": config.CASE_ID,
-                    "auth_ref": config.AUTH_REF,
-                    "fact_type": "ai_lead",
-                }
-            )
+        # wallet_feed clamps each page to 2000 rows — page through the whole
+        # set so the exhibit never truncates once hits exceed one page.
+        off = 0
+        while True:
+            chunk = db.wallet_feed(2000, off)
+            if not chunk:
+                break
+            for it in chunk:
+                addr = it.get("address") or ""
+                key = it.get("key") or ""
+                role = it.get("role") or ""
+                rows.append(
+                    {
+                        "address": addr,
+                        "network": it.get("network") or "",
+                        "label": it.get("standard") or (f"role:{role}" if role else ""),
+                        "confidence": it.get("confidence") or "",
+                        "status": "EXTRACTED",
+                        "origin_kind": "live",
+                        "attribution": "",
+                        "source_file": key,
+                        "proof_url": "",
+                        "qr_uploaded_utc": it.get("last_modified") or "",
+                        "seen_utc": it.get("seen_utc") or "",
+                        "dashboard_source_link": _source_link(key) if key else "",
+                        "case": config.CASE_ID,
+                        "auth_ref": config.AUTH_REF,
+                        "fact_type": "ai_lead",
+                    }
+                )
+            off += len(chunk)
+            if len(chunk) < 2000:
+                break
         from .evidence import load_reference_wallets
 
         for r in load_reference_wallets():
@@ -2782,6 +2792,9 @@ def wallets_api(
     limit: int = Query(300, le=2000),
     offset: int = Query(0, ge=0),
     distinct: bool = False,
+    q: str = Query("", max_length=128),
+    network: str = Query("", max_length=32),
+    sort: str = Query("recent", pattern="^(recent|hits|amount)$"),
     _=Depends(auth),
 ):
     """Crypto-wallet exhibit, bucket-native: every row is one TRON/ERC20/BTC
@@ -2789,15 +2802,20 @@ def wallets_api(
     GCS bucket. Each item carries its exact source object key, so every row
     in the Crypto tab has view-proof. No external reference lists.
     2026-09-16: paginated (limit/offset) + distinct mode — the tab pages
-    through the FULL set so old wallets never fall off the newest-N window."""
+    through the FULL set so old wallets never fall off the newest-N window.
+    2026-09-17: q (address/source substring) + network filters and distinct
+    sort (recent/hits/amount); distinct rows carry the newest hit's
+    amount/txids/checksum so the Detail column is populated."""
     limit = max(1, min(limit, 2000))
     offset = max(0, offset)
     if distinct:
-        items = db.wallet_distinct(limit, offset)
+        items = db.wallet_distinct(limit, offset, q=q, network=network, sort=sort)
     else:
-        items = db.wallet_feed(limit, offset)
+        items = db.wallet_feed(limit, offset, q=q, network=network)
     stats = db.wallet_stats()
-    totals = cached("wallets:counts", 120.0, db.wallet_counts)
+    totals = cached(
+        f"wallets:counts:{q}:{network}", 120.0, lambda: db.wallet_counts(q, network)
+    )
     total = totals["distinct_total"] if distinct else totals["feed_total"]
     # Source stats for officer: enrichment backlog explains nil hits.
     try:
@@ -2821,6 +2839,9 @@ def wallets_api(
         "limit": limit,
         "offset": offset,
         "total": total,
+        "q": q,
+        "network": network,
+        "sort": sort,
     }
 
 
@@ -2837,6 +2858,10 @@ def wallets_reference(_=Depends(auth)):
     each with its original source reference + proof link where one exists.
     `in_live` flags whether the address is also live-decoded from a bucket
     image right now, so officers can see coverage: identified vs decoded.
+    `live_keys` carries the newest bucket source keys for live-decoded rows —
+    the fallback source for reference rows whose report citation never
+    recorded a bucket key (bank_data IDs, bankingqr raw_text, deposit JSON,
+    dashboard snapshot all ship with proof_s3_key empty).
     Attribution labels are report attributions, NOT proof of ownership.
     """
     from .evidence import load_reference_wallets
@@ -2844,6 +2869,7 @@ def wallets_reference(_=Depends(auth)):
     live = _live_wallet_set()
     ref_rows = load_reference_wallets()
     present = db.keys_in_mirror([r.get("proof_s3_key") or "" for r in ref_rows])
+    live_keys = db.live_keys_for([r.get("address") or "" for r in ref_rows])
     items = []
     for r in ref_rows:
         addr = r.get("address") or ""
@@ -2852,6 +2878,7 @@ def wallets_reference(_=Depends(auth)):
             {
                 **r,
                 "in_live": addr in live,
+                "live_keys": live_keys.get(addr, []),
                 # Proof key in THIS host's mirror? False usually means the
                 # source object was deleted from the bucket (verified 2026-09-16:
                 # withdrawal proofs, deposit JSONs, bank_data xlsx all 404 on

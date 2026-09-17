@@ -2850,7 +2850,30 @@ def _txids_of(raw) -> Any:
         return raw
 
 
-def wallet_feed(limit: int = 300, offset: int = 0) -> list[dict]:
+def _wallet_filter_clause(q: str = "", network: str = "") -> tuple[str, list]:
+    """Shared WHERE fragment for wallet reads: substring match on address or
+    source key, plus exact network match. LIKE wildcards in q are escaped."""
+    clauses: list[str] = []
+    args: list = []
+    q = (q or "").strip()
+    if q:
+        like = (
+            "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        )
+        clauses.append("(address LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')")
+        args += [like, like]
+    network = (network or "").strip()
+    if network:
+        clauses.append("network = ?")
+        args.append(network)
+    if not clauses:
+        return "", []
+    return " AND " + " AND ".join(clauses), args
+
+
+def wallet_feed(
+    limit: int = 300, offset: int = 0, q: str = "", network: str = ""
+) -> list[dict]:
     """Every enriched object whose payload contains crypto wallet addresses.
 
     Served from the materialized wallet_hits index (ms); legacy json_each
@@ -2862,13 +2885,16 @@ def wallet_feed(limit: int = 300, offset: int = 0) -> list[dict]:
     offset = max(0, offset)
     if not wallet_index_ready():
         return _wallet_feed_legacy(limit, offset)
+    fclause, fargs = _wallet_filter_clause(q, network)
     rows = (
         connect()
         .execute(
             "SELECT address,key,last_modified,seen_utc,kind,network,standard,"
             "confidence,checksum,amount_inr,amount_value,amount_currency,txids"
-            " FROM wallet_hits ORDER BY last_modified DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            " FROM wallet_hits WHERE 1=1"
+            + fclause
+            + " ORDER BY last_modified DESC LIMIT ? OFFSET ?",
+            (*fargs, limit, offset),
         )
         .fetchall()
     )
@@ -2987,45 +3013,71 @@ def _wallet_stats_legacy() -> dict:
     }
 
 
-def wallet_distinct(limit: int = 300, offset: int = 0) -> list[dict]:
+_WALLET_DISTINCT_SORTS = {
+    # NULLS: SQLite treats NULL as smallest, so DESC already sorts NULLs
+    # last — no NULLS LAST syntax needed.
+    "recent": "last_seen DESC",
+    "hits": "hits DESC, last_seen DESC",
+    "amount": "amount_inr DESC, last_seen DESC",
+}
+
+
+def wallet_distinct(
+    limit: int = 300,
+    offset: int = 0,
+    q: str = "",
+    network: str = "",
+    sort: str = "recent",
+) -> list[dict]:
     """One row per unique wallet address: hit count, first/last seen, plus the
-    newest hit's key/network/label as the sample evidence. Officers use this to
-    reach old single-hit wallets that drown in the newest-first hit feed.
-    Served from the wallet_hits index (ms)."""
+    newest hit's key/network/label/amount/txids as the sample evidence.
+    Officers use this to reach old single-hit wallets that drown in the
+    newest-first hit feed. Served from the wallet_hits index (ms).
+    Single-pass window query — no per-address lookups (2026-09-17: the old
+    GROUP BY + N sample SELECTs did up to 501 queries per page)."""
     limit = max(1, min(limit, 2000))
     offset = max(0, offset)
     if not wallet_index_ready():
         return _wallet_distinct_legacy(limit, offset)
+    fclause, fargs = _wallet_filter_clause(q, network)
+    order = _WALLET_DISTINCT_SORTS.get(sort, _WALLET_DISTINCT_SORTS["recent"])
     c = connect()
-    groups = c.execute(
-        "SELECT address, COUNT(*) hits, MIN(last_modified) first_seen,"
-        " MAX(last_modified) last_seen FROM wallet_hits"
-        " GROUP BY address ORDER BY last_seen DESC LIMIT ? OFFSET ?",
-        (limit, offset),
+    rows = c.execute(
+        "SELECT address, hits, first_seen, last_seen,"
+        " key, network, standard, confidence, checksum, kind, last_modified,"
+        " amount_inr, amount_value, amount_currency, txids"
+        " FROM ("
+        " SELECT address, key, last_modified, network, standard, confidence,"
+        " checksum, kind, amount_inr, amount_value, amount_currency, txids,"
+        " ROW_NUMBER() OVER ("
+        " PARTITION BY address ORDER BY last_modified DESC) AS rn,"
+        " COUNT(*) OVER (PARTITION BY address) AS hits,"
+        " MIN(last_modified) OVER (PARTITION BY address) AS first_seen,"
+        " MAX(last_modified) OVER (PARTITION BY address) AS last_seen"
+        " FROM wallet_hits WHERE 1=1" + fclause + ") WHERE rn = 1"
+        " ORDER BY " + order + " LIMIT ? OFFSET ?",
+        (*fargs, limit, offset),
     ).fetchall()
-    out = []
-    for g in groups:
-        sample = c.execute(
-            "SELECT key,network,standard,confidence,kind,last_modified"
-            " FROM wallet_hits WHERE address=?"
-            " ORDER BY last_modified DESC LIMIT 1",
-            (g["address"],),
-        ).fetchone()
-        out.append(
-            {
-                "address": g["address"],
-                "hits": g["hits"],
-                "first_seen": g["first_seen"],
-                "last_seen": g["last_seen"],
-                "key": sample["key"] if sample else "",
-                "network": sample["network"] if sample else "",
-                "standard": sample["standard"] if sample else "",
-                "confidence": sample["confidence"] if sample else "",
-                "kind": sample["kind"] if sample else "",
-                "last_modified": sample["last_modified"] if sample else "",
-            }
-        )
-    return out
+    return [
+        {
+            "address": r["address"],
+            "hits": r["hits"],
+            "first_seen": r["first_seen"],
+            "last_seen": r["last_seen"],
+            "key": r["key"],
+            "network": r["network"],
+            "standard": r["standard"],
+            "confidence": r["confidence"],
+            "checksum": r["checksum"],
+            "kind": r["kind"],
+            "last_modified": r["last_modified"],
+            "amount_inr": r["amount_inr"],
+            "amount_value": r["amount_value"],
+            "amount_currency": r["amount_currency"],
+            "txids": _txids_of(r["txids"]),
+        }
+        for r in rows
+    ]
 
 
 def _wallet_distinct_legacy(limit: int = 300, offset: int = 0) -> list[dict]:
@@ -3040,7 +3092,8 @@ def _wallet_distinct_legacy(limit: int = 300, offset: int = 0) -> list[dict]:
         .execute(
             """
         SELECT address, hits, first_seen, last_seen,
-               key, network, standard, confidence, kind
+               key, last_modified, network, standard, confidence, kind,
+               amount_inr, amount_value, amount_currency, txids, checksum
         FROM (
           SELECT json_extract(je.value,'$.address') AS address,
                  o.key AS key,
@@ -3048,7 +3101,12 @@ def _wallet_distinct_legacy(limit: int = 300, offset: int = 0) -> list[dict]:
                  json_extract(je.value,'$.network') AS network,
                  json_extract(je.value,'$.standard') AS standard,
                  json_extract(je.value,'$.confidence') AS confidence,
+                 json_extract(je.value,'$.checksum') AS checksum,
                  json_extract(extract_json,'$.kind') AS kind,
+                 CAST(json_extract(extract_json,'$.amount_inr') AS REAL) AS amount_inr,
+                 json_extract(extract_json,'$.amount_value') AS amount_value,
+                 json_extract(extract_json,'$.amount_currency') AS amount_currency,
+                 json_extract(extract_json,'$.txids') AS txids,
                  ROW_NUMBER() OVER (
                    PARTITION BY json_extract(je.value,'$.address')
                    ORDER BY last_modified DESC) AS rn,
@@ -3068,16 +3126,25 @@ def _wallet_distinct_legacy(limit: int = 300, offset: int = 0) -> list[dict]:
         )
         .fetchall()
     )
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    for r in out:
+        r["txids"] = _txids_of(r.get("txids"))
+    return out
 
 
-def wallet_counts() -> dict:
-    """Exact totals backing wallet-tab pagination (indexed, ms)."""
+def wallet_counts(q: str = "", network: str = "") -> dict:
+    """Exact totals backing wallet-tab pagination (indexed, ms) — same
+    filters as the queries so the page count matches the filtered list."""
     if not wallet_index_ready():
         return _wallet_counts_legacy()
+    fclause, fargs = _wallet_filter_clause(q, network)
     row = (
         connect()
-        .execute("SELECT COUNT(*) n, COUNT(DISTINCT address) d FROM wallet_hits")
+        .execute(
+            "SELECT COUNT(*) n, COUNT(DISTINCT address) d FROM wallet_hits"
+            " WHERE 1=1" + fclause,
+            fargs,
+        )
         .fetchone()
     )
     return {"feed_total": row["n"] or 0, "distinct_total": row["d"] or 0}
@@ -3116,6 +3183,38 @@ def _live_wallet_addresses_legacy() -> set[str]:
         .fetchall()
     )
     return {str(r["a"]) for r in rows if r["a"]}
+
+
+def live_keys_for(addresses, per: int = 3) -> dict[str, list[str]]:
+    """Newest bucket source keys per wallet address (indexed, bounded).
+
+    2026-09-17: reference rows whose report citation never recorded a bucket
+    key (bank_data IDs, bankingqr raw_text, deposit JSON, dashboard snapshot)
+    still get view-proof when the address is live-decoded — the reference
+    endpoint attaches these as a fallback source. Newest-first, capped at
+    `per` keys per address. Index-only: without the materialized index this
+    would be a full json_each scan per call, so it returns {} until ready
+    (callers already gate the `in_live` flag the same way via live set).
+    """
+    addrs = [a for a in dict.fromkeys(addresses or ()) if a]
+    out: dict[str, list[str]] = {}
+    if not addrs or not wallet_index_ready():
+        return out
+    per = max(1, min(per, 10))
+    c = connect()
+    for i in range(0, len(addrs), 200):
+        chunk = addrs[i : i + 200]
+        rows = c.execute(
+            "SELECT address, key, MAX(last_modified) lm FROM wallet_hits"
+            " WHERE address IN (" + ",".join("?" for _ in chunk) + ")"
+            " GROUP BY address, key ORDER BY lm DESC",
+            chunk,
+        ).fetchall()
+        for r in rows:
+            lst = out.setdefault(r["address"], [])
+            if len(lst) < per and r["key"] not in lst:
+                lst.append(r["key"])
+    return out
 
 
 def keys_in_mirror(keys: list[str]) -> set[str]:

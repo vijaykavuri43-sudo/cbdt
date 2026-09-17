@@ -93,6 +93,14 @@ def main() -> None:
                     rows[addr]["proof_s3_key"] = (r.get("s3_key") or "").strip()
                     rows[addr]["proof_url"] = (r.get("s3_url") or "").strip()
 
+    # ---- self-key rule (2026-09-17): source_refs that are already a single
+    # bucket path (e.g. deposit/1780826098942.json) become the proof key when
+    # the proof map has no entry — same rule the extras section uses below.
+    for addr, row in rows.items():
+        src = (row.get("source_ref") or "").strip()
+        if not row.get("proof_s3_key") and "/" in src and " " not in src:
+            row["proof_s3_key"] = src
+
     # ---- master-label join (role label top-up only, never overwrite) ----
     mlab = (
         REPO
