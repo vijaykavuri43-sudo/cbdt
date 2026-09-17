@@ -28,7 +28,7 @@ interface WalletsResp {
   wallet_hits_total: number
   distinct_wallets: number
   by_network: { network: string; count: number }[]
-  extraction_status?: { enriched: number; pending: number; objects: number; pending_full_scan?: number }
+  extraction_status?: { enriched: number; pending: number; pending_live?: number; slip_backlog?: number; objects: number; pending_full_scan?: number }
   source?: string
   distinct?: boolean
   limit?: number
@@ -48,7 +48,6 @@ interface RefWallet {
   proof_url?: string
   fact_type?: string
   in_live?: boolean
-  live_keys?: string[]
 }
 interface RefResp {
   items: RefWallet[]
@@ -276,7 +275,7 @@ export function Wallets() {
           )}
           <span className="small dim">All rows: bucket-decoded wallets — exact source file + view proof + Arkham + Tronscan.</span>
         </div>
-        <span className="small dim">Live hits: QR/slip/chat extraction; nil right now is backlog — {data?.extraction_status?.pending?.toLocaleString() ?? '—'} pending enrich.</span>
+        <span className="small dim">Live hits: QR/slip/chat extraction; nil right now is backlog — {(data?.extraction_status?.pending ?? 0).toLocaleString()} undecoded ({(data?.extraction_status?.pending_live ?? 0).toLocaleString()} live queue + {(data?.extraction_status?.slip_backlog ?? 0).toLocaleString()} older slips).</span>
       </div>
       {error && <div className="money-error">Could not load crypto wallets: {error} <button className="btn" style={{ marginLeft: 8 }} onClick={refresh}>Retry</button></div>}
 
@@ -318,7 +317,7 @@ export function Wallets() {
                   <div className="dp-empty-icon">₿</div>
                   <div style={{ fontWeight: 700, marginBottom: 4 }}>No wallets yet on this monitor host</div>
                   <div className="small dim" style={{ maxWidth: 720, margin: '0 auto', lineHeight: 1.5 }}>
-                    This monitor extracts wallets live from <span className="mono">bankingqr/</span>, <span className="mono">qrcode/</span>, <span className="mono">payment/</span>, <span className="mono">deposit/</span>, <span className="mono">withdrawal/</span> and crypto-named <span className="mono">chat_file/</span> screenshots. On this host enrichment is {data?.extraction_status ? `${data.extraction_status.enriched?.toLocaleString()} of ${data.extraction_status.objects?.toLocaleString()} (${data.extraction_status.pending?.toLocaleString()} pending)` : 'still draining'} — so nil is the backlog, not the data.
+                    This monitor extracts wallets live from <span className="mono">bankingqr/</span>, <span className="mono">qrcode/</span>, <span className="mono">payment/</span>, <span className="mono">deposit/</span>, <span className="mono">withdrawal/</span> and crypto-named <span className="mono">chat_file/</span> screenshots. On this host enrichment is {data?.extraction_status ? `${data.extraction_status.enriched?.toLocaleString()} of ${data.extraction_status.objects?.toLocaleString()} (${(data.extraction_status.pending ?? 0).toLocaleString()} undecoded)` : 'still draining'} — so nil is the backlog, not the data.
                   </div>
                 </td>
               </tr>
@@ -375,11 +374,9 @@ export function Wallets() {
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {(w as any).in_mirror && w.proof_s3_key
                     ? <a href={objectUrl(w.proof_s3_key)} target="_blank" rel="noreferrer" className="small">view proof</a>
-                    : w.proof_url
-                      ? <a href={w.proof_url} target="_blank" rel="noreferrer" className="small" title="Source-bucket URL — verified 2026-09-16 that withdrawal proofs, deposit JSONs and bank_data sheets return 404 (deleted at source); opens only if the object still exists">S3 proof ↗</a>
-                      : (w.live_keys?.length
-                        ? <a href={objectUrl(w.live_keys[0])} target="_blank" rel="noreferrer" className="small" title={`Report citation recorded no bucket key — but this address IS decoded live from ${w.live_keys.length} bucket object(s), newest shown. Server-provided fallback source.`}>live proof ✓</a>
-                        : <span className="small dim" title="No bucket key in the report citation and not decoded from any live bucket image — source is a spreadsheet/config ID, dashboard snapshot, or chat reference; proof preserved in the case file (WALLET-PROOF-MAP + proofs/ + LE reports)">case file</span>)}
+                    : w.proof_s3_key
+                      ? <span className="small dim" title={`True source key ${(w as any).in_mirror === false ? 'deleted from the bucket before the mirror captured it — no proof available' : 'not yet indexed on this host'}`}>{(w as any).in_mirror === false ? 'deleted' : 'pending'}</span>
+                      : <span className="small dim" title="Report citation recorded no bucket object (spreadsheet cell, dashboard snapshot, or chat reference) — not a bucket source">no bucket key</span>}
                   {w.address && <>{' · '}<a href={arkhamAddressUrl(w.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(w.address, null) ?? '#'} target="_blank" rel="noreferrer" className="small">Tronscan ↗</a></>}
                 </td>
                 <td>

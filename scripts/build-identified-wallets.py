@@ -50,6 +50,12 @@ COLUMNS = (
     "fact_type",
 )
 
+# Source-key rule 2026-09-17: the ONLY valid source is the true original
+# object key in the GCS bucket (synced from S3). Investigator-created files
+# (OCR text, bundle copies, chat notes) are NEVER sources — rows whose
+# object is gone keep their true key and are badged deleted, never relinked.
+BANKDATA_RE = re.compile(r"bank_data_(\d{10,})")
+
 
 def main() -> None:
     rows: dict[str, dict] = {}
@@ -93,6 +99,29 @@ def main() -> None:
                     rows[addr]["proof_s3_key"] = (r.get("s3_key") or "").strip()
                     rows[addr]["proof_url"] = (r.get("s3_url") or "").strip()
 
+    # ---- key corrections (2026-09-17, all verified LIVE against the bucket):
+    # the proof map drops prefixes/extensions on some rows. The true source
+    # is always the full original object key.
+    #   B1 nitrogen: bare filename -> chat_file/ prefix (per its own S3 URL)
+    #   B4 TD63G: map key lacks the real .png extension
+    #   B5 TJ5yq: note-only citation -> KuCoin screenshot whose held OCR
+    #             reads this address (both 1757641435813 + 1757643087528 do;
+    #             primary = 1757641435813, mirror-verified present)
+    for addr, row in rows.items():
+        pk = (row.get("proof_s3_key") or "").strip()
+        url = (row.get("proof_url") or "").strip()
+        if pk and "/" not in pk and "/chat_file/" in url:
+            row["proof_s3_key"] = "chat_file/" + pk
+            pk = row["proof_s3_key"]
+    if "TD63G1qvWu7ke2ycW848BjMCj2sHEZZusa" in rows:
+        rows["TD63G1qvWu7ke2ycW848BjMCj2sHEZZusa"]["proof_s3_key"] = (
+            "chat_file/07081990_1766755679252_Screenshot_20251226-185751.Binance.png"
+        )
+    if "TJ5yq6udNUQ5iQNaapbN5f5YMUvRJKP17B" in rows:
+        rows["TJ5yq6udNUQ5iQNaapbN5f5YMUvRJKP17B"]["proof_s3_key"] = (
+            "chat_file/inad_1757641435813_Screenshot_20250912-043626_KuCoin.png"
+        )
+
     # ---- self-key rule (2026-09-17): source_refs that are already a single
     # bucket path (e.g. deposit/1780826098942.json) become the proof key when
     # the proof map has no entry — same rule the extras section uses below.
@@ -100,6 +129,18 @@ def main() -> None:
         src = (row.get("source_ref") or "").strip()
         if not row.get("proof_s3_key") and "/" in src and " " not in src:
             row["proof_s3_key"] = src
+
+    # ---- bank_data resolution (2026-09-17): hawala source_refs carry bare
+    # file IDs (bank_data_1777489496421, sometimes comma-separated). The full
+    # keys are csv-files/data_<id>.xlsx per 37-ALL-WALLETS-S3-SOURCE-TRACE —
+    # verified LIVE in the GCS mirror — so they become proof keys and the
+    # dashboard gets view-proof instead of "case file".
+    for addr, row in rows.items():
+        if row.get("proof_s3_key"):
+            continue
+        ids = BANKDATA_RE.findall(row.get("source_ref") or "")
+        if ids:
+            row["proof_s3_key"] = f"csv-files/data_{ids[0]}.xlsx"
 
     # ---- master-label join (role label top-up only, never overwrite) ----
     mlab = (
@@ -156,7 +197,7 @@ def main() -> None:
             "UNCERTAIN dust From — NOT betting rail",
             "medium",
             "chat_evidence",
-            "chat_file/anshul_1769687598637_Trust_Wallet.jpg",
+            "chat_file/anshul_1769687598637_Screenshot_20260129_172259_Trust_Wallet.jpg",
             "fact",
         ),
         "X2": (
@@ -165,7 +206,7 @@ def main() -> None:
             "UNCERTAIN dust To — NOT betting rail",
             "medium",
             "chat_evidence",
-            "chat_file/anshul_1769687598637_Trust_Wallet.jpg",
+            "chat_file/anshul_1769687598637_Screenshot_20260129_172259_Trust_Wallet.jpg",
             "fact",
         ),
         "V1": (
@@ -253,6 +294,10 @@ def main() -> None:
             continue
         cat, net, role, conf, ev, src, ft = meta[tag]
         proof_key = rkeys.get(tag, src if "/" in src and " " not in src else "")
+        if tag == "C12":
+            # pavan chat image key contains spaces (WhatsApp filename) but is
+            # a real bucket key — keep verbatim; mirror presence decides proof.
+            proof_key = src
         rows[addr] = {
             "address": addr,
             "network": net,

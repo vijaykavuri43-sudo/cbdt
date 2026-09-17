@@ -910,11 +910,23 @@ def ledger_summary(_=Depends(auth)):
 
 
 @app.post("/api/ledger/sync")
-def ledger_sync(limit: int = Query(25, ge=1, le=200), _=Depends(auth)):
-    """Index new/changed csv-files/ exports (bounded per call)."""
+def ledger_sync(
+    limit: int = Query(25, ge=1, le=200),
+    keys: str = Query(
+        "", description="comma-separated csv-files/ keys to force-reprocess (max 50)"
+    ),
+    _=Depends(auth),
+):
+    """Index new/changed csv-files/ exports (bounded per call).
+
+    keys= (2026-09-17): one-time repair — reprocess already-indexed sheets
+    whose wallet cells were never scanned pre-RC2 (bank_data xlsx). Ignored
+    when empty; entries outside csv-files/ are dropped, capped at 50.
+    """
     from . import ledger
 
-    out = ledger.sync_ledger(object_store, limit_files=limit)
+    only = [k.strip() for k in (keys or "").split(",") if k.strip()] or None
+    out = ledger.sync_ledger(object_store, limit_files=limit, only_keys=only)
     _invalidate_prefix("ledger:")
     return out
 
@@ -2480,8 +2492,15 @@ def export_wallets(_=Depends(auth)):
                 break
         from .evidence import load_reference_wallets
 
-        for r in load_reference_wallets():
+        ref_rows = load_reference_wallets()
+        # Strict true-source rule: proof/dashboard links only for keys THIS
+        # host's mirror actually holds. Deleted-at-source keys keep their
+        # true citation in source_file with no link — never a dead URL
+        # presented as proof.
+        present = db.keys_in_mirror([r.get("proof_s3_key") or "" for r in ref_rows])
+        for r in ref_rows:
             key = r.get("proof_s3_key") or ""
+            live = bool(key and key in present)
             rows.append(
                 {
                     "address": r.get("address") or "",
@@ -2492,10 +2511,10 @@ def export_wallets(_=Depends(auth)):
                     "origin_kind": "reference",
                     "attribution": r.get("attribution") or "",
                     "source_file": key or (r.get("source_ref") or ""),
-                    "proof_url": r.get("proof_url") or "",
+                    "proof_url": r.get("proof_url") or "" if live else "",
                     "qr_uploaded_utc": "",
                     "seen_utc": "",
-                    "dashboard_source_link": _source_link(key) if key else "",
+                    "dashboard_source_link": _source_link(key) if live else "",
                     "case": config.CASE_ID,
                     "auth_ref": config.AUTH_REF,
                     "fact_type": r.get("fact_type") or "fact",
@@ -2818,11 +2837,18 @@ def wallets_api(
     )
     total = totals["distinct_total"] if distinct else totals["feed_total"]
     # Source stats for officer: enrichment backlog explains nil hits.
+    # pending = HONEST total undecoded (live queue + older slip backlog that
+    # holds most wallet-bearing deposit/withdrawal images) — never the
+    # live-queue-only figure that reads 0 while 500k+ slips await decode.
     try:
         enr = db.enrichment_progress()
+        _live = enr.get("pending_now") or 0
+        _slip = enr.get("slip_backlog") or 0
         extraction_status = {
             "enriched": enr.get("enriched_done"),
-            "pending": enr.get("pending_now"),
+            "pending": _live + _slip,
+            "pending_live": _live,
+            "slip_backlog": _slip,
             "objects": enr.get("total"),
             "pending_full_scan": db.pending_enrichment_count(full_scan=True),
         }
@@ -2853,23 +2879,21 @@ def _live_wallet_set() -> set[str]:
 def wallets_reference(_=Depends(auth)):
     """All previously-identified wallets (reference census, 114 rows).
 
-    Every wallet ever identified across LE-SUBMISSION-MASTER/36 (72),
-    operator/withdrawal/desk proofs, dashboard OCR/QR rails and live rails —
-    each with its original source reference + proof link where one exists.
-    `in_live` flags whether the address is also live-decoded from a bucket
-    image right now, so officers can see coverage: identified vs decoded.
-    `live_keys` carries the newest bucket source keys for live-decoded rows —
-    the fallback source for reference rows whose report citation never
-    recorded a bucket key (bank_data IDs, bankingqr raw_text, deposit JSON,
-    dashboard snapshot all ship with proof_s3_key empty).
-    Attribution labels are report attributions, NOT proof of ownership.
+    Source rule (strict): the ONLY source is the true original object key in
+    the GCS bucket (synced from S3: deposit / bankingqr / chat_file / voice
+    notes / csv-files). `proof_s3_key` carries that key; `in_mirror` tells
+    whether THIS host's mirror holds it right now. False = the object was
+    deleted at the source before capture (deposit JSON + withdrawal proofs,
+    verified 404) — the row keeps its true key and is badged deleted, never
+    relinked to investigator-created files. `in_live` flags live-decoded
+    coverage (identified vs decoded). Attribution labels are report
+    attributions, NOT proof of ownership.
     """
     from .evidence import load_reference_wallets
 
     live = _live_wallet_set()
     ref_rows = load_reference_wallets()
     present = db.keys_in_mirror([r.get("proof_s3_key") or "" for r in ref_rows])
-    live_keys = db.live_keys_for([r.get("address") or "" for r in ref_rows])
     items = []
     for r in ref_rows:
         addr = r.get("address") or ""
@@ -2878,11 +2902,9 @@ def wallets_reference(_=Depends(auth)):
             {
                 **r,
                 "in_live": addr in live,
-                "live_keys": live_keys.get(addr, []),
-                # Proof key in THIS host's mirror? False usually means the
-                # source object was deleted from the bucket (verified 2026-09-16:
-                # withdrawal proofs, deposit JSONs, bank_data xlsx all 404 on
-                # live S3) — surviving proof is the preserved case file.
+                # Proof key in THIS host's mirror? False means the source
+                # object is gone from the bucket (deleted before capture) —
+                # the row keeps its true key, badged deleted in the UI.
                 "in_mirror": pk in present if pk else None,
             }
         )

@@ -3185,38 +3185,6 @@ def _live_wallet_addresses_legacy() -> set[str]:
     return {str(r["a"]) for r in rows if r["a"]}
 
 
-def live_keys_for(addresses, per: int = 3) -> dict[str, list[str]]:
-    """Newest bucket source keys per wallet address (indexed, bounded).
-
-    2026-09-17: reference rows whose report citation never recorded a bucket
-    key (bank_data IDs, bankingqr raw_text, deposit JSON, dashboard snapshot)
-    still get view-proof when the address is live-decoded — the reference
-    endpoint attaches these as a fallback source. Newest-first, capped at
-    `per` keys per address. Index-only: without the materialized index this
-    would be a full json_each scan per call, so it returns {} until ready
-    (callers already gate the `in_live` flag the same way via live set).
-    """
-    addrs = [a for a in dict.fromkeys(addresses or ()) if a]
-    out: dict[str, list[str]] = {}
-    if not addrs or not wallet_index_ready():
-        return out
-    per = max(1, min(per, 10))
-    c = connect()
-    for i in range(0, len(addrs), 200):
-        chunk = addrs[i : i + 200]
-        rows = c.execute(
-            "SELECT address, key, MAX(last_modified) lm FROM wallet_hits"
-            " WHERE address IN (" + ",".join("?" for _ in chunk) + ")"
-            " GROUP BY address, key ORDER BY lm DESC",
-            chunk,
-        ).fetchall()
-        for r in rows:
-            lst = out.setdefault(r["address"], [])
-            if len(lst) < per and r["key"] not in lst:
-                lst.append(r["key"])
-    return out
-
-
 def keys_in_mirror(keys: list[str]) -> set[str]:
     """Which of these keys exist in this host's mirror (one bounded query)."""
     keys = [k for k in keys if k]

@@ -176,16 +176,40 @@ def _scan_sheet_wallets(key: str, data: bytes) -> int:
         return 0
 
 
-def sync_ledger(store, limit_files: int = 25) -> dict:
-    """Index up to limit_files new/changed csv-files/ objects. Bounded per call."""
+def sync_ledger(
+    store, limit_files: int = 25, only_keys: list[str] | None = None
+) -> dict:
+    """Index up to limit_files new/changed csv-files/ objects. Bounded per call.
+
+    only_keys (2026-09-17): reprocess exactly these csv-files/ keys even when
+    ledger_files says they are indexed — the one-time repair for sheets
+    indexed pre-RC2 whose wallet cells were never scanned. Capped at 50.
+    """
     c = db.connect()
-    todo = c.execute(
-        "SELECT o.key,o.size,o.etag,o.last_modified FROM objects o"
-        " LEFT JOIN ledger_files f ON f.key=o.key"
-        " WHERE o.key LIKE 'csv-files/%' AND (f.key IS NULL OR f.etag!=o.etag OR f.size!=o.size)"
-        " ORDER BY o.last_modified DESC LIMIT ?",
-        (limit_files,),
-    ).fetchall()
+    if only_keys:
+        wanted = [k.strip() for k in only_keys if k.strip().startswith("csv-files/")][
+            :50
+        ]
+        if not wanted:
+            return {
+                "done": 0,
+                "skipped": 0,
+                "errors": ["no valid csv-files/ keys"],
+                "sheet_wallets": 0,
+            }
+        todo = c.execute(
+            "SELECT o.key,o.size,o.etag,o.last_modified FROM objects o"
+            " WHERE o.key IN (" + ",".join("?" for _ in wanted) + ")",
+            wanted,
+        ).fetchall()
+    else:
+        todo = c.execute(
+            "SELECT o.key,o.size,o.etag,o.last_modified FROM objects o"
+            " LEFT JOIN ledger_files f ON f.key=o.key"
+            " WHERE o.key LIKE 'csv-files/%' AND (f.key IS NULL OR f.etag!=o.etag OR f.size!=o.size)"
+            " ORDER BY o.last_modified DESC LIMIT ?",
+            (limit_files,),
+        ).fetchall()
     done, skipped, errors = 0, 0, []
     sheet_wallets_total = 0
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

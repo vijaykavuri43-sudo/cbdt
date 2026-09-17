@@ -1,72 +1,68 @@
-"""Reference-source coverage: every identified wallet should carry view-proof.
+"""Reference-source coverage: strict true-source rule for the Crypto tab.
 
-2026-09-17: 84/114 reference rows shipped with no proof link — not because
-the bucket lacks the data, but because build-identified-wallets.py only
-joined the 2026-09-04 WALLET-PROOF-MAP (image proofs). bankingqr/bank_data/
-deposit-JSON/dashboard rows kept only a human-readable source_ref. These
-tests pin the two fixes: (1) the self-key rule (a source_ref that already
-is a bucket path becomes the proof key), and (2) db.live_keys_for, the
-serve-time fallback that attaches live bucket keys to reference rows.
+2026-09-17: the ONLY valid source is the true original object key in the GCS
+bucket (synced from S3: deposit / bankingqr / chat_file / voice-note audio /
+csv-files / qrcode / payment). Investigator-created files (OCR text, notes,
+bundles) are NEVER sources. Rows whose object was deleted at the source keep
+their true key and are badged deleted — never relinked.
+
+These tests pin: (1) the self-key rule, (2) bank_data ID resolution to full
+csv-files/ keys, (3) the verified key corrections (anshul full key, nitrogen
+prefix, TD63G .png, TJ5yq inad screenshot), (4) no investigator files as
+sources, (5) no fallback columns.
 """
 
 import csv
-import json
-import os
-import tempfile
+import re
 from pathlib import Path
-
-_tmp = tempfile.mkdtemp()
-os.environ["S3LM_DATA"] = _tmp
-os.environ["S3LM_REFERENCE_ROOT"] = str(Path(_tmp) / "no-references")
-
-from backend import db  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 REF_CSV = REPO / "s3-live-monitor" / "reference" / "identified-wallets.csv"
 
-ADDR = "TAVK2WthV3MuzyRvNLPPyd6GLsUBxp6oVs"
+# Original bucket prefixes synced from S3 — the only valid source locations.
+ORIGINAL_PREFIXES = (
+    "deposit/",
+    "withdrawal/",
+    "bankingqr/",
+    "chat_file/",
+    "csv-files/",
+    "qrcode/",
+    "payment/",
+    "paymentgateway/",
+    "audio/",
+    "uploads/",
+)
+
+# Investigator-created artifacts — must NEVER appear as a source key.
+NON_SOURCE_MARKERS = (
+    "psm",
+    "wd-ocr",
+    "dep-ocr",
+    "chat-proof",
+    "case-preserved",
+    "LE-SUBMISSION",
+    "intelligence/",
+    "live proof",
+)
 
 
-def _seed(key: str, addr: str, last_modified: str):
-    c = db.connect()
-    c.execute(
-        "INSERT INTO objects(key,top_prefix,size,etag,last_modified,seen_utc,"
-        "enriched,extract_json) VALUES(?,?,?,?,?,?,1,?)",
-        (
-            key,
-            key.split("/")[0] + "/",
-            10,
-            "e-" + key,
-            last_modified,
-            "2026-09-17T00:00:00Z",
-            json.dumps({"kind": "qr", "wallets": [{"address": addr}]}),
-        ),
-    )
-    c.commit()
+def _rows():
+    rows = list(csv.DictReader(open(REF_CSV, encoding="utf-8")))
+    assert len(rows) == 114, f"census must stay 114, got {len(rows)}"
+    return rows
 
 
-def test_live_keys_for_newest_first_capped():
-    _seed("bankingqr/old.png", ADDR, "2026-09-10T00:00:00Z")
-    _seed("bankingqr/new.png", ADDR, "2026-09-12T00:00:00Z")
-    _seed(
-        "qrcode/other.png",
-        "0xBBB2220000000000000000000000000000000000",
-        "2026-09-11T00:00:00Z",
-    )
-    db.backfill_wallet_hits()
-    db.mark_wallet_index_ready()
-    keys = db.live_keys_for([ADDR, "0xnosuchwallet"])
-    assert keys[ADDR] == ["bankingqr/new.png", "bankingqr/old.png"], keys
-    assert "0xnosuchwallet" not in keys
-    assert db.live_keys_for([ADDR], per=1)[ADDR] == ["bankingqr/new.png"]
+def test_no_fallback_columns():
+    with open(REF_CSV, encoding="utf-8") as f:
+        header = f.readline()
+    for col in ("preserved_gcs_key", "live_keys", "preserved_original"):
+        assert col not in header, f"fallback column {col} must not exist"
 
 
 def test_self_key_rule_single_path_source_refs_have_proof():
-    rows = list(csv.DictReader(open(REF_CSV, encoding="utf-8")))
-    assert len(rows) == 114
     bad = [
         r["address"]
-        for r in rows
+        for r in _rows()
         if "/" in (r["source_ref"] or "")
         and " " not in (r["source_ref"] or "")
         and not (r["proof_s3_key"] or "").strip()
@@ -75,7 +71,65 @@ def test_self_key_rule_single_path_source_refs_have_proof():
 
 
 def test_deposit_json_census_has_keys():
-    rows = list(csv.DictReader(open(REF_CSV, encoding="utf-8")))
+    rows = _rows()
     dep = [r for r in rows if r["source_ref"] == "deposit/1780826098942.json"]
     assert len(dep) == 24
     assert all(r["proof_s3_key"] == "deposit/1780826098942.json" for r in dep)
+
+
+def test_bankdata_ids_resolve_to_full_keys():
+    rows = _rows()
+    haw = [r for r in rows if r["category"] == "hawala_collection"]
+    assert len(haw) == 28
+    bad = [r["address"] for r in haw if not (r["proof_s3_key"] or "").strip()]
+    assert bad == [], f"{len(bad)} hawala rows without any proof key"
+    # Double-role rows keep their stronger withdrawal proof; the rest resolve
+    # bare bank_data IDs to full csv-files/data_<id>.xlsx mirror keys.
+    sheet = [
+        r["address"]
+        for r in haw
+        if re.fullmatch(r"csv-files/data_\d+\.xlsx", r["proof_s3_key"] or "")
+    ]
+    assert len(sheet) == 25, f"expected 25 sheet-keyed hawala rows, got {len(sheet)}"
+
+
+def test_verified_true_key_corrections():
+    """Pin the mirror-verified true keys (prefix/extension fixes, 2026-09-17)."""
+    by_addr = {r["address"]: r for r in _rows()}
+    assert (
+        by_addr["TLbhuZ12zFwqKNDErNwwewBRvvUAFk1H4j"]["proof_s3_key"]
+        == "chat_file/anshul_1769687598637_Screenshot_20260129_172259_Trust_Wallet.jpg"
+    )
+    assert (
+        by_addr["TP5Rj2hz6BQhHTDigsxMZbs1b1ngpEC8xc"]["proof_s3_key"]
+        == "chat_file/anshul_1769687598637_Screenshot_20260129_172259_Trust_Wallet.jpg"
+    )
+    assert (
+        by_addr["TVHL9Wfc2rM7MaqDq6TL5E4yQ6biSP6gMU"]["proof_s3_key"]
+        == "chat_file/nitrogen123_1743330811322_deposit_163 usdt.jpeg"
+    )
+    assert (
+        by_addr["TD63G1qvWu7ke2ycW848BjMCj2sHEZZusa"]["proof_s3_key"]
+        == "chat_file/07081990_1766755679252_Screenshot_20251226-185751.Binance.png"
+    )
+    assert (
+        by_addr["TJ5yq6udNUQ5iQNaapbN5f5YMUvRJKP17B"]["proof_s3_key"]
+        == "chat_file/inad_1757641435813_Screenshot_20250912-043626_KuCoin.png"
+    )
+
+
+def test_no_investigator_files_as_sources():
+    """Every proof key must be a true original bucket object — never OCR,
+    notes, bundles, or any investigator-created path."""
+    bad = []
+    for r in _rows():
+        pk = (r.get("proof_s3_key") or "").strip()
+        if not pk:
+            continue
+        if not pk.startswith(ORIGINAL_PREFIXES):
+            bad.append((r["address"], pk, "bad-prefix"))
+            continue
+        low = pk.lower()
+        if any(m.lower() in low for m in NON_SOURCE_MARKERS):
+            bad.append((r["address"], pk, "investigator-file"))
+    assert bad == [], f"{len(bad)} non-original sources: {bad[:5]}"
