@@ -2451,7 +2451,7 @@ def export_wallets(_=Depends(auth)):
 
     Part 1 — every address decoded from a live bucket image (exact source
     file + dashboard link per row). Part 2 — every previously-identified
-    reference wallet (114-row census) with its original source reference +
+    reference wallet (87-row census) with its original source reference +
     proof URL; reference rows carry origin_kind=reference so the two
     provenances never mix silently. Opens in Excel."""
 
@@ -2877,7 +2877,7 @@ def _live_wallet_set() -> set[str]:
 
 @app.get("/api/wallets/reference")
 def wallets_reference(_=Depends(auth)):
-    """All previously-identified wallets (reference census, 114 rows).
+    """All previously-identified wallets (reference census, 87 rows).
 
     Source rule (strict): the ONLY source is the true original object key in
     the GCS bucket (synced from S3: deposit / bankingqr / chat_file / voice

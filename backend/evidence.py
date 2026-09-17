@@ -220,7 +220,8 @@ def load_reference_wallets() -> list[dict]:
 
     Source: s3-live-monitor/reference/identified-wallets.csv (built by
     scripts/build-identified-wallets.py from 36-ALL-IDENTIFIED-WALLETS.csv +
-    WALLET-PROOF-MAP + ALL-WALLETS-MASTER + roll-data extras = 114 rows).
+    WALLET-PROOF-MAP + ALL-WALLETS-MASTER + roll-data extras, minus the
+    27 base58-invalid/non-address rows quarantined 2026-09-17 = 87 rows).
     These are report attributions with their original proof references —
     shown in the Crypto tab alongside live bucket decodes so no previously
     identified wallet ever goes missing from the dashboard.

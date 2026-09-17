@@ -188,7 +188,7 @@ export function Wallets() {
         <div className="pg-header-right">
           <button className="btn" onClick={refresh} style={{ fontSize: 11, marginRight: 8 }}>↻ Refresh</button>
           <button className="btn" onClick={startFullScan} style={{ fontSize: 11, marginRight: 8, borderColor: scan?.running ? 'var(--accent)' : undefined, opacity: scan?.running ? 0.6 : 1 }} disabled={!!scan?.running}>{scan?.running ? `⏳ scanning ${scan.scanned.toLocaleString()}` : '◉ Full wallet scan (GCS)'}</button>
-          <button className="btn" onClick={exportFullCsv} title="Every wallet in one CSV: live bucket decodes + all 114 identified reference wallets with origin_kind per row — officer exhibit, opens in Excel" style={{ fontSize: 11 }}>⬇ Export CSV</button>
+          <button className="btn" onClick={exportFullCsv} title="Every wallet in one CSV: live bucket decodes + all 87 identified reference wallets with origin_kind per row — officer exhibit, opens in Excel" style={{ fontSize: 11 }}>⬇ Export CSV</button>
         </div>
       </div>
 
@@ -339,7 +339,7 @@ export function Wallets() {
             <h1 className="pg-header-title">Identified wallets (reference)</h1>
             <div className="pg-header-sub">
               {ref
-                ? <>All {ref.identified_total.toLocaleString()} previously-identified wallets — hawala, platform-hot, operator, beneficiary, desk, dashboard rails — each with its original source + proof link. {ref.live_decoded.toLocaleString()} also live-decoded above · {ref.missing_from_live.toLocaleString()} reference-only (source was a spreadsheet/config or an object outside the bucket mirror — proof link is the evidence, not this tab).</>
+                ? <>All {ref.identified_total.toLocaleString()} previously-identified wallets — hawala, operator, beneficiary, desk, dashboard rails — each with its original source + proof link. {ref.live_decoded.toLocaleString()} also live-decoded above · {ref.missing_from_live.toLocaleString()} reference-only (source was a spreadsheet/config or an object outside the bucket mirror — proof link is the evidence, not this tab).</>
                 : refError
                   ? <>Reference list failed to load — press Retry below. Live bucket-decoded wallets above are unaffected.</>
                   : <>Loading the previously-identified wallet census…</>}
