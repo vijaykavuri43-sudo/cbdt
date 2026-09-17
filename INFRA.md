@@ -1,0 +1,84 @@
+# s3-live-monitor — Infrastructure Reference (CANONICAL)
+
+> **AI assistants: read this file FIRST when asked to log in to the VM, check the
+> dashboard, deploy, or touch anything in GCP.** Do not guess project/zone/bucket
+> names — they are all listed below. This file is the single source of truth; if a
+> script default disagrees with it, this file wins (and the script is a bug — fix it).
+
+## 1. The dashboard VM (where the app runs)
+
+| Item | Value |
+|------|-------|
+| VM name | `s3lm-budget` |
+| **GCP project** | `project-9641a7b9-3759-4c98-9b8` |
+| Zone | `asia-south1-a` |
+| External IP | `8.231.108.145` (ephemeral — re-check with `gcloud`, do not hardcode) |
+| Dashboard URL | `http://8.231.108.145/` (re-check IP first) |
+| Health endpoint | `http://<IP>/api/healthz` (public, no auth) |
+| App dir on VM | `/opt/s3lm/s3-live-monitor` (git clone of this repo, branch `main`) |
+| Containers | `s3lm` (dashboard, port 80→8787) · `s3sync` (S3→GCS mirror worker) |
+| Dashboard auth | gated — access key at `/root/.local/share/s3-live-monitor/access-token.txt` **on the VM** (every `/api` route except `/api/healthz` needs `Authorization: Bearer <key>`) |
+| Watchdog | `/usr/local/bin/s3lm-watchdog.sh` via cron `/etc/cron.d/s3lm-watchdog` (restarts `s3lm` only after 3 consecutive failed checks; logs to syslog as `s3lm-watchdog`) |
+
+## 2. SSH — copy-paste (ALWAYS pass `--project` and `--zone`)
+
+```bash
+# Interactive login
+gcloud compute ssh s3lm-budget \
+  --project=project-9641a7b9-3759-4c98-9b8 \
+  --zone=asia-south1-a
+
+# One-shot command (non-interactive — use this from agent shells)
+gcloud compute ssh s3lm-budget \
+  --project=project-9641a7b9-3759-4c98-9b8 \
+  --zone=asia-south1-a --quiet \
+  --command="sudo docker ps --format 'table {{.Names}}\t{{.Status}}'"
+```
+
+> ⚠️ The local gcloud default project is `learn2earn-4f6a5` — **that is NOT where
+> this VM lives.** Every `gcloud` command for this VM MUST include
+> `--project=project-9641a7b9-3759-4c98-9b8 --zone=asia-south1-a`.
+> `deploy/gcp-deploy.sh` still defaults to the old project — pass
+> `GCP_PROJECT=project-9641a7b9-3759-4c98-9b8` explicitly if you ever bootstrap.
+
+## 3. Buckets / data sources (where evidence comes from)
+
+| Item | Value |
+|------|-------|
+| **GCS evidence bucket** | `cbtf-case-evidence-518405669914` |
+| Mirror prefix read by dashboard | `gs://cbtf-case-evidence-518405669914/s3-mirror/` |
+| Upstream public S3 (mirrored by `s3sync`) | `https://bx-s3-dev-001.s3.ap-southeast-1.amazonaws.com` |
+| State DB on VM | docker volume `s3-live-monitor_s3lm-data` → `manifest.db` (+ `-wal`, `-shm`) |
+
+Defaults live in `docker-compose.yml` (`S3LM_GCS_BUCKET`, `S3SYNC_GCS_BUCKET`) and
+`backend/config.py`. The VM uses compose defaults (no `.env` overrides on the VM).
+
+## 4. Deploy (after ANY code change)
+
+```bash
+cd s3-live-monitor
+./deploy/ship.sh "what changed"   # commit → push → VM: git pull + cached rebuild + health check
+./deploy/ship.sh --vm s3lm-budget "msg"  # explicit VM (same default)
+```
+
+Rules: fix locally → run `pytest` (148 tests must pass) → `ship.sh` → verify
+`http://<IP>/api/healthz` is 200 and `docker ps` shows both containers healthy.
+Never edit code directly on the VM — the next deploy (`git reset --hard`) wipes it.
+
+## 5. Quick triage cheat-sheet (on the VM)
+
+```bash
+sudo docker ps --format 'table {{.Names}}\t{{.Status}}'   # container health
+curl -s -m 10 http://127.0.0.1/api/healthz && echo         # expect 200 in ~ms
+grep 's3lm-watchdog' /var/log/syslog | tail -n 5           # watchdog restarts
+sudo docker logs --since 10m s3lm 2>&1 | tail -n 30        # app logs
+sudo docker logs --since 10m s3sync 2>&1 | tail -n 30      # mirror-worker logs
+```
+
+## 6. Change log (keep this updated when infra moves)
+
+- 2026-09-17: canonical doc created; verified live values (VM RUNNING, both
+  containers healthy, bucket `…-518405669914` confirmed from running containers).
+- 2026-09-17: fixed stale default bucket `cbtf-case-evidence-991096649643` in
+  `sync/s3-gcs-sync.py` → `cbtf-case-evidence-518405669914` (env already overrode
+  it on the VM; the default was a landmine).

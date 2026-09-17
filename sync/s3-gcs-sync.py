@@ -3,7 +3,7 @@
 CASE-2026-CBTF · STANDING-JUDICIAL-AUTH-ILLEGAL-BETTING · READ-ONLY source access
 
 Why this exists (Defect A, LIVE-CHAT-STALENESS-REVIEW-2026-09-02):
-the s3lm dashboard reads gs://cbtf-case-evidence-991096649643/s3-mirror/,
+the s3lm dashboard reads gs://cbtf-case-evidence-518405669914/s3-mirror/,
 but the preservation VMs were decommissioned on 2026-09-01, freezing the
 mirror at ~Aug 22. The dashboard can never be real-time while the source is
 frozen, regardless of collector fixes. This daemon runs ON the s3lm VM as a
@@ -56,7 +56,7 @@ from google.cloud import storage
 S3_BUCKET_URL = os.environ.get(
     "S3SYNC_BUCKET_URL", "https://bx-s3-dev-001.s3.ap-southeast-1.amazonaws.com"
 )
-GCS_BUCKET = os.environ.get("S3SYNC_GCS_BUCKET", "cbtf-case-evidence-991096649643")
+GCS_BUCKET = os.environ.get("S3SYNC_GCS_BUCKET", "cbtf-case-evidence-518405669914")
 GCS_PREFIX = os.environ.get("S3SYNC_GCS_PREFIX", "s3-mirror/").strip("/") + "/"
 # Heartbeat/status live OUTSIDE the mirror prefix: s3-mirror/ must stay a
 # byte-exact evidence copy of the S3 bucket (a synthetic heartbeat inside it

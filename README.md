@@ -5,6 +5,9 @@ Local investigation dashboard for **read-only monitoring of the publicly exposed
 
 > Authorization: `STANDING-JUDICIAL-AUTH-ILLEGAL-BETTING` — see repo root `AUTHORIZATION.md`.
 > The app issues **GET/List only**. It never writes to or deletes anything in the bucket.
+>
+> **AI assistants / operators: VM, GCP project, bucket, SSH and deploy details live in
+> [`INFRA.md`](INFRA.md) — read it before touching the VM or GCP.**
 
 ## What it does
 
