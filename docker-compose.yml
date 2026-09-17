@@ -6,7 +6,11 @@ services:
     # multi-worker uvicorn (review 2026-09-10): a single worker wedges the
     # whole dashboard when one request blocks — 2 workers suffice (API is
     # I/O-bound) and leaves headroom for OCR/sync on 8-vCPU hosts.
-    command: ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8787", "--workers", "2"]
+    command: ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8787", "--workers", "2", "--timeout-graceful-shutdown", "30"]
+    # watchdog review 2026-09-17: the app runs OCR threads + SQLite WAL work
+    # that cannot stop in Docker's default 10s — every `docker restart` ended
+    # in SIGKILL (exit 137, WAL-corruption risk). Give it 60s to drain.
+    stop_grace_period: 60s
     ports:
       - "80:8787"
     environment:
@@ -79,6 +83,7 @@ services:
     container_name: s3sync
     # reuse the app image: it already has httpx + google-cloud-storage
     entrypoint: ["python3", "/app/sync/s3-gcs-sync.py"]
+    stop_grace_period: 30s
     depends_on:
       s3lm:
         condition: service_healthy
