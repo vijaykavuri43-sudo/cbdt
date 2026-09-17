@@ -12,6 +12,7 @@
 | VM name | `s3lm-budget` |
 | **GCP project** | `project-9641a7b9-3759-4c98-9b8` |
 | Zone | `asia-south1-a` |
+| Machine / disk | `t2d-standard-8` (8 vCPU, 32 GB) · 100 GB boot disk (~21% used) |
 | External IP | `8.231.108.145` (ephemeral — re-check with `gcloud`, do not hardcode) |
 | Dashboard URL | `http://8.231.108.145/` (re-check IP first) |
 | Health endpoint | `http://<IP>/api/healthz` (public, no auth) |
@@ -53,6 +54,11 @@ gcloud compute ssh s3lm-budget \
 Defaults live in `docker-compose.yml` (`S3LM_GCS_BUCKET`, `S3SYNC_GCS_BUCKET`) and
 `backend/config.py`. The VM uses compose defaults (no `.env` overrides on the VM).
 
+> ⚠️ `S3LM_PUBLIC_URL` (default `http://8.231.108.145`, set in compose) is baked
+> into officer-verifiable exhibit links in CSV exports. If the VM is ever
+> recreated with a **new external IP**, update `S3LM_PUBLIC_URL` and redeploy —
+> otherwise exhibits link to a dead address.
+
 ## 4. Deploy (after ANY code change)
 
 ```bash
@@ -82,3 +88,9 @@ sudo docker logs --since 10m s3sync 2>&1 | tail -n 30      # mirror-worker logs
 - 2026-09-17: fixed stale default bucket `cbtf-case-evidence-991096649643` in
   `sync/s3-gcs-sync.py` → `cbtf-case-evidence-518405669914` (env already overrode
   it on the VM; the default was a landmine).
+- 2026-09-17: stale-ref sweep — `deploy/gcp-deploy.sh` defaults corrected
+  (project `learn2earn-4f6a5`→`project-9641a7b9-3759-4c98-9b8`, machine
+  `e2-standard-4`→`t2d-standard-8`, disk 40→100 GB); `docker-compose.yml` host
+  comment `e2-standard-8`→`t2d-standard-8`; `S3LM_PUBLIC_URL` centralized in
+  compose; plan docs (`DASHBOARD-FIX-PLAN.md`, `MONITORING-IMPROVEMENT-PLAN.md`)
+  corrected to live bucket/machine/disk.

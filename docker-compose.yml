@@ -22,6 +22,9 @@ services:
       - S3LM_OBJECT_SOURCE=gcs
       - S3LM_GCS_BUCKET=${S3LM_GCS_BUCKET:-cbtf-case-evidence-518405669914}
       - S3LM_GCS_PREFIX=s3-mirror/
+      # Public base URL used for officer-verifiable exhibit links in CSV exports.
+      # MUST be updated if the VM is ever recreated with a new external IP.
+      - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL:-http://8.231.108.145}
       - S3LM_ENRICH_MAX_AGE_HOURS=0
       - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-6}
       - S3LM_ENRICH_BATCH=${S3LM_ENRICH_BATCH:-96}
@@ -65,7 +68,7 @@ services:
     restart: unless-stopped
     # 16GB host, ~15GB free (2026-09-03): room for SQLite page cache + RAM thumbs
     # 2026-09-08: 8G limit OOM-killed s3lm 3x in 3 days (Sep 5/6/7 serial log);
-    # host is e2-standard-8 (32GB, ~20GB headroom) so allow 16G.
+    # host is t2d-standard-8 (8 vCPU, 32GB, ~20GB headroom) so allow 16G.
     deploy:
       resources:
         limits:

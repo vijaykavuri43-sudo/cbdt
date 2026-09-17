@@ -106,8 +106,8 @@ Acceptance:
 
 Required VM configuration:
 
-- machine: `e2-standard-4` (4 vCPU, 16 GB RAM);
-- boot disk: 40 GB balanced persistent disk recommended (20 GB was already 60% used);
+- machine: `t2d-standard-8` (8 vCPU, 32 GB RAM) — live host as of 2026-09-17;
+- boot disk: 100 GB balanced persistent disk (was 40 GB; live host has 97 GB, 21% used);
 - emergency swap: 2 GB;
 - application memory limit: 4 GB;
 - sync memory limit: 600 MB.

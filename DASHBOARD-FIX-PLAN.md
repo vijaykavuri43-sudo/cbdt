@@ -132,7 +132,7 @@ Two new cards in the stat grid:
 Dashboard must stay up-to-date with S3→GCS live sync without misinformation.
 
 ### Backend Reality (verified)
-- `OBJECT_SOURCE=gcs` (`gs://cbtf-case-evidence-991096649643/s3-mirror/` via `config.py:23-26`).
+- `OBJECT_SOURCE=gcs` (`gs://cbtf-case-evidence-518405669914/s3-mirror/` via `config.py:23-26`).
 - `GCSMirrorClient` (`backend/gcsclient.py:29`) prefixes `s3-mirror/`; `list_page(bucket, next_bucket)` parses `SubPrefixes`.
 - `Collector.full_sweep()` / `poll_once()` (`backend/collector.py:44,117`) watermarks `wm:<prefix>` in DB.
 - Sync check: `GET /api/sync` (`backend/app.py:577`) HEADs S3 object; Verify: `POST /api/verify` (size/etag/sha256); Reconcile: `scripts/reconcile_s3_gcs_shard.py` (sharded md5, 64 workers, non-destructive).
@@ -141,7 +141,7 @@ Dashboard must stay up-to-date with S3→GCS live sync without misinformation.
 ### Changes
 
 #### `src/pages/Status.tsx` (4a)
-- New header subtitle line: `Source: OBJECT_SOURCE | gcs_mirror: cbtf-case-evidence-991096649643/s3-mirror/ | Synced live`
+- New header subtitle line: `Source: OBJECT_SOURCE | gcs_mirror: cbtf-case-evidence-518405669914/s3-mirror/ | Synced live`
 - Add `Bucket Health` strip calling `GET /api/bucket-health` (already present) + `GET /api/sync?key=deposit/...` probe button.
 - Surface `last_poll_utc`, `sweep`, `poll`, `enrich` states from `/api/status`.
 

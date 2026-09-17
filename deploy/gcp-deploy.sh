@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Bootstrap S3 Live Monitor from GitHub on a 4-vCPU GCP VM, then deploy.
+# Bootstrap S3 Live Monitor from GitHub on the GCP VM, then deploy.
 # Unlike the old tarball flow this ships NO reference data and NO big context:
 # the VM clones the private repo with a read-only deploy key, and every later
 # change goes through ./deploy/deploy.sh (git pull -> cached docker build).
@@ -9,12 +9,12 @@ set -euo pipefail
 # Env:    GCP_PROJECT GCP_ZONE GCP_MACHINE DISK_GB
 #         GITHUB_TOKEN=<token with repo scope>  (needed once, to register the deploy key)
 #         GIT_REPO=owner/repo  (default vijaykavuri43-sudo/cricketbetting)
-PROJECT="${GCP_PROJECT:-learn2earn-4f6a5}"
+PROJECT="${GCP_PROJECT:-project-9641a7b9-3759-4c98-9b8}"
 VM="${1:-s3lm-budget}"
 ZONE="${GCP_ZONE:-asia-south1-a}"
 REGION="${GCP_REGION:-asia-south1}"
-MACHINE="${GCP_MACHINE:-e2-standard-4}"
-DISK_GB="${DISK_GB:-40}"
+MACHINE="${GCP_MACHINE:-t2d-standard-8}"
+DISK_GB="${DISK_GB:-100}"
 GIT_REPO="${GIT_REPO:-vijaykavuri43-sudo/cricketbetting}"
 CLONE_URL="git@github.com:${GIT_REPO}.git"
 APP=/opt/s3lm/s3-live-monitor
