@@ -38,52 +38,20 @@ def main() -> None:
             continue
         scanned += 1
         changed = False
-        amt = enrich.extract_amount(text)
         cur = p.get("amount_inr")
         raw = p.get("amount_tesseract_raw")
-        eaten = None
-        if cur is not None:
-            eaten = enrich.correct_rupee_eaten(text, float(cur))
-        if eaten is None and raw is not None:
-            try:
-                eaten = enrich.correct_rupee_eaten(text, float(raw))
-            except (TypeError, ValueError):
-                eaten = None
-        if eaten is not None:
-            if cur is None or abs(float(cur) - eaten) > 0.001:
-                p["amount_tesseract_raw"] = cur if cur is not None else raw
-                p["rupee_eaten"] = True
-                p["amount_inr"] = eaten
-                p["amount_value"] = eaten
-                changed = True
-        elif cur is None and amt is not None:
-            p["amount_inr"] = amt
-            p["amount_value"] = amt
-            changed = True
-        elif (
-            cur is not None
-            and amt is not None
-            and float(cur) < 100
-            and amt >= 100
-            and abs(float(cur) - amt) > 0.001
-        ):
-            # Restore rows a prior reparse smashed with OCR debris (~4).
-            p["amount_tesseract_raw"] = raw or cur
-            p["amount_inr"] = amt
-            p["amount_value"] = amt
-            changed = True
-        elif cur is not None and enrich.amount_is_ref_id(
-            text, float(cur), str(p.get("utr") or "")
-        ):
-            # Paytm/UPI ref truncated into rupees (₹150 stored as 31,49,658).
+        new, reason = enrich.proven_amount_correction(
+            text, cur, str(p.get("utr") or ""), raw
+        )
+        if reason:
             p["amount_tesseract_raw"] = cur if cur is not None else raw
-            p["ref_as_amount"] = True
-            if amt is not None and abs(float(cur) - amt) > 0.001:
-                p["amount_inr"] = amt
-                p["amount_value"] = amt
-            else:
-                p["amount_inr"] = None
-                p["amount_value"] = None
+            p["amount_correction"] = reason
+            p["amount_inr"] = new
+            p["amount_value"] = new
+            if reason.startswith("rupee"):
+                p["rupee_eaten"] = True
+            if reason.startswith("ref_as_amount"):
+                p["ref_as_amount"] = True
             changed = True
         vpas = enrich.extract_vpas(text)
         if vpas:

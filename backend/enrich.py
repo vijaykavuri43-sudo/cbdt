@@ -1016,13 +1016,32 @@ def _collect_amount_candidates(
     return candidates
 
 
+_RUPEE_MATCH_RE = re.compile(r"^(?:[₹%]|rs\.?|inr)", re.IGNORECASE)
+
+
 def _pick_principal(
     cands: list[tuple[float, int, int, int, str, str]],
 ) -> Optional[tuple[float, str]]:
-    """Best candidate as (value, currency); None when nothing qualifies."""
+    """Best candidate as (value, currency); None when nothing qualifies.
+
+    A 7+ digit winner next to a ₹/Rs-prefixed 2–6 digit amount is the Paytm
+    scratch/ref case (officer exhibit ₹150 vs 31,49,658). Prefer the rupee
+    glyph — prefix-drop already removed most of these; this is the last guard.
+    """
     if not cands:
         return None
-    return (cands[0][0], cands[0][5])
+    top_val, top_ccy = cands[0][0], cands[0][5]
+    try:
+        top_digits = str(int(top_val))
+    except Exception:
+        top_digits = ""
+    if len(top_digits) >= 7:
+        for value, _score, _s, _e, raw, ccy in cands:
+            if value >= 100000:
+                continue
+            if _RUPEE_MATCH_RE.match((raw or "").strip()):
+                return (value, ccy)
+    return (top_val, top_ccy)
 
 
 def extract_amount(text: str) -> Optional[float]:
@@ -1320,6 +1339,48 @@ def amount_is_ref_id(text: str, amount: Optional[float], utr: str = "") -> bool:
     if 10 <= len(u) <= 16:
         ids.append(u)
     return any(lid != digits and lid.startswith(digits) for lid in ids)
+
+
+def proven_amount_correction(
+    text: str,
+    current: Optional[float],
+    utr: str = "",
+    raw: Optional[float] = None,
+) -> tuple[Optional[float], str]:
+    """Return (new_amount, reason) only when the change is proven from text.
+
+    reason=='' means leave `current` unchanged. new_amount may be None when
+    the stored figure is a Paytm/UPI ref and the true rupees are not in the
+    sample — better empty than ₹31,49,658 for a ₹150 slip.
+    """
+    amt = extract_amount(text) if text else None
+    if current is not None:
+        try:
+            cur_f = float(current)
+        except (TypeError, ValueError):
+            cur_f = None
+        else:
+            eaten = correct_rupee_eaten(text, cur_f)
+            if eaten is None and raw is not None:
+                try:
+                    eaten = correct_rupee_eaten(text, float(raw))
+                except (TypeError, ValueError):
+                    eaten = None
+            if eaten is not None and abs(cur_f - eaten) > 0.001:
+                return eaten, "rupee_eaten"
+            if amount_is_ref_id(text, cur_f, utr):
+                if (
+                    amt is not None
+                    and not amount_is_ref_id(text, amt, utr)
+                    and abs(cur_f - amt) > 0.001
+                ):
+                    return amt, "ref_as_amount"
+                return None, "ref_as_amount_clear"
+            if cur_f < 100 and amt is not None and amt >= 100:
+                return amt, "debris_restore"
+    if current is None and amt is not None and not amount_is_ref_id(text, amt, utr):
+        return amt, "fill_null"
+    return current, ""
 
 
 def extract_amount_candidates(text: str) -> list[dict]:
@@ -2383,8 +2444,14 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             (d for d in scanned if not d["dropped"]),
             key=lambda d: (-d["score"], d["s"], d["value"]),
         )
-        if accepted:
-            tesseract_amount, tesseract_ccy = accepted[0]["value"], accepted[0]["ccy"]
+        picked = _pick_principal(
+            [
+                (d["value"], d["score"], d["s"], d["e"], d["match"], d["ccy"])
+                for d in accepted
+            ]
+        )
+        if picked:
+            tesseract_amount, tesseract_ccy = picked
         else:
             # Fallback: amount printed only in words ("Rupees Four Hundred
             # Fifty Only"; verified 2026-09-11: Paytm slip whose only digits
@@ -2495,10 +2562,10 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
         except Exception:
             collision = None
         if collision:
+            # Annotate only. Wiping the principal (old behaviour) left empty
+            # amounts whenever Gemini was quota-dead — ₹1,000→71,000/21,000
+            # is recovered by correct_rupee_eaten below.
             out["glyph_collision"] = collision
-            tesseract_amount = None
-            out["amount_value"] = None
-            out["amount_inr"] = None
         # Twin / ₹-eaten (verified 2026-09-03 ₹1,000→71,000; officer 2026-09-18
         # PhonePe ₹3,000 stored as 23,000). Applied locally so the fix works
         # even with Gemini quota-dead; Vision re-adjudicates when live.
@@ -2506,6 +2573,17 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             eaten = correct_rupee_eaten(text, out.get("amount_value"))
         except Exception:
             eaten = None
+        if (
+            eaten is None
+            and out.get("amount_value") is not None
+            and amount_is_ref_id(text, out.get("amount_value"), out.get("utr") or "")
+        ):
+            out["ref_as_amount"] = True
+            out["amount_tesseract_raw"] = out.get("amount_value")
+            words = extract_amount_in_words(flat)
+            out["amount_value"] = words
+            out["amount_inr"] = words if out.get("amount_currency") == "INR" else None
+            tesseract_amount = words
         twin = None
         if eaten is not None:
             out["amount_tesseract_raw"] = out.get("amount_value")

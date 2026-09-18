@@ -149,6 +149,22 @@ class PaytmRefAsAmountTests(unittest.TestCase):
         self.assertEqual(extract_amount(text), 2100000.0)
         self.assertFalse(amount_is_ref_id(text, 2100000.0, "123456789012"))
 
+    def test_proven_correction_ref_to_150(self):
+        from .enrich import proven_amount_correction
+
+        new, reason = proven_amount_correction(
+            self.EXHIBIT, 3149658.0, "314965897745"
+        )
+        self.assertEqual(new, 150.0)
+        self.assertEqual(reason, "ref_as_amount")
+
+    def test_glyph_collision_pair_repairs_to_true_thousand(self):
+        text = (
+            "Payment successful Paid to ACME 71,000 acme@okaxis "
+            "Debited from HDFC 21,000 ~1,000 UTR 123456789012"
+        )
+        self.assertEqual(extract_amount(text), 1000.0)
+
 
 class RsPrefixedAmountTests(unittest.TestCase):
     def test_rs_prefix_without_amount_label(self):
