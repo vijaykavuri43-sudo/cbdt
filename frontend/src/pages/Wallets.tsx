@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, createRefreshGuard, eventsUrl, exportWalletsUrl, objectUrl, post, tabHidden } from '../lib/api'
+import { api, createRefreshGuard, eventsUrl, exportWalletsUrl, objectUrl, post, saveCsvFromUrl, tabHidden } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { fmtMoney } from '../lib/format'
 
@@ -27,17 +27,6 @@ interface WalletRow {
   last_seen?: string
   known_operator?: boolean
 }
-interface MasterWalletRow {
-  entity_id: string
-  network: string
-  address: string
-  address_lower: string
-  label: string
-  case_ids: string
-  confidence: string
-  fact_type: string
-  notes: string
-}
 interface WalletsResp {
   items: WalletRow[]
   wallet_hits_total: number
@@ -49,10 +38,6 @@ interface WalletsResp {
   limit?: number
   offset?: number
   total?: number
-  master_size?: number
-  master_rows?: MasterWalletRow[]
-  master_source?: string
-  new_not_in_master?: number
 }
 interface RefWallet {
   address: string
@@ -68,12 +53,19 @@ interface RefWallet {
   fact_type?: string
   in_live?: boolean
   in_mirror?: boolean | null
+  le_master?: boolean
+  label?: string
+  case_ids?: string
+  notes?: string
+  le_confidence?: string
+  le_fact_type?: string
 }
 interface RefResp {
   items: RefWallet[]
   identified_total: number
   live_decoded: number
   missing_from_live: number
+  le_master_total?: number
 }
 
 // Origin shows folder + file (folder suffix), never the bare basename:
@@ -112,6 +104,7 @@ export function Wallets() {
   const [qDebounced, setQDebounced] = useState('')
   const [network, setNetwork] = useState('')
   const [sort, setSort] = useState('recent')
+  const [dlBusy, setDlBusy] = useState<'' | 'hits' | 'distinct' | 'reference'>('')
 
   const refresh = useCallback(() => {
     // 2026-09-16: paginated — old wallets never fall off the newest-N window.
@@ -183,29 +176,16 @@ export function Wallets() {
   const from = total === 0 ? 0 : page * PAGE_SIZE + 1
   const to = Math.min(total, page * PAGE_SIZE + rows.length)
 
-  function exportFullCsv() {
-    // THE single officer exhibit: live bucket decodes + all identified
-    // reference wallets, one CSV (Excel-ready). Server streams the whole
-    // set with origin_kind (live/reference) per row.
-    const a = document.createElement('a')
-    a.href = exportWalletsUrl()
-    a.download = `crypto-wallets-full-${new Date().toISOString().slice(0, 10)}.csv`
-    a.click()
-  }
-
-  function exportMasterTsv() {
-    if (!data?.master_rows?.length) return
-    const header = 'Entity\tNetwork\tAddress\tArkham\tTronscan\tLabel\tCase\tConfidence\tFact type\tNotes\tSource CSV\n'
-    const body = data.master_rows
-      .map((r) =>
-        [r.entity_id, r.network, r.address, arkhamAddressUrl(r.address), bestTronscanUrl(r.address) ?? '', r.label, r.case_ids, r.confidence, r.fact_type, '"' + (r.notes || '').replace(/"/g, '""') + '"', data.master_source ?? ''].join('\t')
-      )
-      .join('\n')
-    const blob = new Blob([header + body], { type: 'text/tab-separated-values' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `master-operator-wallets-${new Date().toISOString().slice(0, 10)}.tsv`
-    a.click()
+  async function downloadKind(kind: 'hits' | 'distinct' | 'reference', filename: string) {
+    if (dlBusy) return
+    setDlBusy(kind)
+    try {
+      await saveCsvFromUrl(exportWalletsUrl(kind), filename)
+    } catch (e: any) {
+      alert(e?.message || String(e))
+    } finally {
+      setDlBusy('')
+    }
   }
 
   return (
@@ -216,15 +196,13 @@ export function Wallets() {
           <div>
             <h1 className="pg-header-title">Crypto Wallets</h1>
             <div className="pg-header-sub">
-              Source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}</span> · TRON / EVM / BTC decoded from QR · slips · chat images · vs {(data?.master_size ?? 0).toLocaleString()} known operator (LE master) · identified census below
+              Source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}</span> · click a card to download that list as CSV · two tables: live bucket decodes, then identified census (LE operator wallets are badged there)
             </div>
           </div>
         </div>
         <div className="pg-header-right">
           <button className="btn" onClick={refresh} style={{ fontSize: 11, marginRight: 8 }}>↻ Refresh</button>
-          <button className="btn" onClick={startFullScan} style={{ fontSize: 11, marginRight: 8, borderColor: scan?.running ? 'var(--accent)' : undefined, opacity: scan?.running ? 0.6 : 1 }} disabled={!!scan?.running}>{scan?.running ? `⏳ scanning ${scan.scanned.toLocaleString()}` : '◉ Full wallet scan (GCS)'}</button>
-          <button className="btn" onClick={exportFullCsv} title="Every wallet in one CSV: live bucket decodes + all identified reference wallets with origin_kind per row — officer exhibit, opens in Excel" style={{ fontSize: 11, marginRight: 8 }}>⬇ Export CSV</button>
-          <button className="btn" onClick={exportMasterTsv} title="Authoritative LE Submission Master operator wallets" style={{ fontSize: 11 }}>⬇ Export master ({data?.master_rows?.length ?? 0})</button>
+          <button className="btn" onClick={startFullScan} style={{ fontSize: 11, borderColor: scan?.running ? 'var(--accent)' : undefined, opacity: scan?.running ? 0.6 : 1 }} disabled={!!scan?.running}>{scan?.running ? `⏳ scanning ${scan.scanned.toLocaleString()}` : '◉ Full wallet scan (GCS)'}</button>
         </div>
       </div>
 
@@ -242,25 +220,38 @@ export function Wallets() {
       )}
 
       <div className="st-cards" style={{ marginBottom: 14 }}>
-        <div className="st-card st-card-accent">
+        <button
+          type="button"
+          className="st-card st-card-accent st-card-click"
+          disabled={!!dlBusy}
+          title="Download every bucket-decoded image×wallet row as CSV"
+          onClick={() => void downloadKind('hits', `crypto-wallet-hits-${new Date().toISOString().slice(0, 10)}.csv`)}
+        >
           <div className="st-card-label">Wallet hits (bucket-decoded)</div>
           <div className="st-card-value accent">{(data?.wallet_hits_total ?? rows.length).toLocaleString()}</div>
-          <div className="st-card-sub">distinct addresses {data?.distinct_wallets ?? 0} · every hit = live bucket object</div>
-        </div>
-        <div className="st-card">
+          <div className="st-card-sub">
+            {dlBusy === 'hits' ? 'Preparing CSV…' : `click to download ${(data?.wallet_hits_total ?? 0).toLocaleString()} rows · each hit = one source file`}
+          </div>
+        </button>
+        <button
+          type="button"
+          className="st-card st-card-click"
+          disabled={!!dlBusy}
+          title="Download one row per distinct address with all source files as CSV"
+          onClick={() => void downloadKind('distinct', `crypto-wallets-distinct-${new Date().toISOString().slice(0, 10)}.csv`)}
+        >
           <div className="st-card-label">Distinct addresses</div>
           <div className="st-card-value">{(data?.distinct_wallets ?? 0).toLocaleString()}</div>
-          <div className="st-card-sub">each with exact source file + view proof{ref ? ` · census ${ref.identified_total.toLocaleString()} identified (${ref.live_decoded.toLocaleString()} live-decoded · ${ref.missing_from_live.toLocaleString()} ref-only)` : ''}</div>
-        </div>
+          <div className="st-card-sub">
+            {dlBusy === 'distinct'
+              ? 'Preparing CSV…'
+              : `click to download ${(data?.distinct_wallets ?? 0).toLocaleString()} unique wallets · all source files + proof links`}
+          </div>
+        </button>
         <div className="st-card">
           <div className="st-card-label">GCS Enrichment (live source)</div>
           <div className="st-card-value small">{data?.extraction_status ? `${(data.extraction_status.enriched ?? 0).toLocaleString()} / ${(data.extraction_status.objects ?? 0).toLocaleString()}` : '—'}</div>
           <div className="st-card-sub">pending full-scan {data?.extraction_status?.pending_full_scan?.toLocaleString() ?? '—'} · scan covers all images, not just hints</div>
-        </div>
-        <div className="st-card">
-          <div className="st-card-label">LE master (operator)</div>
-          <div className="st-card-value">{(data?.master_size ?? 0).toLocaleString()}</div>
-          <div className="st-card-sub">{data?.master_source ?? '17-CRYPTO-WALLETS.csv'} · CASE-2026-102 · high · fact</div>
         </div>
       </div>
 
@@ -274,47 +265,6 @@ export function Wallets() {
           ))}
         </div>
       )}
-
-      <div className="dp-table-wrap" style={{ marginBottom: 18, borderColor: 'var(--accent2)', borderWidth: 1 }}>
-        <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid var(--border)', background: 'rgba(46,184,126,0.06)' }}>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 800 }}>Identified operator wallets — LE Submission Master (sources)</div>
-            <div className="small dim" style={{ marginTop: 2 }}>
-              Authoritative TRC-20 list used for all cross-checks · source <span className="mono">{data?.master_source ?? 'LE-SUBMISSION-MASTER/17-CRYPTO-WALLETS.csv'}</span> · CASE-2026-102 · <span className="ex-badge" style={{ borderColor: 'var(--accent2)', color: 'var(--accent2)', fontSize: 9 }}>high · fact</span> · notes include screenshot provenance
-            </div>
-          </div>
-          <span className="small dim">{data?.master_rows?.length ?? 0} rows</span>
-        </div>
-        <table className="dp-table">
-          <thead>
-            <tr>
-              <th>Address (TRON)</th>
-              <th>Network</th>
-              <th>Label</th>
-              <th>Case</th>
-              <th>Notes / source of screenshot</th>
-              <th>Fact</th>
-              <th>Links</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(data?.master_rows ?? []).map((r) => (
-              <tr key={r.address}>
-                <td className="mono" style={{ fontWeight: 600, wordBreak: 'break-all' }}>{r.address}</td>
-                <td>{r.network}</td>
-                <td>{r.label || '—'}</td>
-                <td className="small mono">{r.case_ids || '—'}</td>
-                <td className="small wrap" style={{ maxWidth: 420 }}>{r.notes || '—'}</td>
-                <td><span className="ex-badge" style={{ fontSize: 10 }}>{r.confidence} · {r.fact_type}</span></td>
-                <td className="small" style={{ whiteSpace: 'nowrap' }}><a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(r.address) ?? '#'} target="_blank" rel="noreferrer">Tronscan ↗</a></td>
-              </tr>
-            ))}
-            {(!data || (data.master_rows?.length ?? 0) === 0) && (
-              <tr><td colSpan={7} className="dp-empty small dim">No master rows — place 17-CRYPTO-WALLETS.csv in reference/ on this host.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
 
       <div className="lf-controls">
         <div className="lf-controls-left">
@@ -422,12 +372,23 @@ export function Wallets() {
             <h1 className="pg-header-title">Identified wallets (reference)</h1>
             <div className="pg-header-sub">
               {ref
-                ? <>All {ref.identified_total.toLocaleString()} previously-identified wallets — hawala, operator, beneficiary, desk, dashboard rails — each with its original source + proof link. {ref.live_decoded.toLocaleString()} also live-decoded above · {ref.missing_from_live.toLocaleString()} reference-only (source was a spreadsheet/config or an object outside the bucket mirror — proof link is the evidence, not this tab).</>
+                ? <>All {ref.identified_total.toLocaleString()} previously-identified wallets — hawala, operator, beneficiary, desk, dashboard rails. LE Submission Master operator wallets ({ref.le_master_total ?? 0}, CASE-2026-102) are listed first and badged. {ref.live_decoded.toLocaleString()} also live-decoded above · {ref.missing_from_live.toLocaleString()} reference-only.</>
                 : refError
                   ? <>Reference list failed to load — press Retry below. Live bucket-decoded wallets above are unaffected.</>
                   : <>Loading the previously-identified wallet census…</>}
             </div>
           </div>
+        </div>
+        <div className="pg-header-right">
+          <button
+            className="btn"
+            disabled={!!dlBusy}
+            style={{ fontSize: 11 }}
+            title="Download the identified census CSV, LE master operator rows flagged"
+            onClick={() => void downloadKind('reference', `crypto-wallets-identified-${new Date().toISOString().slice(0, 10)}.csv`)}
+          >
+            {dlBusy === 'reference' ? 'Preparing CSV…' : `⬇ Census CSV (${(ref?.identified_total ?? 0).toLocaleString()})`}
+          </button>
         </div>
       </div>
 
@@ -446,23 +407,31 @@ export function Wallets() {
           </thead>
           <tbody>
             {(ref?.items ?? []).map((w) => (
-              <tr key={w.address}>
-                <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>{w.address}</td>
+              <tr key={w.address} style={w.le_master ? { background: 'rgba(46,184,126,0.06)' } : undefined}>
+                <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>
+                  {w.address}
+                  {w.le_master && (
+                    <span className="ex-badge" style={{ marginLeft: 6, borderColor: 'var(--accent2)', color: 'var(--accent2)', fontSize: 9 }} title={w.notes || 'LE Submission Master · CASE-2026-102'}>
+                      LE master{w.label ? ` · ${w.label}` : ''}
+                    </span>
+                  )}
+                </td>
                 <td>{w.network ?? '—'}</td>
-                <td className="small">{w.role ?? '—'}</td>
-                <td className="small">{w.attribution || '—'}</td>
-                <td className="small dim mono" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.source_ref || ''}>
-                  {w.source_ref || '—'}
+                <td className="small" title={w.notes || ''}>{w.label || w.role || '—'}</td>
+                <td className="small">{w.attribution || w.notes || '—'}</td>
+                <td className="small dim mono" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.source_ref || w.case_ids || ''}>
+                  {w.case_ids || w.source_ref || '—'}
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
-                  {(w as any).in_mirror && w.proof_s3_key
+                  {w.in_mirror && w.proof_s3_key
                     ? <a href={objectUrl(w.proof_s3_key)} target="_blank" rel="noreferrer" className="small">view proof</a>
                     : w.proof_s3_key
-                      ? <span className="small dim" title={`True source key ${(w as any).in_mirror === false ? 'deleted from the bucket before the mirror captured it — no proof available' : 'not yet indexed on this host'}`}>{(w as any).in_mirror === false ? 'deleted' : 'pending'}</span>
+                      ? <span className="small dim" title={`True source key ${w.in_mirror === false ? 'deleted from the bucket before the mirror captured it — no proof available' : 'not yet indexed on this host'}`}>{w.in_mirror === false ? 'deleted' : 'pending'}</span>
                       : <span className="small dim" title="Report citation recorded no bucket object (spreadsheet cell, dashboard snapshot, or chat reference) — not a bucket source">no bucket key</span>}
                   {w.address && <>{' · '}<a href={arkhamAddressUrl(w.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(w.address, null) ?? '#'} target="_blank" rel="noreferrer" className="small">Tronscan ↗</a></>}
                 </td>
                 <td>
+                  {w.le_master && <span className="ex-badge" style={{ marginRight: 6, fontSize: 9 }} title="high · fact">{w.le_confidence || 'high'} · {w.le_fact_type || 'fact'}</span>}
                   {w.in_live
                     ? <span className="ex-badge" title="Also decoded from a live bucket image in the table above">live ✓</span>
                     : <span className="ex-badge ex-badge-new" title="Not decoded from any bucket image currently in the mirror — source object is a spreadsheet/config or outside the mirror">ref-only</span>}

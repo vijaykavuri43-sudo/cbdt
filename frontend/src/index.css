@@ -274,6 +274,12 @@ input[type="text"]::placeholder { color: var(--dim); }
   transition: all .15s;
 }
 .st-card:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-card); }
+.st-card-click {
+  cursor: pointer; text-align: left; width: 100%;
+  font: inherit; color: inherit; appearance: none;
+}
+.st-card-click:disabled { cursor: wait; opacity: 0.75; }
+.st-card-click:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .st-card::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
   background: linear-gradient(90deg, var(--accent), var(--accent2)); opacity: 0; transition: opacity .15s;

@@ -2640,25 +2640,64 @@ def export_upis(_=Depends(auth)):
     )
 
 
-_WALLET_EXPORT_COLUMNS = (
+_WALLET_HIT_EXPORT_COLUMNS = (
+    "address",
+    "network",
+    "label",
+    "source_file",
+    "last_modified_utc",
+    "amount",
+    "amount_currency",
+    "confidence",
+    "checksum",
+    "dashboard_source_link",
+    "arkham_url",
+    "tronscan_url",
+    "case",
+    "auth_ref",
+    "fact_type",
+)
+
+_WALLET_DISTINCT_EXPORT_COLUMNS = (
     "address",
     "network",
     "hits",
     "first_seen_utc",
     "last_seen_utc",
     "label",
+    "sample_source_file",
+    "amount",
+    "amount_currency",
     "confidence",
-    "status",
-    "origin_kind",
-    "attribution",
-    "source_file",
-    "proof_url",
+    "checksum",
+    "known_operator",
     "dashboard_source_link",
     "all_source_files",
     "all_dashboard_links",
+    "arkham_url",
+    "tronscan_url",
     "case",
     "auth_ref",
     "fact_type",
+)
+
+_WALLET_REF_EXPORT_COLUMNS = (
+    "address",
+    "network",
+    "role",
+    "label",
+    "attribution",
+    "le_master",
+    "case_ids",
+    "notes",
+    "source_ref",
+    "proof_s3_key",
+    "in_live",
+    "arkham_url",
+    "tronscan_url",
+    "fact_type",
+    "case",
+    "auth_ref",
 )
 
 
@@ -2682,18 +2721,70 @@ def _wallet_source_keys() -> dict[str, list[str]]:
     return out
 
 
+def _wallet_explorer_urls(addr: str) -> tuple[str, str]:
+    from urllib.parse import quote
+
+    a = (addr or "").strip()
+    if not a:
+        return "", ""
+    q = quote(a, safe="")
+    return (
+        f"https://platform.arkhamintelligence.com/explorer/address/{q}",
+        f"https://tronscan.org/#/address/{q}",
+    )
+
+
 @app.get("/api/export/wallets")
-def export_wallets(_=Depends(auth)):
-    """Officer wallet exhibit: live unique decodes + identified census.
+def export_wallets(
+    kind: str = Query("distinct", pattern="^(hits|distinct|reference)$"),
+    _=Depends(auth),
+):
+    """Officer wallet CSVs matching the Crypto wallets cards / tables.
 
-    Part 1 — one row per address decoded from a live bucket image (every
-    source file + dashboard link). Part 2 — previously-identified reference
-    wallets (87-row census) with origin_kind=reference so provenances never
-    mix. Opens in Excel.
+    hits — every bucket-decoded image×address row (the 410 card).
+    distinct — one row per live address with all source files (the 132 card).
+    reference — identified census, LE master operator rows flagged (2nd table).
     """
+    from .evidence import load_master_wallet_rows, load_reference_wallets
 
-    def build():
+    kind = (kind or "distinct").strip().lower()
+
+    def build_hits():
+        rows = []
+        cur = db.connect().execute(
+            "SELECT address, network, standard, confidence, checksum, kind,"
+            " key, last_modified, amount_inr, amount_value, amount_currency"
+            " FROM wallet_hits WHERE address!='' ORDER BY last_modified DESC"
+        )
+        for r in cur:
+            addr = r["address"] or ""
+            key = r["key"] or ""
+            arkham, tron = _wallet_explorer_urls(addr)
+            amt = r["amount_value"] if r["amount_value"] is not None else r["amount_inr"]
+            rows.append(
+                {
+                    "address": addr,
+                    "network": r["network"] or "",
+                    "label": r["standard"] or "",
+                    "source_file": key,
+                    "last_modified_utc": r["last_modified"] or "",
+                    "amount": amt if amt is not None else "",
+                    "amount_currency": r["amount_currency"] or "",
+                    "confidence": r["confidence"] or "",
+                    "checksum": r["checksum"] or "",
+                    "dashboard_source_link": _source_link(key) if key else "",
+                    "arkham_url": arkham,
+                    "tronscan_url": tron,
+                    "case": config.CASE_ID,
+                    "auth_ref": config.AUTH_REF,
+                    "fact_type": "ai_lead",
+                }
+            )
+        return rows
+
+    def build_distinct():
         keys_by_addr = _wallet_source_keys()
+        master = {r["address_lower"] for r in load_master_wallet_rows()}
         rows = []
         off = 0
         while True:
@@ -2704,6 +2795,10 @@ def export_wallets(_=Depends(auth)):
                 addr = it.get("address") or ""
                 key = it.get("key") or ""
                 all_keys = keys_by_addr.get(addr) or ([key] if key else [])
+                arkham, tron = _wallet_explorer_urls(addr)
+                amt = it.get("amount_value")
+                if amt is None:
+                    amt = it.get("amount_inr")
                 rows.append(
                     {
                         "address": addr,
@@ -2712,17 +2807,19 @@ def export_wallets(_=Depends(auth)):
                         "first_seen_utc": it.get("first_seen") or "",
                         "last_seen_utc": it.get("last_seen") or "",
                         "label": it.get("standard") or "",
+                        "sample_source_file": key or (all_keys[0] if all_keys else ""),
+                        "amount": amt if amt is not None else "",
+                        "amount_currency": it.get("amount_currency") or "",
                         "confidence": it.get("confidence") or "",
-                        "status": "EXTRACTED",
-                        "origin_kind": "live",
-                        "attribution": "",
-                        "source_file": key or (all_keys[0] if all_keys else ""),
-                        "proof_url": "",
+                        "checksum": it.get("checksum") or "",
+                        "known_operator": "yes" if addr.lower() in master else "no",
                         "dashboard_source_link": _source_link(key) if key else (
                             _source_link(all_keys[0]) if all_keys else ""
                         ),
                         "all_source_files": " | ".join(all_keys),
                         "all_dashboard_links": " | ".join(_source_link(k) for k in all_keys),
+                        "arkham_url": arkham,
+                        "tronscan_url": tron,
                         "case": config.CASE_ID,
                         "auth_ref": config.AUTH_REF,
                         "fact_type": "ai_lead",
@@ -2731,45 +2828,55 @@ def export_wallets(_=Depends(auth)):
             off += len(chunk)
             if len(chunk) < 2000:
                 break
-        from .evidence import load_reference_wallets
+        return rows
 
-        ref_rows = load_reference_wallets()
-        present = db.keys_in_mirror([r.get("proof_s3_key") or "" for r in ref_rows])
-        live_addrs = {r["address"].lower() for r in rows if r.get("address")}
-        for r in ref_rows:
+    def build_reference():
+        live = _live_wallet_set()
+        master = {r["address_lower"]: r for r in load_master_wallet_rows()}
+        rows = []
+        for r in load_reference_wallets():
             addr = r.get("address") or ""
-            if addr.lower() in live_addrs:
-                continue
-            key = r.get("proof_s3_key") or ""
-            live = bool(key and key in present)
+            m = master.get(addr.lower())
+            arkham, tron = _wallet_explorer_urls(addr)
             rows.append(
                 {
                     "address": addr,
                     "network": r.get("network") or "",
-                    "hits": "",
-                    "first_seen_utc": "",
-                    "last_seen_utc": "",
-                    "label": r.get("role") or "",
-                    "confidence": r.get("confidence") or "",
-                    "status": "REFERENCE",
-                    "origin_kind": "reference",
+                    "role": r.get("role") or "",
+                    "label": (m or {}).get("label") or "",
                     "attribution": r.get("attribution") or "",
-                    "source_file": key or (r.get("source_ref") or ""),
-                    "proof_url": r.get("proof_url") or "" if live else "",
-                    "dashboard_source_link": _source_link(key) if live else "",
-                    "all_source_files": key or "",
-                    "all_dashboard_links": _source_link(key) if live else "",
+                    "le_master": "yes" if m else "no",
+                    "case_ids": (m or {}).get("case_ids") or "",
+                    "notes": (m or {}).get("notes") or "",
+                    "source_ref": r.get("source_ref") or "",
+                    "proof_s3_key": r.get("proof_s3_key") or "",
+                    "in_live": "yes" if addr in live else "no",
+                    "arkham_url": arkham,
+                    "tronscan_url": tron,
+                    "fact_type": r.get("fact_type") or "fact",
                     "case": config.CASE_ID,
                     "auth_ref": config.AUTH_REF,
-                    "fact_type": r.get("fact_type") or "fact",
                 }
             )
+        rows.sort(key=lambda x: (0 if x["le_master"] == "yes" else 1, x["address"]))
         return rows
 
+    if kind == "hits":
+        return _export_response(
+            cached("export-wallets:hits-v1", 30.0, build_hits),
+            _WALLET_HIT_EXPORT_COLUMNS,
+            "crypto-wallet-hits",
+        )
+    if kind == "reference":
+        return _export_response(
+            cached("export-wallets:reference-v1", 30.0, build_reference),
+            _WALLET_REF_EXPORT_COLUMNS,
+            "crypto-wallets-identified",
+        )
     return _export_response(
-        cached("export-wallets:full-v3", 60.0, build),
-        _WALLET_EXPORT_COLUMNS,
-        "crypto-wallets-full",
+        cached("export-wallets:distinct-v1", 30.0, build_distinct),
+        _WALLET_DISTINCT_EXPORT_COLUMNS,
+        "crypto-wallets-distinct",
     )
 
 
@@ -3150,25 +3257,31 @@ def wallets_reference(_=Depends(auth)):
     coverage (identified vs decoded). Attribution labels are report
     attributions, NOT proof of ownership.
     """
-    from .evidence import load_reference_wallets
+    from .evidence import load_master_wallet_rows, load_reference_wallets
 
     live = _live_wallet_set()
+    master = {r["address_lower"]: r for r in load_master_wallet_rows()}
     ref_rows = load_reference_wallets()
     present = db.keys_in_mirror([r.get("proof_s3_key") or "" for r in ref_rows])
     items = []
     for r in ref_rows:
         addr = r.get("address") or ""
         pk = r.get("proof_s3_key") or ""
+        m = master.get(addr.lower())
         items.append(
             {
                 **r,
                 "in_live": addr in live,
-                # Proof key in THIS host's mirror? False means the source
-                # object is gone from the bucket (deleted before capture) —
-                # the row keeps its true key, badged deleted in the UI.
                 "in_mirror": pk in present if pk else None,
+                "le_master": bool(m),
+                "label": (m or {}).get("label") or "",
+                "case_ids": (m or {}).get("case_ids") or "",
+                "notes": (m or {}).get("notes") or "",
+                "le_confidence": (m or {}).get("confidence") or "",
+                "le_fact_type": (m or {}).get("fact_type") or "",
             }
         )
+    items.sort(key=lambda i: (0 if i.get("le_master") else 1, i.get("address") or ""))
     identified = len(items)
     decoded = sum(1 for i in items if i["in_live"])
     return {
@@ -3176,6 +3289,7 @@ def wallets_reference(_=Depends(auth)):
         "identified_total": identified,
         "live_decoded": decoded,
         "missing_from_live": identified - decoded,
+        "le_master_total": sum(1 for i in items if i.get("le_master")),
         "fact_type": "fact",
         "assessment_note": "attribution labels are report attributions, not proof of ownership/control",
     }

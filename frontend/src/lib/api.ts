@@ -196,7 +196,16 @@ function exportUrl(kind: string): string {
 }
 
 export function exportUpisUrl(): string { return exportUrl('upis') }
-export function exportWalletsUrl(): string { return exportUrl('wallets') }
+export function exportWalletsUrl(kind: 'hits' | 'distinct' | 'reference' = 'distinct'): string {
+  const at = authParams()
+  const qs = new URLSearchParams()
+  qs.set('kind', kind)
+  if (at) {
+    const tok = new URLSearchParams(at)
+    tok.forEach((v, k) => qs.set(k, v))
+  }
+  return `/api/export/wallets?${qs.toString()}`
+}
 export function exportPayoutsUrl(): string { return exportUrl('payout-accounts') }
 
 /** Officer Query tab — filtered money-flows CSV (opens in Excel). */
