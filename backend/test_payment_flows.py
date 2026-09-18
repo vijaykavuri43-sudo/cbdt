@@ -603,6 +603,9 @@ class SourceFilterTests(unittest.TestCase):
         self.assertEqual(
             db.money_flows("deposit", since="2027-01-01")["transactions"], 0
         )
+        windowed = db.money_flows("deposit", since="2026-09-01", source="object")
+        self.assertEqual(windowed["window_newest"], "2026-09-03T10:00:00Z")
+        self.assertEqual(windowed["src_newest"], "2026-09-03T10:00:00Z")
 
     def test_mule_rails_source_and_new_since(self):
         self.assertEqual(db.mule_rails(limit=10000, offset=0)["total"], 2)

@@ -2657,6 +2657,10 @@ def money_flows(
             "SELECT MAX(last_modified) m FROM payment_transactions "
             "WHERE source_key NOT LIKE 'reference:%'",
         ).fetchone()
+    window_new = c.execute(
+        f"SELECT MAX(last_modified) m FROM payment_transactions WHERE {where}",
+        args,
+    ).fetchone()
     items = []
     for row in rows:
         item = dict(row)
@@ -2701,6 +2705,7 @@ def money_flows(
         or 0,
         "rows_total": total_rows,
         "src_newest": src_new["m"] if src_new else None,
+        "window_newest": window_new["m"] if window_new else None,
         "summary_refreshed_utc": materialized["refreshed_utc"]
         if materialized
         else None,
