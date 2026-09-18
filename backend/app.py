@@ -2299,6 +2299,18 @@ def mule_rails_api(
             active_since=active_since,
         )
         all_items = _score_mule_rail_items(raw["items"])
+        # Scoring sorts by mule heuristic. When officers ask for a live window,
+        # re-rank by deposit inflow in that window so Overview is not a
+        # hardcoded UPI/wallet/account mix or a lifetime-score list.
+        if active_since:
+            all_items.sort(
+                key=lambda item: (
+                    float(item.get("window_deposit_amount_inr") or 0),
+                    int(item.get("window_deposit_transactions") or 0),
+                    item.get("window_last_seen") or item.get("last_seen") or "",
+                ),
+                reverse=True,
+            )
         priority_counts = {
             name: sum(1 for item in all_items if item["priority"] == name)
             for name in ("high", "medium", "lead")

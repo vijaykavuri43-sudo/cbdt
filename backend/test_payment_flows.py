@@ -622,6 +622,42 @@ class SourceFilterTests(unittest.TestCase):
             db.mule_rails(limit=10000, offset=0, active_since="2026-08-01")["total"], 2
         )
 
+    def test_mule_rails_active_since_ranks_by_window_inflow(self):
+        """Overview must rank by 24h deposit rupees, not lifetime score or a pinned wallet/account."""
+        c = db.connect()
+        c.execute(
+            "INSERT INTO payment_transactions(source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,last_modified)"
+            " VALUES('deposit/old-big.png','deposit','G1',99000,'333333333333','upi','big@oksbi','2026-07-01T00:00:00Z')"
+        )
+        c.execute(
+            "INSERT INTO payment_transactions(source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,last_modified)"
+            " VALUES('deposit/big.png','deposit','G1',9000,'222222222222','upi','big@oksbi','2026-09-03T12:00:00Z')"
+        )
+        wallet = "T" + ("X" * 33)
+        c.execute(
+            "INSERT INTO payment_transactions(source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,last_modified)"
+            " VALUES(?,?,?,?,?,?,?,?)",
+            ("deposit/wallet.png", "deposit", "", 12000, "", "crypto_wallet", wallet, "2026-09-03T11:00:00Z"),
+        )
+        c.execute(
+            "INSERT INTO payment_transactions(source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,last_modified)"
+            " VALUES('deposit/acct.png','deposit','','300','','bank_account','01414700000684','2026-09-03T10:00:00Z')"
+        )
+        c.commit()
+        out = db.mule_rails(limit=10000, offset=0, source="object", active_since="2026-09-01")
+        ids = [row["rail_id"] for row in out["items"]]
+        self.assertEqual(ids[0], wallet)
+        self.assertEqual(ids[1], "big@oksbi")
+        by = {row["rail_id"]: row for row in out["items"]}
+        self.assertEqual(by[wallet]["window_deposit_amount_inr"], 12000)
+        self.assertEqual(by["big@oksbi"]["window_deposit_amount_inr"], 9000)
+        self.assertEqual(by["big@oksbi"]["deposit_amount_inr"], 108000)
+        self.assertEqual(by["live@okaxis"]["window_deposit_amount_inr"], 500)
+        self.assertEqual(by["01414700000684"]["window_deposit_amount_inr"], 300)
+        self.assertEqual(out["summary"]["by_rail_type"]["upi"], 2)
+        self.assertEqual(out["summary"]["by_rail_type"]["crypto_wallet"], 1)
+        self.assertEqual(out["summary"]["by_rail_type"]["bank_account"], 1)
+
 
 class LedgerParseTests(unittest.TestCase):
     """P2: bonus math — cash = Amount − Bonus; request rows carry no bonus."""

@@ -2993,6 +2993,18 @@ def mule_rails(
         )
         having_args.append(active_since)
     having_sql = (" HAVING " + " AND ".join(having_bits)) if having_bits else ""
+    window_cols = ""
+    window_args: list = []
+    if active_since:
+        # Window columns are 24h (or since) inflow — not lifetime totals.
+        # Overview ranks by these; lifetime sums stay on the Mule rails tab.
+        window_cols = """,
+          COALESCE(SUM(CASE WHEN direction='deposit' AND last_modified>=? THEN amount_inr ELSE 0 END),0) window_deposit_amount_inr,
+          COUNT(DISTINCT CASE WHEN direction='deposit' AND last_modified>=? THEN source_key END) window_deposit_transactions,
+          COUNT(DISTINCT CASE WHEN direction='deposit' AND last_modified>=? THEN NULLIF(gambler,'') END) window_deposit_gamblers,
+          MAX(CASE WHEN last_modified>=? THEN last_modified END) window_last_seen
+        """
+        window_args = [active_since] * 4
     aggregate = f"""
         SELECT rail_type,rail_id,
           GROUP_CONCAT(DISTINCT NULLIF(account_holder,'')) account_holders,
@@ -3015,11 +3027,13 @@ def mule_rails(
           SUM(CASE WHEN source_key LIKE 'reference:%' THEN 1 ELSE 0 END) reference_rows,
           MIN(last_modified) first_seen,
           MAX(last_modified) last_seen
+          {window_cols}
         FROM payment_transactions WHERE {where}
         GROUP BY rail_type,rail_id
         {having_sql}
     """
-    qargs = args + having_args
+    # SELECT window ?s appear before WHERE in the SQL text.
+    qargs = window_args + args + having_args
     c = connect()
     # One grouped scan supplies rows and totals. The old implementation ran the
     # same aggregate three times, causing avoidable multi-second API latency.
@@ -3027,14 +3041,24 @@ def mule_rails(
     for row in all_items:
         row["utrs"] = _pipe_join_csv(row.get("utrs") or "")
         row["utr_count"] = int(row.get("utr_count") or 0)
-    all_items.sort(
-        key=lambda row: (
-            row["transactions"],
-            bool(row["deposit_transactions"] and row["withdrawal_transactions"]),
-            row.get("last_seen") or "",
-        ),
-        reverse=True,
-    )
+    if active_since:
+        all_items.sort(
+            key=lambda row: (
+                float(row.get("window_deposit_amount_inr") or 0),
+                int(row.get("window_deposit_transactions") or 0),
+                row.get("window_last_seen") or "",
+            ),
+            reverse=True,
+        )
+    else:
+        all_items.sort(
+            key=lambda row: (
+                row["transactions"],
+                bool(row["deposit_transactions"] and row["withdrawal_transactions"]),
+                row.get("last_seen") or "",
+            ),
+            reverse=True,
+        )
     summary = {
         "candidate_rails": len(all_items),
         "receiving_rails": sum(bool(row["deposit_transactions"]) for row in all_items),
