@@ -132,5 +132,66 @@ class ActualDataContextTests(unittest.TestCase):
         self.assertTrue(sources)
 
 
+class FileContentSearchTests(unittest.TestCase):
+    def test_find_ipv4_validates_octets(self):
+        self.assertEqual(
+            aiask._find_ipv4("server 8.231.108.145 and 999.1.1.1 ok"),
+            ["8.231.108.145"],
+        )
+        self.assertEqual(aiask._find_ipv4("a 1.2.3.4 b 1.2.3.4"), ["1.2.3.4"])
+
+    def test_content_term_picks_literal(self):
+        self.assertEqual(
+            aiask._content_term("file containing '64431313@okhdfc' ?"),
+            "64431313@okhdfc",
+        )
+        self.assertEqual(
+            aiask._content_term("any file with 8.231.108.145"), "8.231.108.145"
+        )
+
+    def test_no_trigger_no_scan(self):
+        txt, sources = aiask._ctx_file_content(
+            "total deposits today?", "total deposits today?", object()
+        )
+        self.assertEqual((txt, sources), ("", []))
+
+    def test_live_grep_reports_hit_keys(self):
+        from . import enrich as _enrich
+
+        saved = (db.list_objects, db.search, db.connect, _enrich.fetch_bytes)
+        db.list_objects = lambda *a, **k: {
+            "items": [
+                {"key": "csv-files/n1.csv", "size": 100},
+                {"key": "csv-files/n2.csv", "size": 100},
+            ]
+        }
+        db.search = lambda **k: []
+        db.connect = lambda: _NoGateway()
+
+        _enrich.fetch_bytes = lambda store, key: (
+            b"nothing here" if key.endswith("n1.csv") else b"callback 8.231.108.145 ok"
+        )
+        try:
+            txt, sources = aiask._ctx_file_content(
+                "is there any file containing ip address",
+                "is there any file containing ip address",
+                object(),
+            )
+        finally:
+            db.list_objects, db.search, db.connect = saved[0], saved[1], saved[2]
+            _enrich.fetch_bytes = saved[3]
+        self.assertIn("8.231.108.145", txt)
+        self.assertIn("csv-files/n2.csv", txt)
+        self.assertTrue(any(s["ref"] == "csv-files/n2.csv" for s in sources))
+
+
+class _NoGateway:
+    def execute(self, *a, **k):
+        return self
+
+    def fetchall(self):
+        return []
+
+
 if __name__ == "__main__":
     unittest.main()

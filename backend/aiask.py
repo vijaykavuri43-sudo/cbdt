@@ -531,6 +531,173 @@ _OBJECT_WORDS = (
 )
 
 
+# ---------- file-content search: "any file containing X / an IP address" ----
+# (2026-09-18: officers need per-file reads, not just aggregates. Raw OCR
+# text is NOT stored — only structured extracts — so this greps live object
+# bytes, bounded: newest text files only, 40 files / 8MB / 10 hits max.)
+
+
+_CONTENT_WORDS = (
+    "ip address",
+    "ipaddress",
+    "ip ",
+    "ips",
+    "contain",
+    "inside",
+    "mention",
+    "keyword",
+    "domain",
+    "phone",
+    "email",
+    "api key",
+    "password",
+    "secret",
+    "file with",
+    "any file",
+    "which file",
+)
+
+_GREP_EXTS = (".csv", ".txt", ".json", ".log", ".md", ".html", ".js")
+_GREP_FILES_MAX = 40
+_GREP_BYTES_MAX = 8 * 1024 * 1024
+_GREP_HITS_MAX = 10
+
+_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+
+def _find_ipv4(text: str) -> list[str]:
+    """Valid dotted quads in text (octets 0-255), first-seen order, deduped."""
+    out = []
+    for m in _IPV4_RE.finditer(text):
+        try:
+            if all(0 <= int(o) <= 255 for o in m.group(0).split(".")):
+                if m.group(0) not in out:
+                    out.append(m.group(0))
+        except ValueError:
+            continue
+    return out
+
+
+def _content_term(q: str) -> str:
+    """A literal quoted-or-bare search term from the question, if any."""
+    m = re.search(r"""['"]([^'"]{3,80})['"]""", q)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", q)
+    if m:
+        return m.group(0)
+    m = re.search(
+        r"\b((?:[a-z0-9-]+\.)+(?:com|net|org|io|in|xyz|top|site|online|bet|games?))\b",
+        q.lower(),
+    )
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _ctx_file_content(ql: str, q: str, store: Any) -> tuple[str, list]:
+    """Structured IP/term hits + bounded live grep of newest text files."""
+    if not any(w in ql for w in _CONTENT_WORDS):
+        return "", []
+    parts, sources = [], []
+    want_ip = "ip" in ql
+    term = _content_term(q)
+
+    # 1) structured: gateway brand websites holding an IPv4 address (indexed)
+    if want_ip:
+        try:
+            rows = (
+                db.connect()
+                .execute(
+                    "SELECT DISTINCT website FROM gateway_rows "
+                    "WHERE website!='' AND website GLOB '*[0-9]*.[0-9]*' LIMIT 200"
+                )
+                .fetchall()
+            )
+            ip_brands = sorted(
+                {w for r in rows for w in _find_ipv4(r["website"] or "")}
+            )
+            if ip_brands:
+                parts.append(
+                    "GATEWAY BRAND IPs (settlement exports — quote verbatim): "
+                    + ", ".join(ip_brands[:30])
+                )
+                sources.append({"kind": "gateway", "ref": "/api/gateway/summary"})
+        except Exception:
+            pass
+    # 2) key-name matches for a literal term
+    if term:
+        try:
+            name_hits = db.search(q=term, limit=15)
+            keys = [h.get("key") or "" for h in (name_hits or [])]
+            keys = [k for k in keys if k]
+            if keys:
+                parts.append(
+                    f"FILES NAMED LIKE '{term}' ({len(keys)} shown): " + "; ".join(keys)
+                )
+                sources += [{"kind": "file-hit", "ref": k} for k in keys[:12]]
+        except Exception:
+            pass
+    # 3) bounded live grep over newest text files
+    try:
+        res = db.list_objects(
+            "", limit=200, order="-modified", flat=True, exts=list(_GREP_EXTS)
+        )
+    except Exception:
+        res = {}
+    cands = [
+        o
+        for o in (res.get("items") or [])
+        if (o.get("size") or 0) <= 1024 * 1024 and o.get("key")
+    ][:_GREP_FILES_MAX]
+    hits: list[tuple[str, list[str]]] = []
+    scanned, read_bytes = 0, 0
+    if cands and store is not None:
+        import concurrent.futures as _cf
+
+        from .enrich import fetch_bytes
+
+        def _read(key: str) -> tuple[str, str]:
+            try:
+                data = fetch_bytes(store, key)
+            except Exception:
+                return key, ""
+            return key, data[: 1024 * 1024].decode("utf-8", "replace")
+
+        with _cf.ThreadPoolExecutor(max_workers=8) as pool:
+            futs = {pool.submit(_read, o["key"]): o["key"] for o in cands}
+            for fut in _cf.as_completed(futs, timeout=90):
+                key = futs[fut]
+                scanned += 1
+                try:
+                    _, text = fut.result(timeout=10)
+                except Exception:
+                    continue
+                read_bytes += min(len(text), 1024 * 1024)
+                found = _find_ipv4(text) if want_ip else []
+                if term and term.lower() in text.lower():
+                    found = (found + [f"literal '{term}'"])[:5]
+                if found:
+                    hits.append((key, found[:5]))
+                    sources.append({"kind": "file-hit", "ref": key})
+                if len(hits) >= _GREP_HITS_MAX or read_bytes >= _GREP_BYTES_MAX:
+                    break
+    if hits:
+        lines = [f"{k} -> {', '.join(v)}" for k, v in hits]
+        parts.append(
+            f"CONTENT HITS (live grep, {scanned} newest text files scanned — "
+            "open keys in Explorer/Search to verify):\n" + "\n".join(lines)
+        )
+    else:
+        parts.append(
+            f"No matches in the bounded scan ({scanned} newest text files, "
+            "csv/txt/json/log/md/html/js ≤1MB each). NOT a full-bucket sweep: "
+            "1.6M+ objects (images need OCR, sheets need parsing) — narrow by "
+            "prefix, filename, or a literal IP/domain to dig deeper."
+        )
+    return "FILE CONTENT SEARCH:\n" + "\n".join(parts), sources[:12]
+
+
 def _ctx_objects(ql: str, q: str) -> tuple[str, list]:
     """Newest object keys overall or inside a named prefix (bucket content)."""
     if not any(w in ql for w in _OBJECT_WORDS):
@@ -710,6 +877,9 @@ _SYSTEM = (
     "and object keys under WALLETS / RAILS / LEDGER / NEWEST OBJECTS are exact "
     "database output too — when the officer asks to list them, print them "
     "(up to ~100), never refuse for lack of data and never invent any. "
+    "FILE CONTENT SEARCH blocks report a bounded live grep — state the scan "
+    "coverage (files scanned) and give the hit keys as exhibits; never claim "
+    "a full-bucket sweep. "
     "A COMPUTED count=0 means ZERO transactions "
     "in that window: report 'no transactions recorded in <window>', NEVER "
     "'data unavailable' or 'lacks information'. Only say data is missing when "
@@ -811,6 +981,10 @@ def ask(question: str, store: Any) -> dict:
         ctx_parts.append(t)
         sources += s
     t, s = _ctx_objects(ql, q)
+    if t:
+        ctx_parts.append(t)
+        sources += s
+    t, s = _ctx_file_content(ql, q, store)
     if t:
         ctx_parts.append(t)
         sources += s
