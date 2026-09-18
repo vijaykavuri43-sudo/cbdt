@@ -21,6 +21,7 @@ from .enrich import (  # noqa: E402
     _scan_amount_matches,
     NUM12_RE,
     UTR_RE,
+    amount_is_ref_id,
     detect_twin_artifact,
     correct_rupee_eaten,
     extract_amount,
@@ -116,6 +117,37 @@ class RupeeEatenSingleHitTests(unittest.TestCase):
             "Debited from HDFC 23,000 Rupees Twenty Three Thousand Only"
         )
         self.assertEqual(extract_amount(text), 23000.0)
+
+
+class PaytmRefAsAmountTests(unittest.TestCase):
+    """Officer exhibit deposit/1789719398070.jpg: Paytm ₹150 stored as
+    ₹31,49,658 because the scratch card split Ref. No 314965897745."""
+
+    EXHIBIT = (
+        "paytm Fuso Kumar UPI ID: 7903709938-1@okbizaxis ₹150 "
+        "18 Sept, 01:46 PM Ref. No: 314965897745 Check Balance Pay Again "
+        "SCRATCHCARD YOU JUST WON A ~ 3149658 97745 Send to device"
+    )
+
+    def test_exhibit_paytm_150_not_ref_prefix(self):
+        self.assertEqual(extract_amount(self.EXHIBIT), 150.0)
+        self.assertTrue(amount_is_ref_id(self.EXHIBIT, 3149658.0, "314965897745"))
+        self.assertFalse(amount_is_ref_id(self.EXHIBIT, 150.0, "314965897745"))
+
+    def test_ref_prefix_without_rupee_is_nulled_not_lakhs(self):
+        text = (
+            "paytm Fuso Kumar UPI ID: 7903709938-1@okbizaxis "
+            "18 Sept Ref. No: 314965897745 SCRATCHCARD ~ 3149658 97745"
+        )
+        self.assertIsNone(extract_amount(text))
+
+    def test_genuine_seven_digit_amount_with_unrelated_utr_kept(self):
+        text = (
+            "Payment successful Paid to ACME TRADERS acme@okhdfcbank "
+            "₹21,00,000 UTR 123456789012"
+        )
+        self.assertEqual(extract_amount(text), 2100000.0)
+        self.assertFalse(amount_is_ref_id(text, 2100000.0, "123456789012"))
 
 
 class RsPrefixedAmountTests(unittest.TestCase):

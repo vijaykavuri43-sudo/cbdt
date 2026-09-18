@@ -529,7 +529,7 @@ _SPENT_CTX = re.compile(
 )
 _PAYMENT_CTX = re.compile(
     r"payment\s+successful|paid\s+to|paid\s+by|transaction\s+successful|"
-    r"debited\s+from|view\s+details",
+    r"debited\s+from|view\s+details|\bpaytm\b|upi\s*id",
     re.IGNORECASE,
 )
 # In-app ad banners beside the receipt ("iPhone 16 Pro ₹50,000 Buy now",
@@ -563,6 +563,12 @@ _REF_CTX_RE = re.compile(
 # Scratch-card promo context — number followed by SCRATCH is the game id
 # ("~ 6137269 SCRATCH", verified 2026-09-11).
 _SCRATCH_CTX_RE = re.compile(r"^\s*~?\s*scratch", re.IGNORECASE)
+# Paytm success screen prints SCRATCHCARD *above* the split ref
+# (officer exhibit deposit/1789719398070.jpg: ₹150 stored as 31,49,658).
+_SCRATCH_BEFORE_RE = re.compile(r"scratch(?:\s*card|card)?", re.IGNORECASE)
+# 10–16 digit UPI/Paytm refs. A 7–9 digit "amount" that is a prefix of one
+# is the truncated ref, never the principal (3149658 from 314965897745).
+_LONG_ID_RE = re.compile(r"\d{10,16}")
 # VPA tail — digits running into @ belong to a VPA local part, never an
 # amount ("rs3689580-1@okaxis" stored 3.69M twice, verified 2026-09-11).
 _VPA_TAIL_RE = re.compile(r"[\w.\-]*@")
@@ -766,6 +772,7 @@ def _scan_amount_matches(flat: str) -> list[dict]:
     Out-of-bound values and far-from-context bare numbers stay silent.
     """
     pay_positions = [m.start() for m in _PAYMENT_CTX.finditer(flat)]
+    long_ids = _LONG_ID_RE.findall(flat)
     scanned: list[dict] = []
     for pi, pattern in enumerate(AMOUNT_PATTERNS):
         weight = _AMOUNT_PATTERN_WEIGHTS.get(pi, 3)
@@ -784,12 +791,19 @@ def _scan_amount_matches(flat: str) -> list[dict]:
             )
             if not (0 < value <= bound):
                 continue
-            if len(raw.split(".", 1)[0]) > 9:
+            bare_digits = raw.split(".", 1)[0]
+            if len(bare_digits) > 9:
                 continue
             # OCR debris "~ 4" / "= 8" beside Transfer Details (officer
             # exhibit deposit/1789721443450.jpeg: reparse stored ₹4 instead
             # of ₹3,000). PhonePe ~amounts are thousands (~3,000).
-            if pi in (3, 4) and len(raw.split(".", 1)[0]) < 3:
+            if pi in (3, 4) and len(bare_digits) < 3:
+                continue
+            # Truncated Paytm/UPI ref used as rupees (₹150 slip stored
+            # 31,49,658 because scratch showed 3149658 / 97745).
+            if len(bare_digits) >= 7 and any(
+                lid != bare_digits and lid.startswith(bare_digits) for lid in long_ids
+            ):
                 continue
             ctx_before = flat[max(0, s - 60) : s]
             ctx_after = flat[e : e + 60]
@@ -872,6 +886,10 @@ def _scan_amount_matches(flat: str) -> list[dict]:
                 dropped, reason = True, "ref-number"
             # Scratch-card promo id ('~ 6137269 SCRATCH'; verified 2026-09-11).
             if not dropped and _SCRATCH_CTX_RE.match(ctx_after_low[:25]):
+                dropped, reason = True, "scratch-promo"
+            # Paytm scratch id sits *below* the SCRATCHCARD banner, so the
+            # word is before the digits (deposit/1789719398070.jpg).
+            if not dropped and _SCRATCH_BEFORE_RE.search(ctx_before_low[-90:]):
                 dropped, reason = True, "scratch-promo"
             # Generic up-to cap without promo-footer words (Navi loan ad
             # 'Get upto INR 20,00,000'; verified 2026-09-11).
@@ -1278,6 +1296,30 @@ def correct_rupee_eaten(text: str, amount: Optional[float]) -> Optional[float]:
     if twin:
         return float(twin["true_amount"])
     return None
+
+
+def amount_is_ref_id(text: str, amount: Optional[float], utr: str = "") -> bool:
+    """True when `amount` is a truncated UPI/Paytm reference, not rupees.
+
+    Officer exhibit deposit/1789719398070.jpg: Paytm ₹150 + Ref. No
+    314965897745 stored as ₹31,49,658 (scratch split 3149658 / 97745).
+    """
+    if amount is None:
+        return False
+    try:
+        iv = int(amount)
+    except Exception:
+        return False
+    if float(iv) != float(amount):
+        return False
+    digits = str(iv)
+    if len(digits) < 7:
+        return False
+    ids = list(_LONG_ID_RE.findall(text or ""))
+    u = re.sub(r"\D", "", utr or "")
+    if 10 <= len(u) <= 16:
+        ids.append(u)
+    return any(lid != digits and lid.startswith(digits) for lid in ids)
 
 
 def extract_amount_candidates(text: str) -> list[dict]:

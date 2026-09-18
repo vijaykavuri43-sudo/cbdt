@@ -72,6 +72,19 @@ def main() -> None:
             p["amount_inr"] = amt
             p["amount_value"] = amt
             changed = True
+        elif cur is not None and enrich.amount_is_ref_id(
+            text, float(cur), str(p.get("utr") or "")
+        ):
+            # Paytm/UPI ref truncated into rupees (₹150 stored as 31,49,658).
+            p["amount_tesseract_raw"] = cur if cur is not None else raw
+            p["ref_as_amount"] = True
+            if amt is not None and abs(float(cur) - amt) > 0.001:
+                p["amount_inr"] = amt
+                p["amount_value"] = amt
+            else:
+                p["amount_inr"] = None
+                p["amount_value"] = None
+            changed = True
         vpas = enrich.extract_vpas(text)
         if vpas:
             v = vpas[0]
