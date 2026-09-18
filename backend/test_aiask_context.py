@@ -193,5 +193,81 @@ class _NoGateway:
         return []
 
 
+class PeopleAndRouterTests(unittest.TestCase):
+    def test_people_lists_gamblers_and_holders(self):
+        class _Rows:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def execute(self, sql, *a, **k):
+                if "GROUP BY gambler" in sql:
+                    return _Rows(
+                        [
+                            {
+                                "gambler": "G1",
+                                "n": 5,
+                                "dep": 10000,
+                                "wd": 2000,
+                            }
+                        ]
+                    )
+                return _Rows(
+                    [
+                        {
+                            "account_holder": "HOLDER X",
+                            "rail_type": "vpa",
+                            "rails": 2,
+                            "n": 7,
+                        }
+                    ]
+                )
+
+            def fetchall(self):
+                return self._rows
+
+        saved = db.connect
+        db.connect = lambda: _Rows([])
+        try:
+            txt, sources = aiask._ctx_people("top agents and operators by volume?")
+        finally:
+            db.connect = saved
+        self.assertIn("G1", txt)
+        self.assertIn("10,000", txt)
+        self.assertIn("HOLDER X", txt)
+        self.assertTrue(sources)
+
+    def test_people_ignores_unrelated(self):
+        txt, sources = aiask._ctx_people("total deposits today?")
+        self.assertEqual((txt, sources), ("", []))
+
+    def test_prefix_triggers_include_bucket_paths(self):
+        for stem in ("deposit/", "chat_file", "payment gateway", "apk"):
+            self.assertIn(stem, aiask._PREFIX_TRIGGERS)
+
+    def test_ledger_result_cached(self):
+        from . import ledger as _ledger
+
+        calls = []
+
+        def _fake():
+            calls.append(1)
+            return {
+                "by_type": [],
+                "by_sender": [],
+                "coverage": {},
+                "files": {},
+            }
+
+        aiask._cache.clear()
+        saved = _ledger.summary
+        _ledger.summary = _fake
+        try:
+            aiask._ctx_ledger("ledger totals?")
+            aiask._ctx_ledger("ledger totals?")
+        finally:
+            _ledger.summary = saved
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

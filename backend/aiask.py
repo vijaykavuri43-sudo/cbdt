@@ -139,13 +139,9 @@ def _ctx_money(q: str) -> tuple[str, list]:
         total = f.get("total_inr") or f.get("total") or "?"
         parts.append(f"{direction}s: total≈₹{total}; top rails: {rows[:8]}")
         sources.append({"kind": "money", "ref": f"/api/flows?direction={direction}"})
-    try:
-        mr = db.mule_rails(limit=10)
-        rows = mr.get("rails") or mr.get("rows") or []
-        parts.append(f"Top candidate mule rails: {rows[:10]}")
-        sources.append({"kind": "mules", "ref": "/api/mule-rails"})
-    except Exception:
-        pass
+    # NOTE: rail detail moved to _ctx_upi_list (real handles). money_flows'
+    # top-rail summary + a second mule_rails aggregate here doubled the
+    # heaviest GROUP BY scans on every money question (2026-09-18).
     return "\n".join(parts) or "No money-flow data yet.", sources
 
 
@@ -403,6 +399,14 @@ _WALLET_WORDS = (
     "eth",
     "address",
     "addresses",
+    "coin",
+    "token",
+    "blockchain",
+    "binance",
+    "tether",
+    "exchange",
+    "deposit address",
+    "trust",
 )
 
 
@@ -442,7 +446,85 @@ _UPI_WORDS = (
     "account",
     "ifsc",
     "payee",
+    "bank",
+    "transfer",
+    "imps",
+    "neft",
+    "rtgs",
+    "qr",
+    "collect",
+    "payout",
+    "settle",
+    "payment",
+    "gateway",
 )
+
+
+_PEOPLE_WORDS = (
+    "agent",
+    "operator",
+    "gambler",
+    "player",
+    "customer",
+    "holder",
+    "sender",
+    "beneficiary",
+    "beneficiar",
+    "receiver",
+    "who",
+    "person",
+    "people",
+    "users",
+)
+
+
+def _ctx_people(ql: str) -> tuple[str, list]:
+    """Top gamblers + account holders by observed volume (agents/operators
+    have no dedicated table — these are the closest person-level leads)."""
+    if not any(w in ql for w in _PEOPLE_WORDS):
+        return "", []
+    parts = []
+    try:
+        con = db.connect()
+        rows = con.execute(
+            "SELECT gambler, COUNT(*) n, "
+            "COALESCE(SUM(CASE WHEN direction='deposit' THEN amount_inr ELSE 0 END),0) dep, "
+            "COALESCE(SUM(CASE WHEN direction='withdrawal' THEN amount_inr ELSE 0 END),0) wd "
+            "FROM payment_transactions WHERE gambler!='' "
+            "GROUP BY gambler ORDER BY dep + wd DESC LIMIT 20"
+        ).fetchall()
+        if rows:
+            parts.append(
+                "TOP GAMBLERS (by volume): "
+                + "; ".join(
+                    f"{r['gambler']} = dep₹{_inr(r['dep'])} + wd₹{_inr(r['wd'])} ({r['n']} txns)"
+                    for r in rows
+                )
+            )
+        rows = con.execute(
+            "SELECT account_holder, rail_type, COUNT(DISTINCT rail_id) rails, "
+            "COUNT(*) n FROM payment_transactions WHERE account_holder!='' "
+            "GROUP BY account_holder, rail_type ORDER BY n DESC LIMIT 20"
+        ).fetchall()
+        if rows:
+            parts.append(
+                "TOP ACCOUNT HOLDERS: "
+                + "; ".join(
+                    f"{r['account_holder']} [{r['rail_type']}] "
+                    f"({r['rails']} rails, {r['n']} rows)"
+                    for r in rows
+                )
+            )
+    except Exception as e:
+        return (
+            f"People lists unavailable ({str(e)[:120]} — use UPI / Mules page).",
+            [],
+        )
+    if not parts:
+        return "No gambler/holder data yet.", [
+            {"kind": "people", "ref": "/api/mule-rails"}
+        ]
+    return "\n".join(parts), [{"kind": "people", "ref": "/api/mule-rails"}]
 
 
 def _ctx_upi_list(ql: str) -> tuple[str, list]:
@@ -474,13 +556,82 @@ def _ctx_upi_list(ql: str) -> tuple[str, list]:
     return txt, [{"kind": "rails", "ref": "/api/mule-rails"}]
 
 
-_LEDGER_WORDS = ("ledger", "xls", "xlsx", "sheet", "sender", "gambler")
+_LEDGER_WORDS = (
+    "ledger",
+    "xls",
+    "xlsx",
+    "sheet",
+    "sender",
+    "gambler",
+    "excel",
+    "report",
+    "statement",
+    "transaction_",
+    "data_",
+    "bet_list",
+    "balance",
+)
+
+
+# Every bucket prefix is itself a trigger ("apk files?", "chat images?"),
+# with and without the slash, space- or dash-separated.
+# Spaced aliases for compound stems ("payment gateway" has no _/- to split).
+_PREFIX_ALIASES = {
+    "payment gateway": "paymentgateway/",
+    "qr code": "qrcode/",
+    "banking qr": "bankingqr/",
+    "chat files": "chat_file/",
+    "csv files": "csv-files/",
+}
+
+
+def _prefix_triggers() -> tuple[str, ...]:
+    out = []
+    for p in config.DEFAULT_PREFIXES:
+        stem = p.rstrip("/").lower()
+        out.append(stem)
+        out.append(stem + "/")
+        spaced = stem.replace("_", " ").replace("-", " ")
+        if spaced != stem:
+            out.append(spaced)
+    out.extend(_PREFIX_ALIASES)
+    return tuple(out)
+
+
+_PREFIX_TRIGGERS = _prefix_triggers()
+
+
+# Tiny TTL caches: ledger.summary aggregates + live-grep scans are the two
+# slowest gatherers; repeated officer questions reuse them for 5 minutes.
+_cache: dict = {}
+_CACHE_TTL = 300.0
+
+
+def _cache_get(key: str):
+    import time as _t
+
+    hit = _cache.get(key)
+    if hit and _t.monotonic() - hit[0] < _CACHE_TTL:
+        return hit[1]
+    return None
+
+
+def _cache_put(key: str, value):
+    import time as _t
+
+    if len(_cache) > 64:
+        _cache.clear()
+    _cache[key] = (_t.monotonic(), value)
 
 
 def _ctx_ledger(ql: str) -> tuple[str, list]:
     """Ledger XLS/CSV export totals: per-type cash, top senders, coverage."""
     if not any(w in ql for w in _LEDGER_WORDS):
         return "", []
+    hit = _cache_get("ledger:summary")
+    if hit is not None:
+        txt, sources = hit
+        return txt + " (cached ≤5 min)", sources
     try:
         from . import ledger
 
@@ -511,9 +662,12 @@ def _ctx_ledger(ql: str) -> tuple[str, list]:
         f"UTRs {cov.get('ledger_utrs')} ({cov.get('matched_in_flows')} matched in flows). "
         "cash = Amount − Bonus from Remark; raw Amount is chips, never cash."
     )
-    return "LEDGER (XLS/CSV exports):\n" + "\n".join(parts), [
-        {"kind": "ledger", "ref": "/api/ledger/summary"}
-    ]
+    out = (
+        "LEDGER (XLS/CSV exports):\n" + "\n".join(parts),
+        [{"kind": "ledger", "ref": "/api/ledger/summary"}],
+    )
+    _cache_put("ledger:summary", out)
+    return out
 
 
 _OBJECT_WORDS = (
@@ -528,7 +682,16 @@ _OBJECT_WORDS = (
     "newest",
     "uploaded",
     "prefix",
-)
+    "folder",
+    "directory",
+    "apk",
+    "file type",
+    "filetype",
+    "extension",
+    "images",
+    "videos",
+    "audio",
+) + _PREFIX_TRIGGERS
 
 
 # ---------- file-content search: "any file containing X / an IP address" ----
@@ -555,6 +718,16 @@ _CONTENT_WORDS = (
     "file with",
     "any file",
     "which file",
+    "server",
+    "host",
+    "callback",
+    "webhook",
+    "panel",
+    "admin",
+    "login",
+    "username",
+    "url",
+    "link",
 )
 
 _GREP_EXTS = (".csv", ".txt", ".json", ".log", ".md", ".html", ".js")
@@ -638,54 +811,65 @@ def _ctx_file_content(ql: str, q: str, store: Any) -> tuple[str, list]:
                 sources += [{"kind": "file-hit", "ref": k} for k in keys[:12]]
         except Exception:
             pass
-    # 3) bounded live grep over newest text files
-    try:
-        res = db.list_objects(
-            "", limit=200, order="-modified", flat=True, exts=list(_GREP_EXTS)
-        )
-    except Exception:
-        res = {}
-    cands = [
-        o
-        for o in (res.get("items") or [])
-        if (o.get("size") or 0) <= 1024 * 1024 and o.get("key")
-    ][:_GREP_FILES_MAX]
+    # 3) bounded live grep over newest text files (cached 5 min per term)
+    gkey = f"grep:{int(want_ip)}:{term}"
+    cached = _cache_get(gkey)
     hits: list[tuple[str, list[str]]] = []
-    scanned, read_bytes = 0, 0
-    if cands and store is not None:
-        import concurrent.futures as _cf
+    scanned = 0
+    from_cache = False
+    if cached is not None:
+        hits, scanned = cached
+        from_cache = True
+        sources += [{"kind": "file-hit", "ref": k} for k, _ in hits]
+    else:
+        try:
+            res = db.list_objects(
+                "", limit=200, order="-modified", flat=True, exts=list(_GREP_EXTS)
+            )
+        except Exception:
+            res = {}
+        cands = [
+            o
+            for o in (res.get("items") or [])
+            if (o.get("size") or 0) <= 1024 * 1024 and o.get("key")
+        ][:_GREP_FILES_MAX]
+        read_bytes = 0
+        if cands and store is not None:
+            import concurrent.futures as _cf
 
-        from .enrich import fetch_bytes
+            from .enrich import fetch_bytes
 
-        def _read(key: str) -> tuple[str, str]:
-            try:
-                data = fetch_bytes(store, key)
-            except Exception:
-                return key, ""
-            return key, data[: 1024 * 1024].decode("utf-8", "replace")
-
-        with _cf.ThreadPoolExecutor(max_workers=8) as pool:
-            futs = {pool.submit(_read, o["key"]): o["key"] for o in cands}
-            for fut in _cf.as_completed(futs, timeout=90):
-                key = futs[fut]
-                scanned += 1
+            def _read(key: str) -> tuple[str, str]:
                 try:
-                    _, text = fut.result(timeout=10)
+                    data = fetch_bytes(store, key)
                 except Exception:
-                    continue
-                read_bytes += min(len(text), 1024 * 1024)
-                found = _find_ipv4(text) if want_ip else []
-                if term and term.lower() in text.lower():
-                    found = (found + [f"literal '{term}'"])[:5]
-                if found:
-                    hits.append((key, found[:5]))
-                    sources.append({"kind": "file-hit", "ref": key})
-                if len(hits) >= _GREP_HITS_MAX or read_bytes >= _GREP_BYTES_MAX:
-                    break
+                    return key, ""
+                return key, data[: 1024 * 1024].decode("utf-8", "replace")
+
+            with _cf.ThreadPoolExecutor(max_workers=8) as pool:
+                futs = {pool.submit(_read, o["key"]): o["key"] for o in cands}
+                for fut in _cf.as_completed(futs, timeout=60):
+                    key = futs[fut]
+                    scanned += 1
+                    try:
+                        _, text = fut.result(timeout=10)
+                    except Exception:
+                        continue
+                    read_bytes += min(len(text), 1024 * 1024)
+                    found = _find_ipv4(text) if want_ip else []
+                    if term and term.lower() in text.lower():
+                        found = (found + [f"literal '{term}'"])[:5]
+                    if found:
+                        hits.append((key, found[:5]))
+                        sources.append({"kind": "file-hit", "ref": key})
+                    if len(hits) >= _GREP_HITS_MAX or read_bytes >= _GREP_BYTES_MAX:
+                        break
+        _cache_put(gkey, (hits, scanned))
     if hits:
         lines = [f"{k} -> {', '.join(v)}" for k, v in hits]
         parts.append(
-            f"CONTENT HITS (live grep, {scanned} newest text files scanned — "
+            f"CONTENT HITS (live grep, {scanned} newest text files scanned"
+            f"{' — cached ≤5 min' if from_cache else ''} — "
             "open keys in Explorer/Search to verify):\n" + "\n".join(lines)
         )
     else:
@@ -708,6 +892,18 @@ def _ctx_objects(ql: str, q: str) -> tuple[str, list]:
         cand = m.group(1).lower() + "/"
         if cand in [p.lower() for p in config.DEFAULT_PREFIXES]:
             prefix = next(p for p in config.DEFAULT_PREFIXES if p.lower() == cand)
+    if not prefix:
+        # bare prefix name without slash ("apk files?", "chat images?")
+        for alias, target in _PREFIX_ALIASES.items():
+            if re.search(rf"(?<![\w]){re.escape(alias)}s?(?![\w/])", ql):
+                prefix = target
+                break
+    if not prefix:
+        for p in config.DEFAULT_PREFIXES:
+            stem = p.rstrip("/").lower()
+            if re.search(rf"(?<![\w]){re.escape(stem)}s?(?![\w/])", ql):
+                prefix = p
+                break
     try:
         res = db.list_objects(prefix, limit=15, order="-modified", flat=True)
     except Exception as e:
@@ -934,6 +1130,12 @@ def ask(question: str, store: Any) -> dict:
             "mule",
             "rail",
             "flow",
+            "bank",
+            "payout",
+            "transfer",
+            "upi",
+            "vpa",
+            "payment",
         )
     ):
         t, s = _ctx_money(q)
@@ -975,6 +1177,10 @@ def ask(question: str, store: Any) -> dict:
     t, s = _ctx_upi_list(ql)
     if t:
         ctx_parts.append("RAILS:\n" + t)
+        sources += s
+    t, s = _ctx_people(ql)
+    if t:
+        ctx_parts.append("PEOPLE:\n" + t)
         sources += s
     t, s = _ctx_ledger(ql)
     if t:
