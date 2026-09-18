@@ -2442,6 +2442,7 @@ _UNIQUE_EXPORT_COLUMNS = (
     "ifsc",
     "network",
     "slips",
+    "image_hits",
     "amount_inr",
     "first_seen_utc",
     "last_seen_utc",
@@ -2517,6 +2518,7 @@ def export_money_flows_unique(
                     "ifsc": r.get("ifsc") or "",
                     "network": r.get("network") or "",
                     "slips": r.get("slips") or 0,
+                    "image_hits": r.get("image_hits") or 0,
                     "amount_inr": r.get("amount_inr")
                     if r.get("amount_inr") is not None
                     else "",

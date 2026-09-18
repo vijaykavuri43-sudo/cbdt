@@ -2415,6 +2415,39 @@ def _rail_id_shape_sql(rail_type: str) -> str:
     return ""
 
 
+def _folder_clause(column: str, folder: str) -> tuple[str, list]:
+    """Prefix filter copied from _FOLDER_KEY_SQL onto wallet_hits.key etc."""
+    folder = (folder or "").strip().lower()
+    if folder in ("", "all") or folder not in _FOLDER_KEY_SQL:
+        return "", []
+    sql, extra = _FOLDER_KEY_SQL[folder]
+    return sql.replace("source_key", column), extra
+
+
+def _wallet_hit_window_filters(
+    q: str = "", since: str = "", until: str = "", folder: str = ""
+) -> tuple[str, list]:
+    conds = ["address!=''"]
+    args: list = []
+    fsql, fextra = _folder_clause("key", folder)
+    if fsql:
+        conds.append(fsql)
+        args.extend(fextra)
+    since_n = _bound_ts(since, end=False)
+    until_n = _bound_ts(until, end=True)
+    if since_n:
+        conds.append("last_modified>=?")
+        args.append(since_n)
+    if until_n:
+        conds.append("last_modified<=?")
+        args.append(until_n)
+    if q:
+        like = "%" + q.replace("%", r"\%").replace("_", r"\_") + "%"
+        conds.append("(address LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')")
+        args.extend([like, like])
+    return " AND ".join(conds), args
+
+
 def _pipe_join_csv(raw: str) -> str:
     """Turn SQLite GROUP_CONCAT output into a stable 'a | b | c' officer list."""
     seen: list[str] = []
@@ -2704,6 +2737,10 @@ def money_flows_unique(
     offset: int = 0,
 ) -> dict:
     """One row per UPI/VPA, bank account, or wallet in the date+folder window."""
+    if (rail_type or "").strip().lower() == "crypto_wallet":
+        return _money_flows_unique_crypto(
+            q=q, source=source, since=since, until=until, folder=folder, limit=limit, offset=offset
+        )
     where, args = _money_flow_filters(
         direction="both",
         rail_type=rail_type,
@@ -2755,6 +2792,105 @@ def money_flows_unique(
         "transactions": sums["slips"] or 0,
         "sum_amount_inr": sums["amount"] or 0,
         "distinct_rails": sums["rails"] or 0,
+        "items": items,
+    }
+
+
+def _money_flows_unique_crypto(
+    q: str = "",
+    source: str = "object",
+    since: str = "",
+    until: str = "",
+    folder: str = "",
+    limit: int = 200,
+    offset: int = 0,
+) -> dict:
+    """Unique crypto freeze list = decoded image wallets ∪ OCR payment rails.
+
+    Date range used to count only payment_transactions (67) while the Crypto
+    wallets tab counted wallet_hits (132). Officers need one census: every
+    address decoded from images in the window, plus any slip-only rails.
+    """
+    limit = max(1, min(int(limit), 1000))
+    offset = max(0, int(offset))
+    wh_where, wh_args = _wallet_hit_window_filters(q=q, since=since, until=until, folder=folder)
+    pt_where, pt_args = _money_flow_filters(
+        direction="both",
+        rail_type="crypto_wallet",
+        q=q,
+        source=source,
+        since=since,
+        until=until,
+        folder=folder,
+    )
+    pt_where = f"{pt_where} AND rail_id!=''"
+    union_sql = (
+        f"SELECT address AS rail_id FROM wallet_hits WHERE {wh_where} "
+        f"UNION SELECT rail_id FROM payment_transactions WHERE {pt_where}"
+    )
+    union_args = list(wh_args) + list(pt_args)
+    c = connect()
+    total = c.execute(f"SELECT COUNT(*) n FROM ({union_sql})", union_args).fetchone()["n"]
+    hit_row = c.execute(
+        f"SELECT COUNT(*) hits, COUNT(DISTINCT address) addrs FROM wallet_hits WHERE {wh_where}",
+        wh_args,
+    ).fetchone()
+    slip_row = c.execute(
+        f"SELECT COUNT(DISTINCT source_key) slips, COUNT(DISTINCT rail_id) rails "
+        f"FROM payment_transactions WHERE {pt_where}",
+        pt_args,
+    ).fetchone()
+    rows = c.execute(
+        f"SELECT u.rail_id,"
+        f"COALESCE(w.hits,0) image_hits,"
+        f"COALESCE(p.slips,0) slips,"
+        f"p.amount_inr amount_inr,"
+        f"p.utrs utrs,"
+        f"p.utr_count utr_count,"
+        f"w.network network,"
+        f"COALESCE(w.first_wh, p.first_pt) first_seen,"
+        f"CASE WHEN IFNULL(w.last_wh,'') >= IFNULL(p.last_pt,'') THEN w.last_wh ELSE p.last_pt END last_seen,"
+        f"COALESCE(w.sample_wh, p.sample_pt) sample_key "
+        f"FROM ({union_sql}) u "
+        f"LEFT JOIN ("
+        f" SELECT address, COUNT(*) hits, MIN(last_modified) first_wh, MAX(last_modified) last_wh,"
+        f" GROUP_CONCAT(DISTINCT NULLIF(network,'')) network,"
+        f" MAX(key) sample_wh "
+        f" FROM wallet_hits WHERE {wh_where} GROUP BY address"
+        f") w ON w.address=u.rail_id "
+        f"LEFT JOIN ("
+        f" SELECT rail_id, COUNT(DISTINCT source_key) slips, COALESCE(SUM(amount_inr),0) amount_inr,"
+        f" GROUP_CONCAT(DISTINCT NULLIF(utr,'')) utrs, COUNT(DISTINCT NULLIF(utr,'')) utr_count,"
+        f" MIN(source_key) sample_pt, MIN(last_modified) first_pt, MAX(last_modified) last_pt "
+        f" FROM payment_transactions WHERE {pt_where} GROUP BY rail_id"
+        f") p ON p.rail_id=u.rail_id "
+        f"ORDER BY (COALESCE(w.hits,0)+COALESCE(p.slips,0)) DESC, u.rail_id "
+        f"LIMIT ? OFFSET ?",
+        union_args + list(wh_args) + list(pt_args) + [limit, offset],
+    ).fetchall()
+    items = []
+    for r in rows:
+        it = dict(r)
+        it["rail_type"] = "crypto_wallet"
+        it["account_holder"] = ""
+        it["ifsc"] = ""
+        it["utrs"] = _pipe_join_csv(it.get("utrs") or "")
+        it["utr_count"] = int(it.get("utr_count") or 0)
+        it["image_hits"] = int(it.get("image_hits") or 0)
+        it["slips"] = int(it.get("slips") or 0)
+        it["has_object"] = not str(it.get("sample_key") or "").startswith("reference:")
+        items.append(it)
+    return {
+        "folder": folder,
+        "rail_type": "crypto_wallet",
+        "since": _bound_ts(since, end=False),
+        "until": _bound_ts(until, end=True),
+        "rows_total": total or 0,
+        "transactions": slip_row["slips"] or 0,
+        "image_hits": hit_row["hits"] or 0,
+        "decoded_wallets": hit_row["addrs"] or 0,
+        "sum_amount_inr": 0,
+        "distinct_rails": total or 0,
         "items": items,
     }
 
@@ -3289,13 +3425,16 @@ def wallet_stats() -> dict:
         "SELECT COUNT(*) n, COUNT(DISTINCT address) d FROM wallet_hits"
     ).fetchone()
     by_net = c.execute(
-        "SELECT network net, COUNT(*) n FROM wallet_hits"
-        " GROUP BY network ORDER BY n DESC"
+        "SELECT network net, COUNT(*) n, COUNT(DISTINCT address) addrs FROM wallet_hits"
+        " GROUP BY network ORDER BY addrs DESC"
     ).fetchall()
     return {
         "wallet_hits": row["n"] or 0,
         "distinct_wallets": row["d"] or 0,
-        "by_network": [{"network": r["net"], "count": r["n"]} for r in by_net],
+        "by_network": [
+            {"network": r["net"], "count": r["addrs"] or 0, "hits": r["n"] or 0}
+            for r in by_net
+        ],
     }
 
 

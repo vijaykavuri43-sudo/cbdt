@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl, saveCsvFromUrl } from '../lib/api'
+import { arkhamAddressUrl, bestTronscanUrl } from '../lib/explorers'
 import { fmtINR, fmtTime, previewJoined, shortKey } from '../lib/format'
 
 type Folder = 'all' | 'deposit' | 'withdrawal' | 'bankingqr' | 'other'
@@ -31,6 +32,7 @@ interface UniqueRow {
   utrs?: string
   utr_count?: number
   slips: number
+  image_hits?: number
   amount_inr?: number | null
   first_seen: string
   last_seen: string
@@ -51,6 +53,8 @@ interface UniqueResp {
   sum_amount_inr: number
   distinct_rails: number
   rows_total: number
+  image_hits?: number
+  decoded_wallets?: number
   items: UniqueRow[]
 }
 
@@ -356,14 +360,31 @@ export function OfficerQuery() {
               <div className="st-card-value accent">{total.toLocaleString()}</div>
               <div className="tiny dim">{applied.since} → {applied.until} UTC · {FOLDERS.find((f) => f.id === applied.folder)?.label}</div>
             </div>
-            <div className="st-card">
-              <div className="st-card-label">Slips in window</div>
-              <div className="st-card-value">{(data.transactions ?? 0).toLocaleString()}</div>
-            </div>
-            <div className="st-card st-card-money">
-              <div className="st-card-label">Amount linked</div>
-              <div className="st-card-value money">{fmtINR(data.sum_amount_inr)}</div>
-            </div>
+            {applied.rail_type === 'crypto_wallet' && view === 'unique' ? (
+              <>
+                <div className="st-card">
+                  <div className="st-card-label">Decoded from images</div>
+                  <div className="st-card-value">{(uniques?.image_hits ?? 0).toLocaleString()}</div>
+                  <div className="tiny dim">{(uniques?.decoded_wallets ?? 0).toLocaleString()} addresses · same census as Crypto wallets</div>
+                </div>
+                <div className="st-card">
+                  <div className="st-card-label">OCR payment slips</div>
+                  <div className="st-card-value">{(data.transactions ?? 0).toLocaleString()}</div>
+                  <div className="tiny dim">Amounts on crypto slips are often INR-misread — use Every slip, not rupee totals</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="st-card">
+                  <div className="st-card-label">Slips in window</div>
+                  <div className="st-card-value">{(data.transactions ?? 0).toLocaleString()}</div>
+                </div>
+                <div className="st-card st-card-money">
+                  <div className="st-card-label">Amount linked</div>
+                  <div className="st-card-value money">{fmtINR(data.sum_amount_inr)}</div>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="oq-tabs" style={{ marginBottom: 10 }} role="tablist">
@@ -410,9 +431,11 @@ export function OfficerQuery() {
               <div>
                 <strong>{view === 'unique' ? 'One row per address' : 'Every matching slip'}</strong>
                 <div className="tiny dim">
-                  {view === 'unique'
-                    ? 'Freeze / notice list. CSV includes UTRs when OCR captured them.'
-                    : 'Evidence pack. CSV includes object path, UTR and timestamps.'}
+                  {view === 'unique' && applied.rail_type === 'crypto_wallet'
+                    ? 'Decoded QR/image wallets in this window (Crypto wallets tab) plus any OCR slip rails. Image hits ≠ rupee amounts.'
+                    : view === 'unique'
+                      ? 'Freeze / notice list. CSV includes UTRs when OCR captured them.'
+                      : 'Evidence pack. CSV includes object path, UTR and timestamps.'}
                 </div>
               </div>
             </div>
@@ -422,10 +445,11 @@ export function OfficerQuery() {
                   <thead>
                     <tr>
                       <th>{railColLabel(applied.rail_type)}</th>
-                      <th>UTR</th>
+                      {applied.rail_type !== 'crypto_wallet' && <th>UTR</th>}
                       {applied.rail_type !== 'upi' && <th>{applied.rail_type === 'bank_account' ? 'Holder / IFSC' : 'Network'}</th>}
-                      <th className="num">Slips</th>
-                      <th className="num">Amount</th>
+                      {applied.rail_type === 'crypto_wallet' && <th className="num">Image hits</th>}
+                      <th className="num">{applied.rail_type === 'crypto_wallet' ? 'OCR slips' : 'Slips'}</th>
+                      {applied.rail_type !== 'crypto_wallet' && <th className="num">Amount</th>}
                       <th>First seen</th>
                       <th>Last seen</th>
                       <th>Sample object</th>
@@ -436,19 +460,41 @@ export function OfficerQuery() {
                       const utrs = previewJoined(r.utrs)
                       return (
                       <tr key={`${r.rail_type}:${r.rail_id}:${i}`}>
-                        <td className="mono money-rail">{r.rail_id}</td>
-                        <td className="mono small" title={utrs.title || undefined}>
-                          {utrs.text || '—'}
-                          {utrs.extra > 0 ? <span className="tiny dim"> +{utrs.extra}</span> : null}
+                        <td className="mono money-rail">
+                          {r.rail_id}
+                          {applied.rail_type === 'crypto_wallet' && r.rail_id && (
+                            <div className="tiny">
+                              <a href={arkhamAddressUrl(r.rail_id)} target="_blank" rel="noreferrer">Arkham ↗</a>
+                              {' · '}
+                              <a href={bestTronscanUrl(r.rail_id) ?? '#'} target="_blank" rel="noreferrer">Tronscan ↗</a>
+                            </div>
+                          )}
                         </td>
-                        {applied.rail_type !== 'upi' && (
-                          <td>
-                            <div>{r.account_holder || '—'}</div>
-                            <div className="tiny dim mono">{r.ifsc || r.network || ''}</div>
+                        {applied.rail_type !== 'crypto_wallet' && (
+                          <td className="mono small" title={utrs.title || undefined}>
+                            {utrs.text || '—'}
+                            {utrs.extra > 0 ? <span className="tiny dim"> +{utrs.extra}</span> : null}
                           </td>
                         )}
+                        {applied.rail_type !== 'upi' && (
+                          <td>
+                            {applied.rail_type === 'crypto_wallet' ? (
+                              <div className="tiny dim mono">{r.network || '—'}</div>
+                            ) : (
+                              <>
+                                <div>{r.account_holder || '—'}</div>
+                                <div className="tiny dim mono">{r.ifsc || r.network || ''}</div>
+                              </>
+                            )}
+                          </td>
+                        )}
+                        {applied.rail_type === 'crypto_wallet' && (
+                          <td className="num">{(r.image_hits ?? 0).toLocaleString()}</td>
+                        )}
                         <td className="num">{r.slips.toLocaleString()}</td>
-                        <td className="num money">{r.amount_inr != null ? fmtINR(r.amount_inr) : '—'}</td>
+                        {applied.rail_type !== 'crypto_wallet' && (
+                          <td className="num money">{r.amount_inr != null ? fmtINR(r.amount_inr) : '—'}</td>
+                        )}
                         <td className="small dim">{r.first_seen ? fmtTime(r.first_seen) : '—'}</td>
                         <td className="small dim">{r.last_seen ? fmtTime(r.last_seen) : '—'}</td>
                         <td>

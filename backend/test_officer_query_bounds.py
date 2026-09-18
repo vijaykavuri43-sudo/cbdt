@@ -101,6 +101,44 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         self.assertEqual(out["rows_total"], 1)
         self.assertEqual(out["items"][0]["rail_id"], "123456")
 
+    def test_unique_crypto_unions_decoded_images(self):
+        hit_only = "T" + "B" * 33
+        both = "T" + "C" * 33
+        c = db.connect()
+        c.execute(
+            "INSERT INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext) VALUES (?,?,?,?,?,?,?)",
+            ("bankingqr/q.png", "bankingqr/", 10, "2026-09-12T12:00:00Z", "e4", "2026-09-12T12:05:00Z", ".png"),
+        )
+        c.execute(
+            "INSERT INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext) VALUES (?,?,?,?,?,?,?)",
+            ("deposit/d-crypto.jpg", "deposit/", 10, "2026-09-12T12:00:00Z", "e5", "2026-09-12T12:05:00Z", ".jpg"),
+        )
+        c.execute(
+            "INSERT INTO payment_transactions("
+            "source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
+            "account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified,evidence_json"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("deposit/d-crypto.jpg", "deposit", "", 1, "", "crypto_wallet", both, "", "", "TRON", "high", "", "", "2026-09-12T12:00:00Z", "{}"),
+        )
+        c.execute(
+            "INSERT OR REPLACE INTO wallet_hits(address,key,last_modified,network) VALUES (?,?,?,?)",
+            (hit_only, "bankingqr/q.png", "2026-09-12T12:00:00Z", "TRON"),
+        )
+        c.execute(
+            "INSERT OR REPLACE INTO wallet_hits(address,key,last_modified,network) VALUES (?,?,?,?)",
+            (both, "deposit/d-crypto.jpg", "2026-09-12T12:00:00Z", "TRON"),
+        )
+        c.commit()
+        out = db.money_flows_unique(rail_type="crypto_wallet", folder="", since="2026-09-01", until="2026-09-30")
+        ids = {r["rail_id"] for r in out["items"]}
+        self.assertIn(hit_only, ids)
+        self.assertIn(both, ids)
+        self.assertGreaterEqual(out["rows_total"], 2)
+        by = {r["rail_id"]: r for r in out["items"]}
+        self.assertGreaterEqual(by[hit_only]["image_hits"], 1)
+        self.assertEqual(by[hit_only]["slips"], 0)
+        self.assertGreaterEqual(by[both]["slips"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
