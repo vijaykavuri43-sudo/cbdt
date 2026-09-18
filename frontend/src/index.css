@@ -315,8 +315,9 @@ input[type="text"]::placeholder { color: var(--dim); }
   font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; color: var(--dim);
 }
 
-/* histogram */
-.st-hbar { display: flex; align-items: flex-end; gap: 3px; height: 100px; padding: 0 2px; }
+/* histogram — labels sit BELOW bars (absolute), so reserve bottom padding
+   or they overlap the caption (bug 2026-09-18: day labels + backlog text mixed) */
+.st-hbar { display: flex; align-items: flex-end; gap: 3px; height: 100px; padding: 0 2px 20px; margin-bottom: 10px; overflow: visible; }
 .st-bar {
   flex: 1; min-width: 4px; border-radius: 3px 3px 0 0; position: relative;
   background: linear-gradient(180deg, var(--accent), #1c6ea4);
@@ -332,8 +333,10 @@ input[type="text"]::placeholder { color: var(--dim); }
 .st-bar:hover::after { opacity: 1; }
 .st-bar-lbl {
   position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%);
-  font-size: 9px; color: var(--dim); white-space: nowrap;
+  font-size: 9px; color: var(--dim); white-space: nowrap; pointer-events: none;
 }
+/* narrow screens: 14 day-labels crowd — show every other one */
+@media (max-width: 700px) { .st-bar:nth-child(even) .st-bar-lbl { display: none; } }
 
 /* sweep progress */
 .st-progress { height: 8px; background: var(--bg); border-radius: 99px; overflow: hidden; margin-bottom: 8px; }

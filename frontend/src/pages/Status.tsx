@@ -341,7 +341,7 @@ export function StatusPage() {
         {stats && stats.day_histogram.some((d) => d.objects > 0) ? (
           <>
             <Histogram data={stats.day_histogram} />
-            <div className="small dim" style={{ marginTop: 6 }}>
+            <div className="small dim" style={{ marginTop: 10, lineHeight: 1.5, clear: 'both' }}>
               Bars bucket by casino upload date (source last-modified), not mirror time.
               {(mirrorSync?.status?.queued_pending ?? 0) > 0
                 ? ` Mirror backlog ${(mirrorSync?.status?.queued_pending ?? 0).toLocaleString()} pending — recent bars keep filling as the backlog drains.`
