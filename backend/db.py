@@ -642,6 +642,7 @@ def list_objects(
     q: str = "",
     exts: Optional[list[str]] = None,
     since: str = "",
+    until: str = "",
     flat: bool = False,
 ) -> dict:
     conds = []
@@ -667,13 +668,16 @@ def list_objects(
     if exts:
         conds.append("(" + " OR ".join(["lower(key) LIKE ?"] * len(exts)) + ")")
         args.extend("%" + e for e in exts)
-    if since:
-        if len(since) == 10:
-            since = since + "T00:00:00Z"
+    since_n = _bound_ts(since, end=False)
+    until_n = _bound_ts(until, end=True)
+    if since_n:
         conds.append("last_modified >= ?")
-        args.append(since)
+        args.append(since_n)
+    if until_n:
+        conds.append("last_modified <= ?")
+        args.append(until_n)
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
-    cache_key = (prefix, q, tuple(exts or []), since, flat)
+    cache_key = (prefix, q, tuple(exts or []), since_n, until_n, flat)
     total = _cached_list_total(cache_key, where, list(args))
     conn = connect()
     # Stable newest-first: secondary key breaks ties where many objects share same timestamp.
@@ -2344,6 +2348,135 @@ def refresh_payment_summaries() -> dict:
     return {"summary_rails": len(summary_rows), "summary_refreshed_utc": refreshed}
 
 
+def _bound_ts(ts: str, *, end: bool = False) -> str:
+    """Normalize YYYY-MM-DD or ISO into ISO-8601 UTC for lexicographic compare.
+
+    End-of-day bounds use T23:59:59Z so a single calendar day is inclusive.
+    """
+    if not ts:
+        return ""
+    ts = str(ts).strip()
+    if len(ts) == 10 and ts[4:5] == "-" and ts[7:8] == "-":
+        return ts + ("T23:59:59Z" if end else "T00:00:00Z")
+    if len(ts) == 19 and "T" in ts and not ts.endswith("Z"):
+        return ts + "Z"
+    return ts
+
+
+# Officer Date-range tab: filter by bucket folder (where the slip lives),
+# not by OCR "flow type". bankingqr/ + qrcode/ are collection QRs.
+_FOLDER_KEY_SQL = {
+    "deposit": ("source_key LIKE 'deposit/%'", []),
+    "withdrawal": ("source_key LIKE 'withdrawal/%'", []),
+    "bankingqr": (
+        "(source_key LIKE 'bankingqr/%' OR source_key LIKE 'qrcode/%')",
+        [],
+    ),
+    "other": (
+        "source_key NOT LIKE 'deposit/%' AND source_key NOT LIKE 'withdrawal/%' "
+        "AND source_key NOT LIKE 'bankingqr/%' AND source_key NOT LIKE 'qrcode/%' "
+        "AND source_key NOT LIKE 'reference:%'",
+        [],
+    ),
+}
+
+
+def _money_flow_filters(
+    direction: str = "deposit",
+    rail_type: str = "",
+    q: str = "",
+    source: str = "",
+    since: str = "",
+    until: str = "",
+    folder: str = "",
+) -> tuple[str, list]:
+    """Shared WHERE for money_flows browse + officer CSV export."""
+    conds: list[str] = []
+    args: list = []
+    direction = (direction or "deposit").strip().lower()
+    if direction and direction != "both":
+        conds.append("direction=?")
+        args.append(direction)
+    else:
+        conds.append("direction IN ('deposit','withdrawal')")
+    folder = (folder or "").strip().lower()
+    if folder in _FOLDER_KEY_SQL:
+        sql, extra = _FOLDER_KEY_SQL[folder]
+        conds.append(sql)
+        args.extend(extra)
+    if rail_type:
+        conds.append("rail_type=?")
+        args.append(rail_type)
+    if source == "object":
+        conds.append("source_key NOT LIKE 'reference:%'")
+    elif source == "reference":
+        conds.append("source_key LIKE 'reference:%'")
+    since_n = _bound_ts(since, end=False)
+    until_n = _bound_ts(until, end=True)
+    if since_n:
+        conds.append("last_modified>=?")
+        args.append(since_n)
+    if until_n:
+        conds.append("last_modified<=?")
+        args.append(until_n)
+    if q:
+        like = "%" + q.replace("%", r"\%").replace("_", r"\_") + "%"
+        conds.append(
+            "(gambler LIKE ? ESCAPE '\\' OR utr LIKE ? ESCAPE '\\' OR rail_id LIKE ? ESCAPE '\\' OR account_holder LIKE ? ESCAPE '\\' OR ifsc LIKE ? ESCAPE '\\')"
+        )
+        args.extend([like] * 5)
+    where = " AND ".join(conds)
+    if q:
+        # Exact-identifier fast path (officer pastes a full VPA / account /
+        # UTR / holder / IFSC): equality hits idx_pay_* instead of a 5-column
+        # %LIKE% full scan. Direction-scoped when not "both".
+        c = connect()
+        if direction and direction != "both":
+            hit = c.execute(
+                "SELECT 1 FROM payment_transactions WHERE direction=? AND "
+                "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?) LIMIT 1",
+                (direction, q, q, q, q, q),
+            ).fetchone()
+        else:
+            hit = c.execute(
+                "SELECT 1 FROM payment_transactions WHERE "
+                "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?) LIMIT 1",
+                (q, q, q, q, q),
+            ).fetchone()
+        if hit:
+            conds.append(
+                "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?)"
+            )
+            args.extend([q] * 5)
+            where = " AND ".join(conds)
+    return where, args
+
+
+def _attach_seen_utc(items: list[dict]) -> list[dict]:
+    """Join objects.seen_utc (mirror index stamp) onto payment rows."""
+    keys = [
+        it["source_key"]
+        for it in items
+        if it.get("source_key") and not str(it["source_key"]).startswith("reference:")
+    ]
+    if not keys:
+        for it in items:
+            it.setdefault("seen_utc", "")
+        return items
+    seen: dict[str, str] = {}
+    c = connect()
+    for i in range(0, len(keys), 400):
+        chunk = keys[i : i + 400]
+        ph = ",".join("?" * len(chunk))
+        for r in c.execute(
+            f"SELECT key, seen_utc FROM objects WHERE key IN ({ph})", chunk
+        ):
+            seen[r["key"]] = r["seen_utc"] or ""
+    for it in items:
+        it["seen_utc"] = seen.get(it.get("source_key") or "", "")
+    return items
+
+
 def money_flows(
     direction: str = "deposit",
     rail_type: str = "",
@@ -2352,47 +2485,30 @@ def money_flows(
     offset: int = 0,
     source: str = "",
     since: str = "",
+    until: str = "",
+    folder: str = "",
 ) -> dict:
-    conds = ["direction=?"]
-    args: list = [direction]
-    if rail_type:
-        conds.append("rail_type=?")
-        args.append(rail_type)
-    if source == "object":
-        conds.append("source_key NOT LIKE 'reference:%'")
-    elif source == "reference":
-        conds.append("source_key LIKE 'reference:%'")
-    if since:
-        # UTC ISO cutoff, e.g. last-24h briefing window. last_modified is ISO Z.
-        conds.append("last_modified>=?")
-        args.append(since)
-    if q:
-        like = "%" + q.replace("%", r"\%").replace("_", r"\_") + "%"
-        conds.append(
-            "(gambler LIKE ? ESCAPE '\\' OR utr LIKE ? ESCAPE '\\' OR rail_id LIKE ? ESCAPE '\\' OR account_holder LIKE ? ESCAPE '\\' OR ifsc LIKE ? ESCAPE '\\')"
-        )
-        args.extend([like] * 5)
-    where = " AND ".join(conds)
+    direction = (direction or "deposit").strip().lower()
+    where, args = _money_flow_filters(
+        direction=direction,
+        rail_type=rail_type,
+        q=q,
+        source=source,
+        since=since,
+        until=until,
+        folder=folder,
+    )
     c = connect()
-    if q:
-        # Exact-identifier fast path (officer pastes a full VPA / account /
-        # UTR / holder / IFSC): equality hits idx_pay_* instead of a 5-column
-        # %LIKE% full scan over ~105K rows. Falls back to LIKE below when
-        # nothing matches exactly (incl. case mismatches — LIKE stays ASCII
-        # case-insensitive, so results are unchanged, just slower).
-        hit = c.execute(
-            "SELECT 1 FROM payment_transactions WHERE direction=? AND "
-            "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?) LIMIT 1",
-            (direction, q, q, q, q, q),
-        ).fetchone()
-        if hit:
-            conds.append(
-                "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?)"
-            )
-            args.extend([q] * 5)
-            where = " AND ".join(conds)
     materialized = None
-    if not q and not source and not since:
+    # Materialized totals are per single direction and ignore date bounds.
+    if (
+        not q
+        and not source
+        and not since
+        and not until
+        and not folder
+        and direction in ("deposit", "withdrawal")
+    ):
         materialized = c.execute(
             "SELECT * FROM payment_flow_totals WHERE direction=? AND rail_filter=?",
             (direction, rail_type),
@@ -2430,11 +2546,17 @@ def money_flows(
         args + [limit, offset],
     ).fetchall()
     total_rows = materialized["rows_total"] if materialized else coverage["rows_total"]
-    src_new = c.execute(
-        "SELECT MAX(last_modified) m FROM payment_transactions "
-        "WHERE direction=? AND source_key NOT LIKE 'reference:%'",
-        (direction,),
-    ).fetchone()
+    if direction and direction != "both":
+        src_new = c.execute(
+            "SELECT MAX(last_modified) m FROM payment_transactions "
+            "WHERE direction=? AND source_key NOT LIKE 'reference:%'",
+            (direction,),
+        ).fetchone()
+    else:
+        src_new = c.execute(
+            "SELECT MAX(last_modified) m FROM payment_transactions "
+            "WHERE source_key NOT LIKE 'reference:%'",
+        ).fetchone()
     items = []
     for row in rows:
         item = dict(row)
@@ -2444,9 +2566,13 @@ def money_flows(
             item["evidence"] = {}
         item["has_object"] = not item["source_key"].startswith("reference:")
         items.append(item)
+    _attach_seen_utc(items)
     return {
         "direction": direction,
+        "folder": folder,
         "source": source,
+        "since": _bound_ts(since, end=False),
+        "until": _bound_ts(until, end=True),
         "transactions": (
             materialized["transactions"] if materialized else tx["transactions"]
         )
@@ -2481,6 +2607,125 @@ def money_flows(
         "top_rails": [dict(r) for r in top],
         "items": items,
     }
+
+
+def money_flows_export_rows(
+    direction: str = "both",
+    rail_type: str = "",
+    q: str = "",
+    source: str = "object",
+    since: str = "",
+    until: str = "",
+    folder: str = "",
+    max_rows: int = 200000,
+) -> list[dict]:
+    """All matching payment rows for officer CSV (Excel-openable), capped."""
+    where, args = _money_flow_filters(
+        direction=direction,
+        rail_type=rail_type,
+        q=q,
+        source=source,
+        since=since,
+        until=until,
+        folder=folder,
+    )
+    c = connect()
+    rows = c.execute(
+        f"SELECT source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
+        f"account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified "
+        f"FROM payment_transactions WHERE {where} "
+        f"ORDER BY last_modified DESC,id DESC LIMIT ?",
+        args + [max_rows],
+    ).fetchall()
+    items = [dict(r) for r in rows]
+    _attach_seen_utc(items)
+    for it in items:
+        it["has_object"] = not str(it.get("source_key") or "").startswith("reference:")
+    return items
+
+
+def money_flows_unique(
+    rail_type: str = "",
+    q: str = "",
+    source: str = "object",
+    since: str = "",
+    until: str = "",
+    folder: str = "",
+    limit: int = 200,
+    offset: int = 0,
+) -> dict:
+    """One row per UPI/VPA, bank account, or wallet in the date+folder window."""
+    where, args = _money_flow_filters(
+        direction="both",
+        rail_type=rail_type,
+        q=q,
+        source=source,
+        since=since,
+        until=until,
+        folder=folder,
+    )
+    where = f"{where} AND rail_id!=''"
+    c = connect()
+    total = c.execute(
+        f"SELECT COUNT(*) n FROM ("
+        f"SELECT 1 FROM payment_transactions WHERE {where} GROUP BY rail_type,rail_id)",
+        args,
+    ).fetchone()["n"]
+    sums = c.execute(
+        f"SELECT COUNT(DISTINCT source_key) slips, COALESCE(SUM(amount_inr),0) amount, "
+        f"COUNT(DISTINCT rail_type||':'||rail_id) rails FROM payment_transactions WHERE {where}",
+        args,
+    ).fetchone()
+    rows = c.execute(
+        f"SELECT rail_type,rail_id,"
+        f"GROUP_CONCAT(DISTINCT NULLIF(account_holder,'')) account_holder,"
+        f"GROUP_CONCAT(DISTINCT NULLIF(ifsc,'')) ifsc,"
+        f"GROUP_CONCAT(DISTINCT NULLIF(network,'')) network,"
+        f"COUNT(DISTINCT source_key) slips,"
+        f"COALESCE(SUM(amount_inr),0) amount_inr,"
+        f"MIN(last_modified) first_seen,"
+        f"MAX(last_modified) last_seen,"
+        f"MIN(source_key) sample_key "
+        f"FROM payment_transactions WHERE {where} "
+        f"GROUP BY rail_type,rail_id ORDER BY slips DESC,amount_inr DESC LIMIT ? OFFSET ?",
+        args + [limit, offset],
+    ).fetchall()
+    items = [dict(r) for r in rows]
+    for it in items:
+        it["has_object"] = not str(it.get("sample_key") or "").startswith("reference:")
+    return {
+        "folder": folder,
+        "rail_type": rail_type,
+        "since": _bound_ts(since, end=False),
+        "until": _bound_ts(until, end=True),
+        "rows_total": total or 0,
+        "transactions": sums["slips"] or 0,
+        "sum_amount_inr": sums["amount"] or 0,
+        "distinct_rails": sums["rails"] or 0,
+        "items": items,
+    }
+
+
+def money_flows_unique_export_rows(
+    rail_type: str = "",
+    q: str = "",
+    source: str = "object",
+    since: str = "",
+    until: str = "",
+    folder: str = "",
+    max_rows: int = 200000,
+) -> list[dict]:
+    out = money_flows_unique(
+        rail_type=rail_type,
+        q=q,
+        source=source,
+        since=since,
+        until=until,
+        folder=folder,
+        limit=max_rows,
+        offset=0,
+    )
+    return out["items"]
 
 
 def mule_rails(

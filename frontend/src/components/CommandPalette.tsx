@@ -4,14 +4,17 @@ export function CommandPalette({ onJump }: { onJump: (id: string) => void }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const tabs = [
-    { id: 'status', label: 'Overview', hint: 'Cases, bucket health, inventory' },
-    { id: 'explorer', label: 'Explorer', hint: 'Browse all buckets folders' },
+    { id: 'status', label: 'Overview', hint: 'Briefing, pipeline, folders' },
+    { id: 'explorer', label: 'Explorer', hint: 'Folders + search name or path' },
     { id: 'chat', label: 'Live Chats', hint: 'Conversations + voice notes' },
-    { id: 'search', label: 'Search', hint: 'Find across 1M keys' },
     { id: 'live', label: 'Live Feed', hint: 'Real-time uploads' },
-    { id: 'deposits', label: 'Mule Money Flows', hint: 'Deposits + withdrawals' },
-    { id: 'upis', label: 'UPI / Mules', hint: 'QR decoded VPAs' },
-    { id: 'evidence', label: 'Evidence', hint: 'Downloads + chain of custody' },
+    { id: 'officer', label: 'Date range', hint: 'Folder + UPI/bank/wallet CSV' },
+    { id: 'deposits', label: 'Mule rails', hint: 'Unique UPI / bank / wallet freeze list' },
+    { id: 'cashflow', label: 'Cash flow', hint: 'Operator ledger, ex-bonus' },
+    { id: 'ledger', label: 'Ledger', hint: 'XLSX / CSV books' },
+    { id: 'upis', label: 'UPI / VPAs', hint: 'QR-decoded unique collection VPAs' },
+    { id: 'wallets', label: 'Crypto wallets', hint: 'Unique addresses + CSV' },
+    { id: 'ask', label: 'AI Investigator', hint: 'Ask over the whole bucket' },
   ]
   const filtered = q
     ? tabs.filter((t) => (t.label + t.hint).toLowerCase().includes(q.toLowerCase()))

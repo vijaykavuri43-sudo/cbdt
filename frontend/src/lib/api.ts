@@ -199,6 +199,29 @@ export function exportUpisUrl(): string { return exportUrl('upis') }
 export function exportWalletsUrl(): string { return exportUrl('wallets') }
 export function exportPayoutsUrl(): string { return exportUrl('payout-accounts') }
 
+/** Officer Query tab — filtered money-flows CSV (opens in Excel). */
+export function exportMoneyFlowsUrl(params: Record<string, string | undefined>): string {
+  const at = authParams()
+  const qs = new URLSearchParams(clean(params))
+  if (at) {
+    const tok = new URLSearchParams(at)
+    tok.forEach((v, k) => qs.set(k, v))
+  }
+  const qstr = qs.toString()
+  return `/api/export/money-flows${qstr ? '?' + qstr : ''}`
+}
+
+export function exportMoneyFlowsUniqueUrl(params: Record<string, string | undefined>): string {
+  const at = authParams()
+  const qs = new URLSearchParams(clean(params))
+  if (at) {
+    const tok = new URLSearchParams(at)
+    tok.forEach((v, k) => qs.set(k, v))
+  }
+  const qstr = qs.toString()
+  return `/api/export/money-flows-unique${qstr ? '?' + qstr : ''}`
+}
+
 export interface Status {
   phase: string
   sweep_done: boolean

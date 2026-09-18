@@ -5,11 +5,11 @@ interface Src { kind: string; ref: string }
 interface Msg { role: 'you' | 'ai'; text: string; sources?: Src[]; model?: string }
 
 const EXAMPLES = [
-  'Total deposits vs withdrawals?',
-  "Today's deposit total and count?",
-  'Top mule rails in the last 7 days?',
-  'Deposits above ₹50,000 this month?',
-  'OCR coverage and backlog ETA?',
+  'What is in the whole evidence bucket?',
+  'Top folders and how many files in each?',
+  'Total deposits vs withdrawals from slips?',
+  'How many distinct crypto wallets, with networks?',
+  'Top mule UPI rails for freeze notices?',
 ]
 
 export function Ask() {
@@ -40,7 +40,7 @@ export function Ask() {
           <span className="pg-header-icon">✦</span>
           <div>
             <h1 className="pg-header-title">AI Investigator</h1>
-            <div className="pg-header-sub">Gemini answers over live case data · read-only · totals, UTR/VPA/wallet lookups, image inspection</div>
+            <div className="pg-header-sub">Answers from the live GCS bucket index, slip OCR, unique rails and wallets · read-only · paste a UTR, VPA, wallet, or object key</div>
           </div>
         </div>
       </div>
@@ -48,8 +48,8 @@ export function Ask() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 300, maxHeight: 560, overflowY: 'auto', padding: '4px 2px' }}>
           {msgs.length === 0 && (
             <div className="small dim">
-              Ask in plain words — e.g. totals, a 12-digit UTR, a VPA like <code className="mono">name@upi</code>, a wallet address,
-              or paste an image object key to inspect it. The assistant reads the live bucket index + payment database.
+              Ask about the whole bucket: folder counts, OCR coverage, unique mule rails, distinct wallets, a 12-digit UTR,
+              a VPA like <code className="mono">name@upi</code>, or paste an object key to inspect the file.
             </div>
           )}
           {msgs.map((m, i) => (

@@ -52,11 +52,19 @@ export function OfficerStrip({ children }: { children?: ReactNode }) {
         ))}
       </div>
     )}
-    <section className="st-cards ov-7" style={{ marginBottom: 16 }} title="Officer briefing — last 24h live bucket evidence + index stats (single row)">
-      <div className="st-card st-card-accent"><div className="st-card-label">Live deposits · 24h · history from Jul 22, 2026</div><div className="st-card-value accent">{(dep?.transactions ?? 0).toLocaleString()} txns</div><div className="tiny dim money">{fmtINR(dep?.sum_amount_inr)} · {(dep?.transactions ?? 0) === 0 ? `source quiet since ${fmtTime(dep?.src_newest)}` : `newest slip ${fmtTime(dep?.src_newest)}`}</div></div>
-      <div className="st-card st-card-money"><div className="st-card-label">Live withdrawals · 24h</div><div className="st-card-value money">{(wd?.transactions ?? 0).toLocaleString()} txns</div><div className="tiny dim money">{fmtINR(wd?.sum_amount_inr)} · {(wd?.transactions ?? 0) === 0 ? `source quiet since ${fmtTime(wd?.src_newest)}` : `newest slip ${fmtTime(wd?.src_newest)}`}</div></div>
-      {children}
+    <section className="st-cards ov-24h" title="Live bucket evidence in the last 24 hours">
+      <div className="st-card st-card-accent">
+        <div className="st-card-label">Deposits · last 24h</div>
+        <div className="st-card-value accent">{(dep?.transactions ?? 0).toLocaleString()} txns</div>
+        <div className="tiny dim money">{fmtINR(dep?.sum_amount_inr)}{dep?.src_newest ? ` · newest ${fmtTime(dep.src_newest)}` : (dep && dep.transactions === 0 ? ' · none in window' : '')}</div>
+      </div>
+      <div className="st-card st-card-money">
+        <div className="st-card-label">Withdrawals · last 24h</div>
+        <div className="st-card-value money">{(wd?.transactions ?? 0).toLocaleString()} txns</div>
+        <div className="tiny dim money">{fmtINR(wd?.sum_amount_inr)}{wd?.src_newest ? ` · newest ${fmtTime(wd.src_newest)}` : (wd && wd.transactions === 0 ? ' · none in window' : '')}</div>
+      </div>
     </section>
+    {children ? <section className="st-cards ov-index">{children}</section> : null}
     </>
   )
 }

@@ -621,6 +621,7 @@ def list_objs(
     order: str = Query("key", pattern="^(key|-modified|-seen|size)$"),
     ext: str = Query("", description="comma list e.g. .jpg,.png"),
     since: str = Query("", description="YYYY-MM-DD or ISO ts"),
+    until: str = Query("", description="YYYY-MM-DD or ISO ts inclusive end"),
     flat: int = 0,
     _=Depends(auth),
 ):
@@ -636,6 +637,7 @@ def list_objs(
         q=q,
         exts=exts,
         since=since,
+        until=until,
         flat=bool(flat),
     )
     # Content ETag: total + page-window fingerprints. Repeat nav (Back button,
@@ -2129,22 +2131,30 @@ def deposits_api(
 
 @app.get("/api/money-flows")
 def money_flows_api(
-    direction: str = Query("deposit", pattern="^(deposit|withdrawal)$"),
+    direction: str = Query("deposit", pattern="^(deposit|withdrawal|both)$"),
     rail_type: str = Query("", pattern="^(|upi|bank_account|crypto_wallet|unknown)$"),
     q: str = "",
     limit: int = Query(200, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     source: str = Query("", pattern="^(|object|reference)$"),
     since: str = Query("", max_length=32),
+    until: str = Query("", max_length=32),
+    folder: str = Query("", pattern="^(|deposit|withdrawal|bankingqr|other)$"),
     _=Depends(auth),
 ):
-    """Normalized gambler↔payment-rail flows from OCR, QR, and case references."""
-    cache_key = f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}:{source}:{since}"
+    """Normalized gambler↔payment-rail flows from OCR, QR, and case references.
+
+    Officer Query tab uses direction=both + folder (deposit/withdrawal/bankingqr/other)
+    + since/until. Existing Mule Money Flows tab keeps deposit|withdrawal defaults.
+    """
+    cache_key = (
+        f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}"
+    )
     # q-searches were cached 5s: every retry re-ran the expensive GROUP BYs.
     # 60s is fine for a search view (no-q fast path stays at 5s).
     return cached(
         cache_key,
-        60.0 if q else 5.0,
+        60.0 if q or since or until or folder else 5.0,
         lambda: db.money_flows(
             direction=direction,
             rail_type=rail_type,
@@ -2153,6 +2163,8 @@ def money_flows_api(
             offset=offset,
             source=source,
             since=since,
+            until=until,
+            folder=folder,
         ),
     )
 
@@ -2329,6 +2341,199 @@ def export_rails(_=Depends(auth)):
     )
 
 
+_MONEY_FLOW_EXPORT_COLUMNS = (
+    "bucket_last_modified_utc",
+    "indexed_seen_utc",
+    "direction",
+    "gambler",
+    "amount_inr",
+    "utr",
+    "rail_type",
+    "rail_id",
+    "account_holder",
+    "ifsc",
+    "network",
+    "confidence",
+    "rail_role",
+    "role_confidence",
+    "source_object_key",
+    "dashboard_source_link",
+    "case",
+    "auth_ref",
+    "fact_type",
+)
+
+
+@app.get("/api/export/money-flows")
+def export_money_flows(
+    direction: str = Query("both", pattern="^(deposit|withdrawal|both)$"),
+    rail_type: str = Query("", pattern="^(|upi|bank_account|crypto_wallet|unknown)$"),
+    q: str = "",
+    source: str = Query("object", pattern="^(|object|reference)$"),
+    since: str = Query("", max_length=32),
+    until: str = Query("", max_length=32),
+    folder: str = Query("", pattern="^(|deposit|withdrawal|bankingqr|other)$"),
+    _=Depends(auth),
+):
+    """Officer Query CSV (opens in Excel): filtered flows with object + stamps.
+
+    Same filters as /api/money-flows. Defaults to live object evidence only.
+    Includes bucket last_modified, mirror seen_utc, source object key, and an
+    absolute dashboard link for manual verification.
+    """
+
+    def build():
+        rows = db.money_flows_export_rows(
+            direction=direction,
+            rail_type=rail_type,
+            q=q,
+            source=source,
+            since=since,
+            until=until,
+            folder=folder,
+        )
+        out = []
+        for r in rows:
+            key = r.get("source_key") or ""
+            out.append(
+                {
+                    "bucket_last_modified_utc": r.get("last_modified") or "",
+                    "indexed_seen_utc": r.get("seen_utc") or "",
+                    "direction": r.get("direction") or "",
+                    "gambler": r.get("gambler") or "",
+                    "amount_inr": r.get("amount_inr")
+                    if r.get("amount_inr") is not None
+                    else "",
+                    "utr": r.get("utr") or "",
+                    "rail_type": r.get("rail_type") or "",
+                    "rail_id": r.get("rail_id") or "",
+                    "account_holder": r.get("account_holder") or "",
+                    "ifsc": r.get("ifsc") or "",
+                    "network": r.get("network") or "",
+                    "confidence": r.get("confidence") or "",
+                    "rail_role": r.get("rail_role") or "",
+                    "role_confidence": r.get("role_confidence") or "",
+                    "source_object_key": key,
+                    "dashboard_source_link": _source_link(key)
+                    if key and not key.startswith("reference:")
+                    else "",
+                    "case": config.CASE_ID,
+                    "auth_ref": config.AUTH_REF,
+                    "fact_type": "fact",
+                }
+            )
+        return out
+
+    cache_key = f"export-flows:{direction}:{rail_type}:{q}:{source}:{since}:{until}:{folder}"
+    rows = cached(cache_key, 30.0, build)
+    tag = f"{folder or direction}-{(rail_type or 'all')}-{since or 'start'}-to-{until or 'now'}"
+    tag = re.sub(r"[^A-Za-z0-9._-]+", "_", tag)[:80]
+    return _export_response(rows, _MONEY_FLOW_EXPORT_COLUMNS, f"officer-money-flows-{tag}")
+
+
+_UNIQUE_EXPORT_COLUMNS = (
+    "rail_type",
+    "rail_id",
+    "account_holder",
+    "ifsc",
+    "network",
+    "slips",
+    "amount_inr",
+    "first_seen_utc",
+    "last_seen_utc",
+    "sample_object_key",
+    "dashboard_source_link",
+    "case",
+    "auth_ref",
+    "fact_type",
+)
+
+
+@app.get("/api/money-flows-unique")
+def money_flows_unique_api(
+    rail_type: str = Query("", pattern="^(|upi|bank_account|crypto_wallet|unknown)$"),
+    q: str = "",
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    source: str = Query("object", pattern="^(|object|reference)$"),
+    since: str = Query("", max_length=32),
+    until: str = Query("", max_length=32),
+    folder: str = Query("", pattern="^(|deposit|withdrawal|bankingqr|other)$"),
+    _=Depends(auth),
+):
+    """One row per UPI/VPA, bank account, or crypto wallet for officer unique lists."""
+    cache_key = f"flows-u:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}"
+    return cached(
+        cache_key,
+        60.0,
+        lambda: db.money_flows_unique(
+            rail_type=rail_type,
+            q=q,
+            limit=limit,
+            offset=offset,
+            source=source,
+            since=since,
+            until=until,
+            folder=folder,
+        ),
+    )
+
+
+@app.get("/api/export/money-flows-unique")
+def export_money_flows_unique(
+    rail_type: str = Query("", pattern="^(|upi|bank_account|crypto_wallet|unknown)$"),
+    q: str = "",
+    source: str = Query("object", pattern="^(|object|reference)$"),
+    since: str = Query("", max_length=32),
+    until: str = Query("", max_length=32),
+    folder: str = Query("", pattern="^(|deposit|withdrawal|bankingqr|other)$"),
+    _=Depends(auth),
+):
+    """Unique address CSV — one VPA / account / wallet per row (not every slip)."""
+
+    def build():
+        rows = db.money_flows_unique_export_rows(
+            rail_type=rail_type,
+            q=q,
+            source=source,
+            since=since,
+            until=until,
+            folder=folder,
+        )
+        out = []
+        for r in rows:
+            key = r.get("sample_key") or ""
+            out.append(
+                {
+                    "rail_type": r.get("rail_type") or "",
+                    "rail_id": r.get("rail_id") or "",
+                    "account_holder": r.get("account_holder") or "",
+                    "ifsc": r.get("ifsc") or "",
+                    "network": r.get("network") or "",
+                    "slips": r.get("slips") or 0,
+                    "amount_inr": r.get("amount_inr")
+                    if r.get("amount_inr") is not None
+                    else "",
+                    "first_seen_utc": r.get("first_seen") or "",
+                    "last_seen_utc": r.get("last_seen") or "",
+                    "sample_object_key": key,
+                    "dashboard_source_link": _source_link(key)
+                    if key and not str(key).startswith("reference:")
+                    else "",
+                    "case": config.CASE_ID,
+                    "auth_ref": config.AUTH_REF,
+                    "fact_type": "fact",
+                }
+            )
+        return out
+
+    cache_key = f"export-flows-u:{rail_type}:{q}:{source}:{since}:{until}:{folder}"
+    rows = cached(cache_key, 30.0, build)
+    tag = f"{folder or 'all'}-{(rail_type or 'all')}-{since or 'start'}-to-{until or 'now'}"
+    tag = re.sub(r"[^A-Za-z0-9._-]+", "_", tag)[:80]
+    return _export_response(rows, _UNIQUE_EXPORT_COLUMNS, f"officer-unique-rails-{tag}")
+
+
 def _source_link(key: str) -> str:
     """Absolute officer-verifiable link to the exact evidence object.
 
@@ -2429,59 +2634,72 @@ def export_upis(_=Depends(auth)):
 _WALLET_EXPORT_COLUMNS = (
     "address",
     "network",
+    "hits",
+    "first_seen_utc",
+    "last_seen_utc",
     "label",
     "confidence",
-    "status",
-    "origin_kind",
-    "attribution",
     "source_file",
-    "proof_url",
-    "qr_uploaded_utc",
-    "seen_utc",
     "dashboard_source_link",
+    "all_source_files",
+    "all_dashboard_links",
     "case",
     "auth_ref",
     "fact_type",
 )
 
 
+def _wallet_source_keys() -> dict[str, list[str]]:
+    """All bucket object keys per distinct wallet address (newest first)."""
+    out: dict[str, list[str]] = {}
+    try:
+        rows = db.connect().execute(
+            "SELECT address, key FROM wallet_hits"
+            " WHERE address!='' AND key!=''"
+            " ORDER BY last_modified DESC"
+        ).fetchall()
+    except Exception:
+        return out
+    for r in rows:
+        addr = r["address"] or ""
+        key = r["key"] or ""
+        if not addr or not key:
+            continue
+        out.setdefault(addr, []).append(key)
+    return out
+
+
 @app.get("/api/export/wallets")
 def export_wallets(_=Depends(auth)):
-    """Single officer wallet exhibit (live + identified, no wallet left out).
-
-    Part 1 — every address decoded from a live bucket image (exact source
-    file + dashboard link per row). Part 2 — every previously-identified
-    reference wallet (87-row census) with its original source reference +
-    proof URL; reference rows carry origin_kind=reference so the two
-    provenances never mix silently. Opens in Excel."""
+    """Unique wallet CSV: one row per address with every related source file + dashboard link."""
 
     def build():
+        keys_by_addr = _wallet_source_keys()
         rows = []
-        # wallet_feed clamps each page to 2000 rows — page through the whole
-        # set so the exhibit never truncates once hits exceed one page.
         off = 0
         while True:
-            chunk = db.wallet_feed(2000, off)
+            chunk = db.wallet_distinct(2000, off)
             if not chunk:
                 break
             for it in chunk:
                 addr = it.get("address") or ""
                 key = it.get("key") or ""
-                role = it.get("role") or ""
+                all_keys = keys_by_addr.get(addr) or ([key] if key else [])
                 rows.append(
                     {
                         "address": addr,
                         "network": it.get("network") or "",
-                        "label": it.get("standard") or (f"role:{role}" if role else ""),
+                        "hits": it.get("hits") or len(all_keys) or 1,
+                        "first_seen_utc": it.get("first_seen") or "",
+                        "last_seen_utc": it.get("last_seen") or "",
+                        "label": it.get("standard") or "",
                         "confidence": it.get("confidence") or "",
-                        "status": "EXTRACTED",
-                        "origin_kind": "live",
-                        "attribution": "",
-                        "source_file": key,
-                        "proof_url": "",
-                        "qr_uploaded_utc": it.get("last_modified") or "",
-                        "seen_utc": it.get("seen_utc") or "",
-                        "dashboard_source_link": _source_link(key) if key else "",
+                        "source_file": key or (all_keys[0] if all_keys else ""),
+                        "dashboard_source_link": _source_link(key) if key else (
+                            _source_link(all_keys[0]) if all_keys else ""
+                        ),
+                        "all_source_files": " | ".join(all_keys),
+                        "all_dashboard_links": " | ".join(_source_link(k) for k in all_keys),
                         "case": config.CASE_ID,
                         "auth_ref": config.AUTH_REF,
                         "fact_type": "ai_lead",
@@ -2490,42 +2708,12 @@ def export_wallets(_=Depends(auth)):
             off += len(chunk)
             if len(chunk) < 2000:
                 break
-        from .evidence import load_reference_wallets
-
-        ref_rows = load_reference_wallets()
-        # Strict true-source rule: proof/dashboard links only for keys THIS
-        # host's mirror actually holds. Deleted-at-source keys keep their
-        # true citation in source_file with no link — never a dead URL
-        # presented as proof.
-        present = db.keys_in_mirror([r.get("proof_s3_key") or "" for r in ref_rows])
-        for r in ref_rows:
-            key = r.get("proof_s3_key") or ""
-            live = bool(key and key in present)
-            rows.append(
-                {
-                    "address": r.get("address") or "",
-                    "network": r.get("network") or "",
-                    "label": r.get("role") or "",
-                    "confidence": r.get("confidence") or "",
-                    "status": "REFERENCE",
-                    "origin_kind": "reference",
-                    "attribution": r.get("attribution") or "",
-                    "source_file": key or (r.get("source_ref") or ""),
-                    "proof_url": r.get("proof_url") or "" if live else "",
-                    "qr_uploaded_utc": "",
-                    "seen_utc": "",
-                    "dashboard_source_link": _source_link(key) if live else "",
-                    "case": config.CASE_ID,
-                    "auth_ref": config.AUTH_REF,
-                    "fact_type": r.get("fact_type") or "fact",
-                }
-            )
         return rows
 
     return _export_response(
-        cached("export-wallets:full", 60.0, build),
+        cached("export-wallets:unique-v2", 60.0, build),
         _WALLET_EXPORT_COLUMNS,
-        "crypto-wallets-full",
+        "crypto-wallets-unique",
     )
 
 

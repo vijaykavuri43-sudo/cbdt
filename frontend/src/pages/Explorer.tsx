@@ -83,14 +83,14 @@ function FolderTree({
               key={d.seg}
               className={`ex-folder-item ${isActive ? 'ex-folder-item-active' : ''}`}
               onClick={() => onNavigate(d.seg)}
-              title={info.desc}
+              title={`${prefix}${d.seg}/ — ${info.desc}`}
             >
               <span className="ex-folder-icon" style={{ color: info.color }}>{info.icon}</span>
               <div className="ex-folder-info">
                 <span className="ex-folder-name">{d.seg}</span>
-                <span className="ex-folder-desc tiny dim" style={{ display: 'block', whiteSpace: 'normal', lineHeight: 1.3 }}>{info.desc}</span>
+                <span className="ex-folder-path mono tiny dim">{prefix}{d.seg}/</span>
                 <span className="ex-folder-meta">
-                  {d.n.toLocaleString()} files · {fmtBytes(d.size)}
+                  {d.n.toLocaleString()} · {fmtBytes(d.size)}
                 </span>
               </div>
               <span className="ex-folder-arrow">›</span>
@@ -109,16 +109,18 @@ function FileCard({
   onPreview,
   selected,
   onToggleSelect,
+  showPath,
 }: {
   obj: ObjRow
   prefix: string
   onPreview: (o: ObjRow) => void
   selected: boolean
   onToggleSelect: (key: string) => void
+  showPath?: boolean
 }) {
   const img = isImg(obj.key)
   const ext = extOf(obj.key)
-  const name = displayName(obj.key, prefix)
+  const name = showPath ? obj.key : displayName(obj.key, prefix)
   const color = fileColor(obj.key)
   const icon = fileIcon(obj.key)
   const hasExtract = obj.extract?.amount_inr != null || obj.extract?.vpa || obj.extract?.new_mule
@@ -170,8 +172,11 @@ function FileCard({
       </div>
       <div className="ex-file-meta">
         <div className="ex-file-name" title={obj.key}>
-          {name.length > 36 ? name.slice(0, 18) + '…' + name.slice(-16) : name}
+          {name.length > 48 ? name.slice(0, 22) + '…' + name.slice(-22) : name}
         </div>
+        {showPath && name !== obj.key && (
+          <div className="ex-file-path mono tiny dim" title={obj.key}>{obj.key}</div>
+        )}
         <div className="ex-file-details">
           <span>{fmtBytes(obj.size)}</span>
           <span>{fmtTime(obj.last_modified).slice(0, 10)}</span>
@@ -183,13 +188,16 @@ function FileCard({
 }
 
 // ---- Main Explorer ----
-export function Explorer({ prefixes }: { prefixes: string[] }) {
+export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { p: string; t: number } | null }) {
   const [source, setSource] = useState<'manifest' | 'live'>('manifest')
   const [prefix, setPrefix] = useState('')
   const [q, setQ] = useState('')
+  const [searchAll, setSearchAll] = useState(true)
   const [order, setOrder] = useState<'key' | '-modified' | '-seen' | 'size'>('-seen')
   const [ext, setExt] = useState('')
   const [sinceDays, setSinceDays] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [flat, setFlat] = useState(false)
   const [gallery, setGallery] = useState(true)
   const [page, setPage] = useState(0)
@@ -226,11 +234,11 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
       const parts = ck.split('|')
       const total = d?.total ?? 0, lim = Number(parts[2]) || 50, pg = Number(parts[3]) || 0
       if ((pg + 1) * lim >= total) return
-      const nk = `${parts[0]}|${parts[1]}|${parts[2]}|${pg + 1}|${parts[4]}|${parts[5]}|${parts[6]}|${parts[7]}`
+      const nk = `${parts[0]}|${parts[1]}|${parts[2]}|${pg + 1}|${parts[4]}|${parts[5]}|${parts[6]}|${parts[7]}|${parts[8]}`
       if (pageCache.current.has(nk)) return
       api<any>('/api/list', {
         prefix: parts[0], order: parts[1], limit: lim, offset: (pg + 1) * lim,
-        q: parts[4], ext: parts[5], since: parts[6], flat: parts[7] ? 1 : '',
+        q: parts[4], ext: parts[5], since: parts[6], until: parts[7], flat: parts[8] ? 1 : '',
       }).then((nd) => {
         pageCache.current.set(nk, { at: Date.now(), data: nd })
       }).catch(() => {})
@@ -238,15 +246,20 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   }, [])
   const contentRef = useRef<HTMLDivElement>(null)
 
-  const since = sinceDays
+  const since = fromDate || (sinceDays
     ? new Date(Date.now() - Number(sinceDays) * 86400_000).toISOString().slice(0, 10)
-    : ''
+    : '')
+  const until = toDate
 
   const [debouncedQ, setDebouncedQ] = useState(q)
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 320)
     return () => clearTimeout(t)
   }, [q])
+
+  const searching = debouncedQ.trim().length > 0
+  const listPrefix = searching && searchAll ? '' : prefix
+  const listFlat = searching && searchAll ? true : flat
 
   const liveCursor = cursorStack[cursorStack.length - 1] ?? ''
 
@@ -278,7 +291,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
       setErrMsg(String(e?.message || e))
     }
     if (source === 'live') {
-      api<any>('/api/live/list', { prefix, flat: flat ? 1 : '', q: debouncedQ, limit, cursor: liveCursor })
+      api<any>('/api/live/list', { prefix: listPrefix, flat: listFlat ? 1 : '', q: debouncedQ, limit, cursor: liveCursor })
         .then((d) => {
           if (rid !== reqIdRef.current) return
           setLiveItems(d.items ?? [])
@@ -298,12 +311,12 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
     }
     // Client page cache (60s): Back / re-click / Next-then-Prev answers instantly
   // without re-querying; server totals are cached 300s so this stays coherent.
-  const ck = `${prefix}|${order}|${limit}|${page}|${debouncedQ}|${ext}|${since}|${flat ? 1 : ''}`
+  const ck = `${listPrefix}|${order}|${limit}|${page}|${debouncedQ}|${ext}|${since}|${until}|${listFlat ? 1 : ''}`
   // Folder tree is independent of the file-list page cache: a cache-hit
   // revisit must still (re)load the sidebar that resetFolderView cleared
   // (2026-09-05: Up-to-root showed files but an empty sidebar on cache hit).
   const fetchTree = () => {
-    if (source !== 'manifest' || debouncedQ || flat) return
+    if (source !== 'manifest' || searching || listFlat) return
     if (treePrefixRef.current === prefix) return
     // Mark attempted up-front: page turns must not hammer a failing tree;
     // folder change or the Retry button resets the ref to force refetch.
@@ -328,7 +341,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
     fetchTree()
     return
   }
-  api<any>('/api/list', { prefix, q: debouncedQ, order, limit, offset: page * limit, ext, since, flat: flat ? 1 : '' })
+  api<any>('/api/list', { prefix: listPrefix, q: debouncedQ, order, limit, offset: page * limit, ext, since, until, flat: listFlat ? 1 : '' })
       .then((d) => {
         if (rid !== reqIdRef.current) return
         pageCache.current.set(ck, { at: Date.now(), data: d })
@@ -343,14 +356,21 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
       })
       .finally(() => { if (rid === reqIdRef.current) { window.clearTimeout(loadTimer); setLoading(false); setInitialLoad(false) } })
     fetchTree()
-    if (source === 'manifest' && (debouncedQ || flat)) {
+    if (source === 'manifest' && (searching || listFlat)) {
       // Searching / recursing hides (not clears) the folder sidebar cards
       // via render guards; dirs stay so un-searching is instant.
     }
-  }, [source, prefix, debouncedQ, order, limit, page, ext, since, flat, liveCursor])
+  }, [source, prefix, listPrefix, listFlat, searching, debouncedQ, order, limit, page, ext, since, until, liveCursor])
 
   useEffect(refresh, [refresh])
-  useEffect(() => { setPage(0); setCursorStack([null]) }, [prefix, debouncedQ, order, ext, sinceDays, flat, source])
+  useEffect(() => { setPage(0); setCursorStack([null]) }, [prefix, debouncedQ, order, ext, sinceDays, fromDate, toDate, flat, source, searchAll])
+  useEffect(() => {
+    if (jumpTo == null) return
+    resetFolderView()
+    setPrefix(normPrefix(jumpTo.p))
+    setQ('')
+    setSearchAll(false)
+  }, [jumpTo])
 
   function goNext() {
     if (source === 'live') { setCursorStack((s) => [...s, nextCursor]); contentRef.current?.scrollTo({ top: 0 }) }
@@ -397,6 +417,24 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
     setQ('')
   }
 
+  function tryJumpToPath(raw: string) {
+    const t = raw.trim().replace(/^\/+/, '')
+    if (!t) return false
+    const folderish = t.endsWith('/')
+      || prefixes.some((p) => p.replace(/\/$/, '') === t.replace(/\/$/, ''))
+      || (!t.includes('.') && t.includes('/'))
+    if (!folderish) return false
+    const path = t.endsWith('/') ? t : t + '/'
+    goPrefix(path)
+    setQ('')
+    return true
+  }
+
+  function submitSearch() {
+    if (tryJumpToPath(q)) return
+    setDebouncedQ(q.trim())
+  }
+
   // Switching folders must never show the previous folder's files/folders
   // under the new breadcrumb (2026-09-05: stale root files + "No subfolders"
   // rendered under currency/ after a failed fetch). The page cache keeps
@@ -420,7 +458,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
     try {
       await post('/api/download', { keys: [...sel], label: `explorer:${prefix || 'root'}` })
       setSel(new Set())
-      alert('Download job queued — see Evidence tab.')
+      alert('Download queued. Files save on this host with sha256 logging.')
     } finally { setBusy(false) }
   }
 
@@ -460,13 +498,13 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
         }
       } else {
         for (let off = 0; off < cap; off += 1000) {
-          const d = await api<{ items: ObjRow[] }>('/api/list', { prefix, q, ext, since, flat: 1, limit: 1000, offset: off })
+          const d = await api<{ items: ObjRow[] }>('/api/list', { prefix: listPrefix, q, ext, since, until, flat: 1, limit: 1000, offset: off })
           keys.push(...d.items.map((o) => o.key)); if (d.items.length < 1000) break
         }
       }
       keys = keys.slice(0, cap)
       if (keys.length) await post('/api/download', { keys, label: `folder:${prefix || 'root'}` })
-      alert(`${keys.length} keys queued — see Evidence tab.`)
+      alert(`${keys.length} files queued for download on this host.`)
     } finally { setBusy(false) }
   }
 
@@ -496,7 +534,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
   return (
     <div className="ex-root">
       {/* ---- Left sidebar: folder tree ---- */}
-      {source === 'manifest' && (
+      {source === 'manifest' && !searching && (loading || dirs.length > 0 || treeErr) && (
         <FolderTree
           dirs={dirs}
           prefix={prefix}
@@ -520,7 +558,7 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
             return (
               <span key={c.path} style={{ display: 'contents' }}>
                 <span className="ex-crumb-sep">/</span>
-                <button className="ex-crumb" onClick={() => goPrefix(c.path)}>
+                <button className="ex-crumb" onClick={() => goPrefix(c.path)} title={c.path}>
                   <span style={{ color: ci.color }}>{ci.icon}</span>
                   {c.name}
                 </button>
@@ -528,76 +566,47 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
             )
           })}
           {prefix && (
-            <button className="ex-crumb ex-crumb-up" onClick={goParent} title="Up one folder">
-              ⬆ Up
-            </button>
+            <span className="ex-crumb-path mono tiny dim" title="Exact folder path">{prefix ? `/${prefix}` : '/'}</span>
           )}
+          {!prefix && <span className="ex-crumb-path mono tiny dim">/</span>}
         </div>
+        {searching && (
+          <div className="tiny dim" style={{ margin: '0 0 8px 2px' }}>
+            Searching {searchAll ? 'all folders' : `in /${prefix || ''}`} for <code className="mono">{debouncedQ}</code>
+            {since || until ? ` · uploaded ${since || '…'} → ${until || 'now'}` : ''} · {total.toLocaleString()} matches
+          </div>
+        )}
 
         {/* Toolbar — compact single row */}
         <div className="ex-toolbar">
           <div className="ex-toolbar-left">
-            <button
-              className={`ex-toggle ${source === 'live' ? 'ex-toggle-on' : ''}`}
-              title="Query the GCS evidence mirror directly (ground truth)"
-              onClick={() => setSource(source === 'live' ? 'manifest' : 'live')}
-            >
-              {source === 'live' ? '● LIVE' : '○ Indexed'}
-            </button>
-
             <div className="ex-search-wrap">
               <span className="ex-search-icon">⌕</span>
               <input
                 type="text"
-                placeholder='Search…  ( / )'
+                placeholder="Search name or path…  ( / )"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submitSearch() } }}
                 id="ex-search"
                 className="ex-search"
               />
               {q && <button className="ex-search-clear" onClick={() => setQ('')}>×</button>}
             </div>
-
+            <button className="btn" style={{ fontSize: 12 }} onClick={submitSearch} title="Search by object name or full path">Search</button>
             <button
               className={`ex-toggle ${filterOpen ? 'ex-toggle-on' : ''}`}
               onClick={() => setFilterOpen(!filterOpen)}
             >
-              ☰ Filters
-              {(ext || sinceDays) && <span className="ex-filter-dot" />}
-            </button>
-          </div>
-
-          <div className="ex-toolbar-right">
-            <select value={order} onChange={(e) => setOrder(e.target.value as any)} disabled={source === 'live'} className="ex-select">
-              <option value="-seen">Recently mirrored</option>
-              <option value="-modified">Newest</option>
-              <option value="key">A→Z</option>
-              <option value="size">Largest</option>
-            </select>
-
-            <select value="" onChange={(e) => e.target.value && goPrefix(e.target.value)} className="ex-select">
-              <option value="">Jump to…</option>
-              {prefixes.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
-
-            <button className={`ex-toggle ${flat ? 'ex-toggle-on' : ''}`} onClick={() => setFlat(!flat)} title="Include descendants">
-              {flat ? '↧ Recursive' : '↦ Direct'}
+              Filters
+              {(ext || sinceDays || fromDate || toDate) && <span className="ex-filter-dot" />}
             </button>
             <button className={`ex-toggle ${gallery ? 'ex-toggle-on' : ''}`} onClick={() => setGallery(!gallery)} title="G to toggle">
-              {gallery ? '▦ Grid' : '▤ List'}
+              {gallery ? 'Grid' : 'List'}
             </button>
-
-            <div className="ex-toolbar-divider" />
-
-            <button className="ex-sync-btn" onClick={doSync} disabled={syncing}>
+            <button className="ex-sync-btn" onClick={doSync} disabled={syncing} title="Refresh this folder">
               {syncing ? '⏳' : '↻'}
             </button>
-            <select value={autoSync} onChange={(e) => setAutoSync(e.target.value)} className="ex-select ex-select-sm">
-              <option value="">Off</option>
-              <option value="30">30s</option>
-              <option value="60">60s</option>
-              <option value="300">5min</option>
-            </select>
             {syncMsg && <span className="ex-sync-msg">{syncMsg}</span>}
           </div>
         </div>
@@ -623,30 +632,47 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
               ))}
             </div>
             <div className="ex-filter-group">
-              <span className="ex-filter-label">Age</span>
+              <span className="ex-filter-label">Uploaded</span>
               {[
                 { v: '', l: 'Any' },
                 { v: '1', l: '24h' },
                 { v: '7', l: '7d' },
                 { v: '30', l: '30d' },
               ].map(({ v, l }) => (
-                <button key={v} className={`ex-chip ${sinceDays === v ? 'ex-chip-on' : ''}`} onClick={() => setSinceDays(v)}>
+                <button
+                  key={v}
+                  className={`ex-chip ${v === sinceDays && !fromDate ? 'ex-chip-on' : (!v && !sinceDays && !fromDate && !toDate ? 'ex-chip-on' : '')}`}
+                  onClick={() => {
+                    setSinceDays(v)
+                    if (!v) { setFromDate(''); setToDate('') }
+                    else {
+                      setFromDate(new Date(Date.now() - Number(v) * 86400_000).toISOString().slice(0, 10))
+                      setToDate(new Date().toISOString().slice(0, 10))
+                    }
+                  }}
+                >
                   {l}
                 </button>
               ))}
+              <label className="tiny dim" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                From
+                <input type="date" value={fromDate} onChange={(e) => { setFromDate(e.target.value); setSinceDays('') }} style={{ fontSize: 12, padding: '4px 6px' }} />
+              </label>
+              <label className="tiny dim" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                To
+                <input type="date" value={toDate} onChange={(e) => { setToDate(e.target.value); setSinceDays('') }} style={{ fontSize: 12, padding: '4px 6px' }} />
+              </label>
             </div>
           </div>
         )}
 
         {/* Directory stats bar */}
-        {source === 'manifest' && dirsPrefix === prefix && dirs.length > 0 && !flat && !debouncedQ && (
+        {source === 'manifest' && dirsPrefix === prefix && dirs.length > 0 && !flat && !searching && (
           <div className="ex-dir-stats">
             <span className="ex-dir-stats-icon" style={{ color: info.color }}>{info.icon}</span>
-            <span className="ex-dir-stats-desc">{info.desc}</span>
+            <span>{dirs.length} folders</span>
             <span className="ex-dir-stats-sep">·</span>
-            <span>{dirs.length} subfolders</span>
-            <span className="ex-dir-stats-sep">·</span>
-            <span>{data.total.toLocaleString()} objects in this folder</span>
+            <span>{data.total.toLocaleString()} files here</span>
             <span className="ex-dir-stats-sep">·</span>
             <span>{fmtBytes(dirTotalSize)}</span>
           </div>
@@ -694,50 +720,24 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
           ) : gallery ? (
             /* ---- GALLERY VIEW ---- */
             <div className="ex-grid">
-              {/* Folder cards first */}
-              {source === 'manifest' && dirsPrefix === prefix && !flat && !debouncedQ && dirs.map((d) => {
-                const di = folderInfo(prefix + d.seg)
-                return (
-                  <div
-                    key={'dir-' + d.seg}
-                    className="ex-file-card ex-folder-card"
-                    onClick={() => openDir(d.seg)}
-                  >
-                    <div className="ex-folder-card-icon" style={{ background: `${di.color}18` }}>
-                      <span style={{ fontSize: 28, color: di.color }}>{di.icon}</span>
-                    </div>
-                    <div className="ex-folder-card-info">
-                      <div className="ex-folder-card-name">{d.seg}</div>
-                      <div className="ex-folder-card-meta">
-                        <span>{d.n.toLocaleString()} files</span>
-                        <span>·</span>
-                        <span>{fmtBytes(d.size)}</span>
-                      </div>
-                      <div className="ex-folder-card-desc dim">{di.desc}</div>
-                    </div>
-                    <span className="ex-folder-card-arrow">›</span>
-                  </div>
-                )
-              })}
-
-              {/* Files */}
               {rows().map((o) => (
                 <FileCard
                   key={o.key}
                   obj={o}
                   prefix={prefix}
-              onPreview={setPreview}
+                  onPreview={setPreview}
                   selected={sel.has(o.key)}
                   onToggleSelect={toggle}
+                  showPath={searching || listFlat}
                 />
               ))}
 
-              {rows().length === 0 && dirs.length === 0 && !loading && (
+              {rows().length === 0 && !loading && (
                 <div className="ex-empty">
                   <div className="ex-empty-icon">🔍</div>
                   <div className="ex-empty-title">Nothing found</div>
                   <div className="ex-empty-hint">
-                    Folder: <code className="mono">/{prefix || ''}</code> · Try clearing filters, toggling Recursive, or hitting Sync.
+                    Folder: <code className="mono">/{prefix || ''}</code> · Try clearing filters or Search.
                   </div>
                 </div>
               )}
@@ -749,31 +749,15 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
                 <thead>
                   <tr>
                     <th style={{ width: 30 }}></th>
-                    <th>Name</th>
+                    <th>Name / path</th>
                     <th className="num" style={{ width: 90 }}>Size</th>
                     <th style={{ width: 100 }}>Modified</th>
                     <th style={{ width: 160 }}>Info</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {/* Folder rows first */}
-                  {source === 'manifest' && dirsPrefix === prefix && !flat && !debouncedQ && dirs.map((d) => {
-                    const di = folderInfo(prefix + d.seg)
-                    return (
-                      <tr key={'dir-' + d.seg} className="ex-table-folder" onClick={() => openDir(d.seg)}>
-                        <td><span style={{ color: di.color }}>{di.icon}</span></td>
-                        <td className="mono">
-                          <span className="ex-table-folder-name" style={{ color: di.color }}>{d.seg}/</span>
-                          <span className="dim tiny" style={{ marginLeft: 8 }}>{di.desc}</span>
-                        </td>
-                        <td className="num dim">{fmtBytes(d.size)}</td>
-                        <td colSpan={2} className="dim small">{d.n.toLocaleString()} objects</td>
-                      </tr>
-                    )
-                  })}
-                  {/* File rows */}
                   {rows().map((o) => {
-                    const name = displayName(o.key, prefix)
+                    const name = searching || listFlat ? o.key : displayName(o.key, prefix)
                     const icon = fileIcon(o.key)
                     return (
                       <tr key={o.key}>
@@ -787,8 +771,8 @@ export function Explorer({ prefixes }: { prefixes: string[] }) {
                         </td>
                         <td className="mono">
                           <span className="ex-row-icon">{icon}</span>
-                          <a className="ex-row-name" onClick={() => setPreview(o)}>
-                            {shortKey(name, 56)}
+                          <a className="ex-row-name" onClick={() => setPreview(o)} title={o.key}>
+                            {shortKey(name, 72)}
                           </a>
                         </td>
                         <td className="num">{fmtBytes(o.size)}</td>

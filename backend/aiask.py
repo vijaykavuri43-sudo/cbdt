@@ -119,11 +119,38 @@ def _ctx_overview() -> tuple[str, list]:
         n_pay = db.payment_row_count()
     except Exception:
         n_pay = "?"
+    try:
+        prefixes = db.prefix_stats()[:16]
+        ptxt = "; ".join(
+            f"{r.get('p') or '(root)'}={int(r.get('n') or 0):,}" for r in prefixes
+        )
+    except Exception:
+        ptxt = ""
+    try:
+        dep = db.money_flows(direction="deposit", source="object", limit=1)
+        wd = db.money_flows(direction="withdrawal", source="object", limit=1)
+        money = (
+            f"Deposits (object slips): {dep.get('transactions')} slips · "
+            f"₹{dep.get('sum_amount_inr')} · {dep.get('distinct_rails')} rails. "
+            f"Withdrawals: {wd.get('transactions')} slips · ₹{wd.get('sum_amount_inr')} · "
+            f"{wd.get('distinct_rails')} rails."
+        )
+    except Exception:
+        money = ""
+    w_hits = w.get("wallet_hits") if isinstance(w, dict) else None
+    w_dist = w.get("distinct_wallets") if isinstance(w, dict) else None
+    w_net = ""
+    if isinstance(w, dict) and w.get("by_network"):
+        w_net = "; ".join(
+            f"{n.get('network')}={n.get('count')}" for n in (w.get("by_network") or [])[:8]
+        )
     txt = (
-        f"Indexed objects: {e.get('total')}; enriched: {e.get('enriched_done')} "
-        f"({e.get('coverage_pct')}%); pending OCR: {e.get('pending_now')}; "
-        f"processed last hour: {e.get('processed_last_hour')} (ETA {e.get('eta_hours')}h). "
-        f"Payment rows: {n_pay}. Wallet stats: {w}."
+        f"CASE-2026-CBTF GCS mirror (whole evidence bucket). Indexed objects: {e.get('total')}; "
+        f"enriched: {e.get('enriched_done')} ({e.get('coverage_pct')}%); "
+        f"pending OCR: {e.get('pending_now')}; slip backlog: {e.get('slip_backlog')}. "
+        f"Payment rows: {n_pay}. Distinct crypto wallets: {w_dist} (hits {w_hits}"
+        f"{'; ' + w_net if w_net else ''}). {money} "
+        f"Top folders (file counts): {ptxt}."
     )
     return txt, [{"kind": "overview", "ref": "/api/status"}]
 
@@ -132,12 +159,23 @@ def _ctx_money(q: str) -> tuple[str, list]:
     parts, sources = [], []
     for direction in ("deposit", "withdrawal"):
         try:
-            f = db.money_flows(direction=direction, limit=8)
+            f = db.money_flows(direction=direction, source="object", limit=6)
         except Exception:
             continue
-        rows = f.get("flows") or f.get("rows") or []
-        total = f.get("total_inr") or f.get("total") or "?"
-        parts.append(f"{direction}s: total≈₹{total}; top rails: {rows[:8]}")
+        rows = f.get("items") or []
+        sample = [
+            {
+                "rail": r.get("rail_id"),
+                "type": r.get("rail_type"),
+                "amount": r.get("amount_inr"),
+                "key": r.get("source_key"),
+            }
+            for r in rows[:6]
+        ]
+        parts.append(
+            f"{direction}: slips={f.get('transactions')} amount_inr={f.get('sum_amount_inr')} "
+            f"unique_rails={f.get('distinct_rails')} sample={sample}"
+        )
         sources.append({"kind": "money", "ref": f"/api/flows?direction={direction}"})
     # NOTE: rail detail moved to _ctx_upi_list (real handles). money_flows'
     # top-rail summary + a second mule_rails aggregate here doubled the
@@ -1068,6 +1106,9 @@ _SYSTEM = (
     "not proof — say so when relevant. If the context lacks the answer, say what "
     "is missing and suggest the exact dashboard page or query to check. "
     "Be concise: short summary first, then 3-8 bullets. Never invent identifiers. "
+    "You have a CASE OVERVIEW of the whole GCS evidence bucket (folder counts, "
+    "OCR coverage, deposit/withdrawal slip totals, unique rails, wallets). Use it. "
+    "If the officer asks what is in the bucket, list the top folders from overview. "
     "Numbers under EXACT MATH are exact database results — quote them verbatim, "
     "never recompute or round them. Wallet addresses, rail handles, ledger rows "
     "and object keys under WALLETS / RAILS / LEDGER / NEWEST OBJECTS are exact "
@@ -1117,6 +1158,9 @@ def ask(question: str, store: Any) -> dict:
         ctx_parts.append(img_txt)
         sources += img_src
 
+    t, s = _ctx_overview()
+    ctx_parts.insert(0, "CASE OVERVIEW (whole bucket):\n" + t)
+    sources += s
     if any(
         w in ql
         for w in (
@@ -1151,25 +1195,6 @@ def ask(question: str, store: Any) -> dict:
             "EXACT MATH (SQL over payment_transactions, IST window):\n" + calc_txt
         )
         sources += calc_src
-    if (
-        any(
-            w in ql
-            for w in (
-                "status",
-                "progress",
-                "pending",
-                "coverage",
-                "eta",
-                "how many",
-                "overview",
-                "health",
-            )
-        )
-        or not ctx_parts
-    ):
-        t, s = _ctx_overview()
-        ctx_parts.append("CASE OVERVIEW:\n" + t)
-        sources += s
     t, s = _ctx_wallet_list(ql)
     if t:
         ctx_parts.append("WALLETS:\n" + t)

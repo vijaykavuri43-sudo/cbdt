@@ -70,27 +70,24 @@ export function Upis() {
         <div className="pg-header-left">
           <span className="pg-header-icon">@</span>
           <div>
-            <h1 className="pg-header-title">UPI / Mule Accounts</h1>
-            <div className="pg-header-sub">Mule VPAs — unique collection rails with deposit counts · sender-side (user) VPAs hidden · cross-checked against {(data?.master_size ?? 0).toLocaleString()} known mules</div>
+            <h1 className="pg-header-title">UPI collection VPAs</h1>
+            <div className="pg-header-sub">Unique VPAs decoded from QR / deposit images — not the Date-range slip query. Master list {(data?.master_size ?? 0).toLocaleString()}.</div>
           </div>
         </div>
         <div className="pg-header-right">
           <button className="btn" onClick={refresh} title="Reload the VPA list" style={{ fontSize: 11 }}>↻ Refresh</button>
-          <button className="btn" onClick={exportFullCsv} title="Full VPA list (old + new) with source file + dashboard link per row — officer exhibit, opens in Excel" style={{ fontSize: 11 }}>⬇ Export FULL CSV (LE)</button>
+          <button className="btn" onClick={exportFullCsv} title="Unique VPAs with source file + dashboard link" style={{ fontSize: 11 }}>⬇ Export unique VPAs CSV</button>
         </div>
       </div>
       {error && <div className="money-error">Could not load UPI mules: {error} <button className="btn" style={{ marginLeft: 8 }} onClick={refresh}>Retry</button></div>}
 
       <div className="lf-controls">
         <div className="lf-controls-left">
-          <button className={`ex-toggle ${!onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(false)} title={`Full set across all pages (${total.toLocaleString()} rows, 500 per page)`}>All · {total.toLocaleString()}</button>
+          <button className={`ex-toggle ${!onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(false)}>All unique · {total.toLocaleString()}</button>
           <button className={`ex-toggle ${onlyNew ? 'ex-toggle-on' : ''}`} onClick={() => setOnlyNew(true)}>
-            ⚠ NEW only · {(data?.new_total ?? data?.new_not_in_master ?? 0).toLocaleString()}
+            New only · {(data?.new_total ?? data?.new_not_in_master ?? 0).toLocaleString()}
           </button>
-          <button className={`ex-toggle ${distinct ? 'ex-toggle-on' : ''}`} onClick={() => setDistinct((d) => !d)} title="One row per unique VPA with slip count + summed amount — the officer action list">
-            ⇄ {distinct ? 'Unique VPAs ✓' : 'Group: unique VPAs'}
-          </button>
-          <button className={`ex-toggle ${hideSenders ? 'ex-toggle-on' : ''}`} onClick={() => setHideSenders((h) => !h)} title="Sender-only VPAs are gambler/user counterparties (Paid-by side), not mule rails — hidden by default">
+          <button className={`ex-toggle ${hideSenders ? 'ex-toggle-on' : ''}`} onClick={() => setHideSenders((h) => !h)}>
             {hideSenders ? 'Show user senders' : 'Hide user senders'}
           </button>
         </div>
@@ -98,17 +95,12 @@ export function Upis() {
 
       <div className="st-cards" style={{ marginBottom: 16 }}>
         <div className="st-card st-card-accent">
-              <div className="st-card-label">{distinct ? 'Unique VPAs (all pages)' : 'Slip rows (all pages)'}</div>
+          <div className="st-card-label">Unique VPAs</div>
           <div className="st-card-value accent">{total.toLocaleString()}</div>
         </div>
         <div className="st-card st-card-warn">
           <div className="st-card-label">New — not in master</div>
           <div className="st-card-value warn">{(data?.new_total ?? data?.new_not_in_master ?? 0).toLocaleString()}</div>
-          <div className="st-card-sub">Register in registry</div>
-        </div>
-        <div className="st-card">
-          <div className="st-card-label">Master list</div>
-          <div className="st-card-value">{(data?.master_size ?? 0).toLocaleString()}</div>
         </div>
       </div>
 
