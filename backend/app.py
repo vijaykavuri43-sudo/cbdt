@@ -2503,6 +2503,38 @@ def money_flows_unique_api(
     )
 
 
+@app.get("/api/money-flows-unique-hits")
+def money_flows_unique_hits_api(
+    rail_type: str = Query(..., pattern="^(upi|bank_account|crypto_wallet)$"),
+    rail_id: str = Query(..., min_length=1, max_length=256),
+    source: str = Query("object", pattern="^(|object|reference)$"),
+    since: str = Query("", max_length=32),
+    until: str = Query("", max_length=32),
+    folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
+    limit: int = Query(500, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    _=Depends(auth),
+):
+    """Every origin object for one unique Date-range address (closable expander)."""
+    cache_key = (
+        f"flows-u-hits:{rail_type}:{rail_id}:{source}:{since}:{until}:{folder}:{limit}:{offset}"
+    )
+    return cached(
+        cache_key,
+        30.0,
+        lambda: db.money_flows_unique_hits(
+            rail_type=rail_type,
+            rail_id=rail_id,
+            source=source,
+            since=since,
+            until=until,
+            folder=folder,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+
+
 @app.get("/api/export/money-flows-unique")
 def export_money_flows_unique(
     rail_type: str = Query("", pattern="^(|upi|bank_account|crypto_wallet|unknown)$"),

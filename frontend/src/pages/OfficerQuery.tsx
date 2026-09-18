@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl, saveCsvFromUrl } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl } from '../lib/explorers'
-import { fmtINR, fmtTime, previewJoined, shortKey } from '../lib/format'
+import { fmtINR, fmtIST, fmtTime, previewJoined, shortKey } from '../lib/format'
 
 type Folder = 'all' | 'deposit' | 'withdrawal' | 'bankingqr' | 'other'
 type RailType = 'upi' | 'bank_account' | 'crypto_wallet'
@@ -58,6 +58,30 @@ interface UniqueResp {
   items: UniqueRow[]
 }
 
+interface HitRow {
+  source_key: string
+  folder: string
+  direction: string
+  amount_inr?: number | null
+  utr: string
+  rail_type: string
+  rail_id: string
+  account_holder: string
+  ifsc: string
+  network: string
+  last_modified: string
+  seen_utc?: string
+  origins: string[]
+  origin_label: string
+  has_object: boolean
+}
+
+interface HitResp {
+  rail_id: string
+  rows_total: number
+  items: HitRow[]
+}
+
 const FOLDERS: { id: Folder; label: string; hint: string }[] = [
   { id: 'all', label: 'All', hint: 'Every folder in the bucket' },
   { id: 'deposit', label: 'Deposit', hint: 'deposit/ customer slips' },
@@ -98,6 +122,21 @@ function railFileTag(rail: RailType): string {
   return 'upi'
 }
 
+function uniqueColSpan(rail: RailType): number {
+  if (rail === 'bank_account') return 8
+  return 7
+}
+
+function clickOnControl(target: EventTarget | null): boolean {
+  let n = target as HTMLElement | null
+  while (n) {
+    const tag = n.tagName
+    if (tag === 'A' || tag === 'BUTTON') return true
+    n = n.parentElement
+  }
+  return false
+}
+
 function csvFilename(kind: View, next: { folder: Folder; rail_type: RailType; since: string; until: string }): string {
   return `${kind === 'unique' ? 'unique-addresses' : 'all-slips'}-${next.folder}-${railFileTag(next.rail_type)}-${next.since}-to-${next.until}.csv`
 }
@@ -123,6 +162,10 @@ export function OfficerQuery() {
   const [busy, setBusy] = useState(false)
   const [dlBusy, setDlBusy] = useState<View | null>(null)
   const [page, setPage] = useState(0)
+  const [openRail, setOpenRail] = useState('')
+  const [hits, setHits] = useState<HitResp | null>(null)
+  const [hitsBusy, setHitsBusy] = useState(false)
+  const [hitsErr, setHitsErr] = useState('')
   const limit = 200
 
   const paramsOf = (next: NonNullable<typeof applied>) => ({
@@ -157,6 +200,9 @@ export function OfficerQuery() {
         setUniques(null)
       }
       setPage(nextPage)
+      setOpenRail('')
+      setHits(null)
+      setHitsErr('')
     } catch (e) {
       setSlips(null)
       setUniques(null)
@@ -224,9 +270,59 @@ export function OfficerQuery() {
     setToDate(to)
   }
 
+  async function loadHits(railId: string) {
+    if (!applied) return
+    setHitsBusy(true)
+    setHitsErr('')
+    setHits(null)
+    try {
+      const resp = await api<HitResp>(
+        '/api/money-flows-unique-hits',
+        {
+          ...paramsOf(applied),
+          rail_id: railId,
+          limit: 2000,
+          offset: 0,
+        },
+        60000,
+      )
+      setHits(resp)
+    } catch (e) {
+      setHitsErr(String(e))
+    } finally {
+      setHitsBusy(false)
+    }
+  }
+
+  function toggleRow(railId: string) {
+    if (!railId) return
+    if (openRail === railId) {
+      setOpenRail('')
+      setHits(null)
+      setHitsErr('')
+      return
+    }
+    setOpenRail(railId)
+    void loadHits(railId)
+  }
+
+  useEffect(() => {
+    if (!openRail) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpenRail('')
+        setHits(null)
+        setHitsErr('')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [openRail])
+
   const data = view === 'unique' ? uniques : slips
   const total = data?.rows_total ?? 0
   const folderHint = FOLDERS.find((f) => f.id === (applied?.folder ?? folder))?.hint ?? ''
+  const span = applied ? uniqueColSpan(applied.rail_type) : 7
 
   return (
     <>
@@ -431,11 +527,9 @@ export function OfficerQuery() {
               <div>
                 <strong>{view === 'unique' ? 'One row per address' : 'Every matching slip'}</strong>
                 <div className="tiny dim">
-                  {view === 'unique' && applied.rail_type === 'crypto_wallet'
-                    ? 'Decoded QR/image wallets in this window (Crypto wallets tab) plus any OCR slip rails. Image hits ≠ rupee amounts.'
-                    : view === 'unique'
-                      ? 'Freeze / notice list. CSV includes UTRs when OCR captured them.'
-                      : 'Evidence pack. CSV includes object path, UTR and timestamps.'}
+                  {view === 'unique'
+                    ? 'Click a row to open every source file underneath (deposit / withdrawal / chat / QR). Click again or Close to fold it.'
+                    : 'Evidence pack. CSV includes object path, UTR and timestamps.'}
                 </div>
               </div>
             </div>
@@ -458,9 +552,19 @@ export function OfficerQuery() {
                   <tbody>
                     {(uniques?.items ?? []).map((r, i) => {
                       const utrs = previewJoined(r.utrs)
+                      const open = openRail === r.rail_id
                       return (
-                      <tr key={`${r.rail_type}:${r.rail_id}:${i}`}>
+                      <Fragment key={`${r.rail_type}:${r.rail_id}:${i}`}>
+                      <tr
+                        className={'oq-unique-row' + (open ? ' oq-unique-row-on' : '')}
+                        onClick={(e) => {
+                          if (clickOnControl(e.target)) return
+                          toggleRow(r.rail_id)
+                        }}
+                        title="Click to list every source image for this address"
+                      >
                         <td className="mono money-rail">
+                          <span className="oq-chevron">{open ? '▼' : '▶'}</span>
                           {r.rail_id}
                           {applied.rail_type === 'crypto_wallet' && r.rail_id && (
                             <div className="tiny">
@@ -505,6 +609,66 @@ export function OfficerQuery() {
                           ) : <span className="tiny dim">—</span>}
                         </td>
                       </tr>
+                      {open && (
+                        <tr className="oq-hits-row">
+                          <td colSpan={span}>
+                            <div className="oq-hits-box">
+                              <div className="oq-hits-head">
+                                <div>
+                                  <strong>
+                                    {hitsBusy
+                                      ? 'Loading source files…'
+                                      : `${(hits?.rows_total ?? 0).toLocaleString()} source file${(hits?.rows_total ?? 0) === 1 ? '' : 's'}`}
+                                  </strong>
+                                  <div className="tiny dim">
+                                    Every origin object for {r.rail_id} in this date range and folder — deposit, withdrawal, chat, QR, gateway.
+                                  </div>
+                                </div>
+                                <button type="button" className="btn" onClick={() => toggleRow(r.rail_id)}>Close</button>
+                              </div>
+                              {hitsErr && <div className="money-error">Could not load sources: {hitsErr}</div>}
+                              {!hitsBusy && !hitsErr && (hits?.items ?? []).length === 0 && (
+                                <div className="tiny dim">No source objects for this address in this window.</div>
+                              )}
+                              {!hitsBusy && (hits?.items ?? []).length > 0 && (
+                                <table className="oq-hits-inner">
+                                  <thead>
+                                    <tr>
+                                      <th>Source object</th>
+                                      <th>Folder</th>
+                                      <th>Origin</th>
+                                      <th>Object time</th>
+                                      <th>Indexed</th>
+                                      <th className="num">Amount</th>
+                                      <th>UTR</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(hits?.items ?? []).map((h, hi) => (
+                                      <tr key={`${h.source_key}:${hi}`}>
+                                        <td className="wrap mono">
+                                          {h.has_object ? (
+                                            <a href={objectUrl(h.source_key)} target="_blank" rel="noreferrer" title={h.source_key}>
+                                              {h.source_key}
+                                            </a>
+                                          ) : <span className="tiny dim">{h.source_key || 'reference'}</span>}
+                                        </td>
+                                        <td className="mono">{h.folder || '—'}</td>
+                                        <td>{h.origin_label || 'source'}</td>
+                                        <td className="small dim">{h.last_modified ? fmtIST(h.last_modified) : '—'}</td>
+                                        <td className="small dim">{h.seen_utc ? fmtIST(h.seen_utc) : '—'}</td>
+                                        <td className="num money">{h.amount_inr != null ? fmtINR(h.amount_inr) : '—'}</td>
+                                        <td className="mono small">{h.utr || '—'}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                       )
                     })}
                     {(uniques?.items ?? []).length === 0 && (

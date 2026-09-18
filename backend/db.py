@@ -2940,6 +2940,157 @@ def money_flows_unique_export_rows(
     return out["items"]
 
 
+def _key_top_folder(key: str) -> str:
+    """First path segment of a bucket key: deposit / withdrawal / chat_file / …"""
+    s = (key or "").split("?", 1)[0].lstrip("/")
+    if "/" in s:
+        return s.split("/", 1)[0]
+    return s
+
+
+def _origin_label(origins: set[str]) -> str:
+    order = (("image_hit", "image hit"), ("ocr_slip", "OCR slip"))
+    parts = [label for key, label in order if key in origins]
+    return " + ".join(parts) if parts else "source"
+
+
+def money_flows_unique_hits(
+    rail_type: str,
+    rail_id: str,
+    source: str = "object",
+    since: str = "",
+    until: str = "",
+    folder: str = "",
+    limit: int = 500,
+    offset: int = 0,
+) -> dict:
+    """Every origin object for one unique address in the Date range window.
+
+    Crypto unions wallet_hits (decoded QR/image) with OCR payment slips,
+    deduped by bucket key so officers never miss a source file. UPI / bank
+    rows expand to every matching payment_transactions object.
+    """
+    rail_type = (rail_type or "").strip().lower()
+    rail_id = (rail_id or "").strip()
+    limit = max(1, min(int(limit), 2000))
+    offset = max(0, int(offset))
+    empty = {
+        "rail_type": rail_type,
+        "rail_id": rail_id,
+        "folder": folder,
+        "since": _bound_ts(since, end=False),
+        "until": _bound_ts(until, end=True),
+        "rows_total": 0,
+        "items": [],
+    }
+    if not rail_id or rail_type not in ("upi", "bank_account", "crypto_wallet"):
+        return empty
+
+    by_key: dict[str, dict] = {}
+    c = connect()
+    where, args = _money_flow_filters(
+        direction="both",
+        rail_type=rail_type,
+        q="",
+        source=source,
+        since=since,
+        until=until,
+        folder=folder,
+    )
+    where = f"{where} AND rail_id=?"
+    pt_args = list(args) + [rail_id]
+    for r in c.execute(
+        "SELECT source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
+        "account_holder,ifsc,network,last_modified "
+        f"FROM payment_transactions WHERE {where} "
+        "ORDER BY last_modified DESC, id DESC",
+        pt_args,
+    ):
+        key = r["source_key"] or ""
+        if not key:
+            continue
+        existing = by_key.get(key)
+        if existing:
+            existing["origins"].add("ocr_slip")
+            if not existing.get("utr") and r["utr"]:
+                existing["utr"] = r["utr"]
+            if existing.get("amount_inr") is None and r["amount_inr"] is not None:
+                existing["amount_inr"] = r["amount_inr"]
+            continue
+        by_key[key] = {
+            "source_key": key,
+            "folder": _key_top_folder(key),
+            "direction": r["direction"] or "",
+            "amount_inr": r["amount_inr"],
+            "utr": r["utr"] or "",
+            "rail_type": r["rail_type"] or rail_type,
+            "rail_id": r["rail_id"] or rail_id,
+            "account_holder": r["account_holder"] or "",
+            "ifsc": r["ifsc"] or "",
+            "network": r["network"] or "",
+            "last_modified": r["last_modified"] or "",
+            "origins": {"ocr_slip"},
+            "has_object": not str(key).startswith("reference:"),
+        }
+
+    if rail_type == "crypto_wallet":
+        wh_where, wh_args = _wallet_hit_window_filters(
+            q="", since=since, until=until, folder=folder
+        )
+        wh_where = f"{wh_where} AND address=?"
+        for r in c.execute(
+            "SELECT address,key,last_modified,seen_utc,network,kind "
+            f"FROM wallet_hits WHERE {wh_where} ORDER BY last_modified DESC",
+            list(wh_args) + [rail_id],
+        ):
+            key = r["key"] or ""
+            if not key:
+                continue
+            existing = by_key.get(key)
+            if existing:
+                existing["origins"].add("image_hit")
+                if not existing.get("network") and r["network"]:
+                    existing["network"] = r["network"]
+                if not existing.get("last_modified") and r["last_modified"]:
+                    existing["last_modified"] = r["last_modified"]
+                continue
+            by_key[key] = {
+                "source_key": key,
+                "folder": _key_top_folder(key),
+                "direction": "",
+                "amount_inr": None,
+                "utr": "",
+                "rail_type": "crypto_wallet",
+                "rail_id": rail_id,
+                "account_holder": "",
+                "ifsc": "",
+                "network": r["network"] or "",
+                "last_modified": r["last_modified"] or "",
+                "seen_utc": r["seen_utc"] or "",
+                "origins": {"image_hit"},
+                "has_object": not str(key).startswith("reference:"),
+            }
+
+    items = list(by_key.values())
+    items.sort(key=lambda it: it.get("last_modified") or "", reverse=True)
+    total = len(items)
+    page = items[offset : offset + limit]
+    for it in page:
+        origins = it.pop("origins")
+        it["origins"] = sorted(origins)
+        it["origin_label"] = _origin_label(origins)
+    _attach_seen_utc(page)
+    return {
+        "rail_type": rail_type,
+        "rail_id": rail_id,
+        "folder": folder,
+        "since": _bound_ts(since, end=False),
+        "until": _bound_ts(until, end=True),
+        "rows_total": total,
+        "items": page,
+    }
+
+
 def mule_rails(
     rail_type: str = "",
     q: str = "",

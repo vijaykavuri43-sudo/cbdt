@@ -139,6 +139,102 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         self.assertEqual(by[hit_only]["slips"], 0)
         self.assertGreaterEqual(by[both]["slips"], 1)
 
+    def test_unique_hits_upi_and_bank(self):
+        upi = db.money_flows_unique_hits(
+            rail_type="upi",
+            rail_id="a@ybl",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual(upi["rows_total"], 1)
+        self.assertEqual(upi["items"][0]["source_key"], "deposit/a.jpg")
+        self.assertEqual(upi["items"][0]["folder"], "deposit")
+        self.assertIn("ocr_slip", upi["items"][0]["origins"])
+        bank = db.money_flows_unique_hits(
+            rail_type="bank_account",
+            rail_id="123456",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual(bank["items"][0]["source_key"], "withdrawal/c.jpg")
+        self.assertEqual(bank["items"][0]["folder"], "withdrawal")
+        none = db.money_flows_unique_hits(
+            rail_type="upi",
+            rail_id="a@ybl",
+            folder="withdrawal",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual(none["rows_total"], 0)
+
+    def test_unique_hits_crypto_unions_all_source_paths(self):
+        hit_only = "T" + "B" * 33
+        both = "T" + "C" * 33
+        extra = "T" + "D" * 33
+        c = db.connect()
+        c.executemany(
+            "INSERT INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext) VALUES (?,?,?,?,?,?,?)",
+            [
+                ("bankingqr/q.png", "bankingqr/", 10, "2026-09-12T12:00:00Z", "e4", "2026-09-12T12:05:00Z", ".png"),
+                ("deposit/d-crypto.jpg", "deposit/", 10, "2026-09-12T12:00:00Z", "e5", "2026-09-12T12:05:00Z", ".jpg"),
+                ("chat_file/w.webp", "chat_file/", 10, "2026-09-13T12:00:00Z", "e6", "2026-09-13T12:05:00Z", ".webp"),
+                ("withdrawal/w-crypto.jpg", "withdrawal/", 10, "2026-09-14T12:00:00Z", "e7", "2026-09-14T12:05:00Z", ".jpg"),
+            ],
+        )
+        c.execute(
+            "INSERT INTO payment_transactions("
+            "source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
+            "account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified,evidence_json"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("deposit/d-crypto.jpg", "deposit", "", 1, "", "crypto_wallet", both, "", "", "TRON", "high", "", "", "2026-09-12T12:00:00Z", "{}"),
+        )
+        c.executemany(
+            "INSERT OR REPLACE INTO wallet_hits(address,key,last_modified,seen_utc,network) VALUES (?,?,?,?,?)",
+            [
+                (hit_only, "bankingqr/q.png", "2026-09-12T12:00:00Z", "2026-09-12T12:05:00Z", "TRON"),
+                (both, "deposit/d-crypto.jpg", "2026-09-12T12:00:00Z", "2026-09-12T12:05:00Z", "TRON"),
+                (extra, "chat_file/w.webp", "2026-09-13T12:00:00Z", "2026-09-13T12:05:00Z", "TRON"),
+                (extra, "withdrawal/w-crypto.jpg", "2026-09-14T12:00:00Z", "2026-09-14T12:05:00Z", "TRON"),
+            ],
+        )
+        c.commit()
+        image_only = db.money_flows_unique_hits(
+            rail_type="crypto_wallet",
+            rail_id=hit_only,
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual({i["source_key"] for i in image_only["items"]}, {"bankingqr/q.png"})
+        self.assertEqual(image_only["items"][0]["origins"], ["image_hit"])
+        merged = db.money_flows_unique_hits(
+            rail_type="crypto_wallet",
+            rail_id=both,
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual(merged["rows_total"], 1)
+        self.assertEqual(set(merged["items"][0]["origins"]), {"image_hit", "ocr_slip"})
+        all_paths = db.money_flows_unique_hits(
+            rail_type="crypto_wallet",
+            rail_id=extra,
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual(
+            {i["source_key"] for i in all_paths["items"]},
+            {"chat_file/w.webp", "withdrawal/w-crypto.jpg"},
+        )
+        folders = {i["folder"] for i in all_paths["items"]}
+        self.assertEqual(folders, {"chat_file", "withdrawal"})
+        deposit_only = db.money_flows_unique_hits(
+            rail_type="crypto_wallet",
+            rail_id=extra,
+            folder="deposit",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual(deposit_only["rows_total"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
