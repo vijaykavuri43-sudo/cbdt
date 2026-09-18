@@ -59,6 +59,7 @@ def _resolve_master_wallet_csv() -> Path:
     if env:
         candidates.append(Path(env))
     candidates.append(REPO_ROOT / "LE-SUBMISSION-MASTER" / "17-CRYPTO-WALLETS.csv")
+    candidates.append(APP_DIR / "reference" / "17-CRYPTO-WALLETS.csv")
     candidates.append(DATA_DIR / "reference" / "17-CRYPTO-WALLETS.csv")
     for c in candidates:
         try:

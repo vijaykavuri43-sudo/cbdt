@@ -1,0 +1,6 @@
+entity_id,network,address,label,case_ids,confidence,fact_type,notes
+crypto:tron:TD63G1qvWu7ke2ycW848BjMCj2sHEZZusa,TRON,TD63G1qvWu7ke2ycW848BjMCj2sHEZZusa,,CASE-2026-102,high,fact,USDT TRC20 deposit receive from exchange withdraw screenshots
+crypto:tron:TJ5yq6udNUQ5iQNaapbN5f5YMUvRJKP17B,TRON,TJ5yq6udNUQ5iQNaapbN5f5YMUvRJKP17B,,CASE-2026-102,high,fact,USDT TRC20 deposit receive from exchange withdraw screenshots
+crypto:tron:TQbXYxYw3NtKLaHbKEWtu1xMfPbdD3A5Ef,TRON,TQbXYxYw3NtKLaHbKEWtu1xMfPbdD3A5Ef,CR7,CASE-2026-102,high,fact,USDT TRC20 operator send wallet from withdrawal proof screenshots
+crypto:tron:TUeZqJPJX6tMUwyiaJNWe2TAYmAoH46tW2,TRON,TUeZqJPJX6tMUwyiaJNWe2TAYmAoH46tW2,LOCKER,CASE-2026-102,high,fact,USDT TRC20 operator send wallet from withdrawal proof screenshots
+crypto:tron:TVHL9Wfc2rM7MaqDq6TL5E4yQ6biSP6gMU,TRON,TVHL9Wfc2rM7MaqDq6TL5E4yQ6biSP6gMU,,CASE-2026-102,high,fact,USDT TRC20 deposit receive from exchange withdraw screenshots

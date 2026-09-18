@@ -2648,7 +2648,11 @@ _WALLET_EXPORT_COLUMNS = (
     "last_seen_utc",
     "label",
     "confidence",
+    "status",
+    "origin_kind",
+    "attribution",
     "source_file",
+    "proof_url",
     "dashboard_source_link",
     "all_source_files",
     "all_dashboard_links",
@@ -2680,7 +2684,13 @@ def _wallet_source_keys() -> dict[str, list[str]]:
 
 @app.get("/api/export/wallets")
 def export_wallets(_=Depends(auth)):
-    """Unique wallet CSV: one row per address with every related source file + dashboard link."""
+    """Officer wallet exhibit: live unique decodes + identified census.
+
+    Part 1 — one row per address decoded from a live bucket image (every
+    source file + dashboard link). Part 2 — previously-identified reference
+    wallets (87-row census) with origin_kind=reference so provenances never
+    mix. Opens in Excel.
+    """
 
     def build():
         keys_by_addr = _wallet_source_keys()
@@ -2703,7 +2713,11 @@ def export_wallets(_=Depends(auth)):
                         "last_seen_utc": it.get("last_seen") or "",
                         "label": it.get("standard") or "",
                         "confidence": it.get("confidence") or "",
+                        "status": "EXTRACTED",
+                        "origin_kind": "live",
+                        "attribution": "",
                         "source_file": key or (all_keys[0] if all_keys else ""),
+                        "proof_url": "",
                         "dashboard_source_link": _source_link(key) if key else (
                             _source_link(all_keys[0]) if all_keys else ""
                         ),
@@ -2717,12 +2731,45 @@ def export_wallets(_=Depends(auth)):
             off += len(chunk)
             if len(chunk) < 2000:
                 break
+        from .evidence import load_reference_wallets
+
+        ref_rows = load_reference_wallets()
+        present = db.keys_in_mirror([r.get("proof_s3_key") or "" for r in ref_rows])
+        live_addrs = {r["address"].lower() for r in rows if r.get("address")}
+        for r in ref_rows:
+            addr = r.get("address") or ""
+            if addr.lower() in live_addrs:
+                continue
+            key = r.get("proof_s3_key") or ""
+            live = bool(key and key in present)
+            rows.append(
+                {
+                    "address": addr,
+                    "network": r.get("network") or "",
+                    "hits": "",
+                    "first_seen_utc": "",
+                    "last_seen_utc": "",
+                    "label": r.get("role") or "",
+                    "confidence": r.get("confidence") or "",
+                    "status": "REFERENCE",
+                    "origin_kind": "reference",
+                    "attribution": r.get("attribution") or "",
+                    "source_file": key or (r.get("source_ref") or ""),
+                    "proof_url": r.get("proof_url") or "" if live else "",
+                    "dashboard_source_link": _source_link(key) if live else "",
+                    "all_source_files": key or "",
+                    "all_dashboard_links": _source_link(key) if live else "",
+                    "case": config.CASE_ID,
+                    "auth_ref": config.AUTH_REF,
+                    "fact_type": r.get("fact_type") or "fact",
+                }
+            )
         return rows
 
     return _export_response(
-        cached("export-wallets:unique-v2", 60.0, build),
+        cached("export-wallets:full-v3", 60.0, build),
         _WALLET_EXPORT_COLUMNS,
-        "crypto-wallets-unique",
+        "crypto-wallets-full",
     )
 
 
@@ -3051,6 +3098,19 @@ def wallets_api(
         }
     except Exception:
         extraction_status = {}
+    from .evidence import load_master_wallet_rows
+
+    master_rows = load_master_wallet_rows()
+    master_set = {r["address_lower"] for r in master_rows}
+    for it in items:
+        addr = (it.get("address") or "").lower()
+        it["known_operator"] = bool(addr) and addr in master_set
+    try:
+        live_addrs = _live_wallet_set()
+        new_not_in_master = sum(1 for a in live_addrs if a.lower() not in master_set)
+    except Exception:
+        new_not_in_master = sum(1 for it in items if not it.get("known_operator"))
+    master_name = Path(config.MASTER_WALLET_CSV).name
     return {
         "items": items,
         "wallet_hits_total": stats["wallet_hits"],
@@ -3065,6 +3125,10 @@ def wallets_api(
         "q": q,
         "network": network,
         "sort": sort,
+        "master_size": len(master_rows),
+        "master_rows": master_rows,
+        "master_source": f"LE-SUBMISSION-MASTER/{master_name}" if master_rows else master_name,
+        "new_not_in_master": new_not_in_master,
     }
 
 
