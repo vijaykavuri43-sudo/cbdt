@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl } from '../lib/api'
+import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl, saveCsvFromUrl } from '../lib/api'
 import { fmtINR, fmtTime, previewJoined, shortKey } from '../lib/format'
 
 type Folder = 'all' | 'deposit' | 'withdrawal' | 'bankingqr' | 'other'
@@ -88,6 +88,16 @@ function railColLabel(rail: RailType): string {
   return 'Wallet address'
 }
 
+function railFileTag(rail: RailType): string {
+  if (rail === 'bank_account') return 'bank'
+  if (rail === 'crypto_wallet') return 'crypto'
+  return 'upi'
+}
+
+function csvFilename(kind: View, next: { folder: Folder; rail_type: RailType; since: string; until: string }): string {
+  return `${kind === 'unique' ? 'unique-addresses' : 'all-slips'}-${next.folder}-${railFileTag(next.rail_type)}-${next.since}-to-${next.until}.csv`
+}
+
 export function OfficerQuery() {
   const [fromDate, setFromDate] = useState(defaultFrom)
   const [toDate, setToDate] = useState(defaultTo)
@@ -107,6 +117,7 @@ export function OfficerQuery() {
   const [uniques, setUniques] = useState<UniqueResp | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [dlBusy, setDlBusy] = useState<View | null>(null)
   const [page, setPage] = useState(0)
   const limit = 200
 
@@ -185,20 +196,20 @@ export function OfficerQuery() {
     if (applied) void run({ ...applied, view: next, since: fromDate, until: toDate, q: queryInput.trim() })
   }
 
-  function downloadAll() {
+  async function downloadCsv(kind: View) {
     if (!applied) return
-    const a = document.createElement('a')
-    a.href = exportMoneyFlowsUrl({ ...paramsOf(applied), direction: 'both' })
-    a.download = `all-slips-${applied.folder}-${applied.rail_type}-${applied.since}-to-${applied.until}.csv`
-    a.click()
-  }
-
-  function downloadUnique() {
-    if (!applied) return
-    const a = document.createElement('a')
-    a.href = exportMoneyFlowsUniqueUrl(paramsOf(applied))
-    a.download = `unique-${applied.folder}-${applied.rail_type}-${applied.since}-to-${applied.until}.csv`
-    a.click()
+    setError('')
+    setDlBusy(kind)
+    try {
+      const url = kind === 'unique'
+        ? exportMoneyFlowsUniqueUrl(paramsOf(applied))
+        : exportMoneyFlowsUrl({ ...paramsOf(applied), direction: 'both' })
+      await saveCsvFromUrl(url, csvFilename(kind, applied))
+    } catch (e) {
+      setError(`CSV download failed: ${String(e)}`)
+    } finally {
+      setDlBusy(null)
+    }
   }
 
   function setPreset(days: number) {
@@ -226,11 +237,21 @@ export function OfficerQuery() {
           </div>
         </div>
         <div className="pg-header-right">
-          <button className="btn" disabled={!applied || busy} onClick={downloadUnique} title="One row per UPI/VPA, account or wallet, with UTRs when OCR captured them">
-            ⬇ Unique addresses
+          <button
+            className="btn"
+            disabled={!applied || !!dlBusy}
+            onClick={() => void downloadCsv('unique')}
+            title="Excel CSV: one row per UPI/account/wallet for the dates, folder and rail you applied"
+          >
+            {dlBusy === 'unique' ? 'Preparing CSV…' : '⬇ Unique CSV'}
           </button>
-          <button className="btn" disabled={!applied || busy} onClick={downloadAll} title="Every matching slip with object path + UTR + timestamps — use for the evidence pack">
-            ⬇ All slips
+          <button
+            className="btn"
+            disabled={!applied || !!dlBusy}
+            onClick={() => void downloadCsv('slips')}
+            title="Excel CSV: every matching slip with UTR, object path and timestamps"
+          >
+            {dlBusy === 'slips' ? 'Preparing CSV…' : '⬇ All-slips CSV'}
           </button>
         </div>
       </div>
@@ -305,6 +326,16 @@ export function OfficerQuery() {
           <button className="btn btn-primary" disabled={busy} onClick={apply}>
             {busy ? 'Applying…' : 'Apply'}
           </button>
+          {applied && (
+            <button
+              className="btn"
+              disabled={!!dlBusy || busy}
+              onClick={() => void downloadCsv(view)}
+              title="Excel CSV of every row matching this date range, folder and address type — not just this page"
+            >
+              {dlBusy === view ? 'Preparing CSV…' : `⬇ Download this result as CSV`}
+            </button>
+          )}
         </div>
       </div>
 
@@ -344,14 +375,46 @@ export function OfficerQuery() {
             </button>
           </div>
 
+          <div className="oq-dl-bar">
+            <div>
+              <strong>Download what you are viewing</strong>
+              <div className="tiny dim">
+                {FOLDERS.find((f) => f.id === applied.folder)?.label} · {RAILS.find((r) => r.id === applied.rail_type)?.label} · {applied.since} → {applied.until} UTC
+                {' · '}CSV has all {total.toLocaleString()} {view === 'unique' ? 'addresses' : 'slips'}, not only this page of {limit}
+              </div>
+            </div>
+            <div className="oq-dl-btns">
+              <button
+                className="btn btn-primary"
+                disabled={!!dlBusy || total === 0}
+                onClick={() => void downloadCsv(view)}
+              >
+                {dlBusy === view
+                  ? 'Preparing CSV…'
+                  : `⬇ CSV · ${total.toLocaleString()} ${view === 'unique' ? 'addresses' : 'slips'}`}
+              </button>
+              <button
+                className="btn"
+                disabled={!!dlBusy}
+                onClick={() => void downloadCsv(view === 'unique' ? 'slips' : 'unique')}
+              >
+                {dlBusy && dlBusy !== view
+                  ? 'Preparing CSV…'
+                  : view === 'unique' ? 'CSV · every matching slip' : 'CSV · unique addresses'}
+              </button>
+            </div>
+          </div>
+
           <section className="money-section">
             <div className="money-section-head">
-              <strong>{view === 'unique' ? 'One row per address' : 'Every matching slip'}</strong>
-              <span className="small dim">
-                {view === 'unique'
-                  ? 'Best for freeze / notice lists. UTRs listed when OCR captured them. Download Unique addresses.'
-                  : 'Best for the evidence pack. Download All slips (object path + UTR + timestamps).'}
-              </span>
+              <div>
+                <strong>{view === 'unique' ? 'One row per address' : 'Every matching slip'}</strong>
+                <div className="tiny dim">
+                  {view === 'unique'
+                    ? 'Freeze / notice list. CSV includes UTRs when OCR captured them.'
+                    : 'Evidence pack. CSV includes object path, UTR and timestamps.'}
+                </div>
+              </div>
             </div>
             <div className="dp-table-wrap">
               {view === 'unique' ? (
@@ -449,9 +512,9 @@ export function OfficerQuery() {
           </section>
 
           <div className="ex-pagination">
-            <button className="ex-page-btn" disabled={page === 0 || busy} onClick={() => applied && run(applied, page - 1)}>← Prev</button>
-            <span className="ex-page-info">page {page + 1} · {total.toLocaleString()} {view === 'unique' ? 'addresses' : 'slips'}</span>
-            <button className="ex-page-btn" disabled={busy || (page + 1) * limit >= total} onClick={() => applied && run(applied, page + 1)}>Next →</button>
+            <button className="ex-page-btn" disabled={page === 0 || busy || !!dlBusy} onClick={() => applied && run(applied, page - 1)}>← Prev</button>
+            <span className="ex-page-info">page {page + 1} · {total.toLocaleString()} {view === 'unique' ? 'addresses' : 'slips'} · CSV downloads every matching row</span>
+            <button className="ex-page-btn" disabled={busy || !!dlBusy || (page + 1) * limit >= total} onClick={() => applied && run(applied, page + 1)}>Next →</button>
           </div>
         </>
       )}

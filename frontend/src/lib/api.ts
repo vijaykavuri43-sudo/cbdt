@@ -222,6 +222,35 @@ export function exportMoneyFlowsUniqueUrl(params: Record<string, string | undefi
   return `/api/export/money-flows-unique${qstr ? '?' + qstr : ''}`
 }
 
+/** Fetch an export URL with the officer token and save it as a .csv file.
+ *  A plain <a href> often opens CSV as a browser tab instead of downloading. */
+export async function saveCsvFromUrl(url: string, filename: string, timeoutMs = 180000): Promise<void> {
+  const ctrl = new AbortController()
+  const timer = window.setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const r = await fetch(url, { headers: authHeaders(), signal: ctrl.signal })
+    await handle(r)
+    const blob = await r.blob()
+    const file = blob.type && blob.type.includes('csv')
+      ? blob
+      : new Blob([blob], { type: 'text/csv;charset=utf-8' })
+    const href = URL.createObjectURL(file)
+    const a = document.createElement('a')
+    a.href = href
+    a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.setTimeout(() => URL.revokeObjectURL(href), 4000)
+  } catch (e: any) {
+    if (e?.name === 'AbortError') throw new Error(`CSV export timed out after ${Math.round(timeoutMs / 1000)}s`)
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 export interface Status {
   phase: string
   sweep_done: boolean

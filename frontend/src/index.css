@@ -516,7 +516,7 @@ input[type="text"]::placeholder { color: var(--dim); }
 .money-rail-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 14px; }
 .money-cards { grid-template-columns: repeat(5, minmax(140px, 1fr)); margin-bottom: 16px; }
 .money-section { margin: 16px 0; }
-.money-section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin: 0 2px 8px; }
+.money-section-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 0 2px 8px; flex-wrap: wrap; }
 .money-badge, .money-confidence { display: inline-block; border: 1px solid var(--border-strong); border-radius: 999px; padding: 2px 7px; color: var(--muted); font-size: 10px; white-space: nowrap; }
 .money-confidence.confidence-high { border-color: var(--accent2); color: var(--accent2); }
 .money-confidence.confidence-medium { border-color: var(--warn); color: var(--warn); }
@@ -569,6 +569,14 @@ input[type="date"] {
 .oq-tab:hover { border-color: var(--accent); color: var(--text); }
 .oq-tab-on { background: var(--accent); border-color: var(--accent); color: #04121e; }
 .oq-presets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.oq-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.oq-actions .tiny { margin-right: auto; }
+.oq-dl-btns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.oq-dl-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius);
+}
 @media (max-width: 900px) {
   .oq-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
 }

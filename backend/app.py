@@ -2556,7 +2556,7 @@ def _iter_export_csv(columns: tuple, rows: list) -> Any:
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow(columns)
-    yield buf.getvalue()
+    yield "\ufeff" + buf.getvalue()
     buf.seek(0)
     buf.truncate(0)
     for row in rows:
@@ -2570,10 +2570,11 @@ def _export_response(rows: list, columns: tuple, filename: str) -> StreamingResp
     stamp = time.strftime("%Y-%m-%d", time.gmtime())
     return StreamingResponse(
         _iter_export_csv(columns, rows),
-        media_type="text/csv",
+        media_type="text/csv; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}-{stamp}.csv"',
             "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
         },
     )
 
