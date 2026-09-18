@@ -640,7 +640,7 @@ export function OfficerQuery() {
                                       <th>Object time</th>
                                       <th>Indexed</th>
                                       <th className="num">Amount</th>
-                                      <th>UTR</th>
+                                      <th className="oq-hits-utr">UTR</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -658,7 +658,7 @@ export function OfficerQuery() {
                                         <td className="small dim">{h.last_modified ? fmtIST(h.last_modified) : '—'}</td>
                                         <td className="small dim">{h.seen_utc ? fmtIST(h.seen_utc) : '—'}</td>
                                         <td className="num money">{h.amount_inr != null ? fmtINR(h.amount_inr) : '—'}</td>
-                                        <td className="mono small">{h.utr || '—'}</td>
+                                        <td className="mono small oq-hits-utr">{h.utr || '—'}</td>
                                       </tr>
                                     ))}
                                   </tbody>
