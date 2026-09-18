@@ -316,11 +316,11 @@ export function OfficerQuery() {
 
       {applied && data && (
         <>
-          <div className="st-cards money-cards" style={{ gridTemplateColumns: 'repeat(4, minmax(140px, 1fr))' }}>
+          <div className="st-cards money-cards" style={{ gridTemplateColumns: 'repeat(3, minmax(140px, 1fr))' }}>
             <div className="st-card st-card-accent">
-              <div className="st-card-label">{view === 'unique' ? 'Unique addresses' : 'Matching slips'}</div>
+              <div className="st-card-label">{view === 'unique' ? railColLabel(applied.rail_type) : 'Matching slips'}</div>
               <div className="st-card-value accent">{total.toLocaleString()}</div>
-              <div className="tiny dim">{applied.since} → {applied.until} UTC</div>
+              <div className="tiny dim">{applied.since} → {applied.until} UTC · {FOLDERS.find((f) => f.id === applied.folder)?.label}</div>
             </div>
             <div className="st-card">
               <div className="st-card-label">Slips in window</div>
@@ -329,11 +329,6 @@ export function OfficerQuery() {
             <div className="st-card st-card-money">
               <div className="st-card-label">Amount linked</div>
               <div className="st-card-value money">{fmtINR(data.sum_amount_inr)}</div>
-            </div>
-            <div className="st-card">
-              <div className="st-card-label">Unique addresses</div>
-              <div className="st-card-value">{(data.distinct_rails ?? 0).toLocaleString()}</div>
-              <div className="tiny dim">{RAILS.find((r) => r.id === applied.rail_type)?.label} · {FOLDERS.find((f) => f.id === applied.folder)?.label}</div>
             </div>
           </div>
 

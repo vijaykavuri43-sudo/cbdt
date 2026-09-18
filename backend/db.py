@@ -1512,7 +1512,7 @@ def _replace_payment_rows(c: sqlite3.Connection, key: str, payload: dict):
         seen_vpas.add(vpa)
         rails.append(
             {
-                "rail_type": "upi",
+                "rail_type": _canonical_rail_type("upi", vpa),
                 "rail_id": vpa,
                 "account_holder": holder,
                 "rail_role": detail.get("role", "unknown"),
@@ -1531,7 +1531,7 @@ def _replace_payment_rows(c: sqlite3.Connection, key: str, payload: dict):
         if rail_id:
             rails.append(
                 {
-                    "rail_type": "bank_account",
+                    "rail_type": _canonical_rail_type("bank_account", rail_id),
                     "rail_id": rail_id,
                     "account_holder": str(account.get("holder") or holder),
                     "ifsc": str(account.get("ifsc") or payload.get("ifsc") or ""),
@@ -1544,7 +1544,7 @@ def _replace_payment_rows(c: sqlite3.Connection, key: str, payload: dict):
         if rail_id:
             rails.append(
                 {
-                    "rail_type": "crypto_wallet",
+                    "rail_type": _canonical_rail_type("crypto_wallet", rail_id),
                     "rail_id": rail_id,
                     "network": str(
                         wallet.get("network") or wallet.get("standard") or ""
@@ -2381,6 +2381,40 @@ _FOLDER_KEY_SQL = {
 }
 
 
+def _canonical_rail_type(declared: str, rail_id: str) -> str:
+    """OCR often stores a bank account in the VPA field (no @) or a TRON
+    address as an 'account'. Shape of the identifier wins over the label."""
+    s = (rail_id or "").strip()
+    if not s:
+        return declared or "unknown"
+    if "@" in s:
+        return "upi"
+    if s.startswith("0x") and len(s) >= 40:
+        return "crypto_wallet"
+    if s[:1] == "T" and 26 <= len(s) <= 40 and s.isalnum():
+        return "crypto_wallet"
+    digits = re.sub(r"\D", "", s)
+    if len(digits) >= 8 and len(digits) >= 0.5 * max(len(s), 1):
+        return "bank_account"
+    return declared or "unknown"
+
+
+def _rail_id_shape_sql(rail_type: str) -> str:
+    """Extra WHERE so Bank accounts never returns @upi rows (and vice versa)."""
+    if rail_type == "upi":
+        return "instr(rail_id,'@')>0"
+    if rail_type == "bank_account":
+        return (
+            "instr(rail_id,'@')=0 AND rail_id NOT LIKE '0x%' "
+            "AND NOT (substr(rail_id,1,1)='T' AND length(rail_id) BETWEEN 26 AND 40)"
+        )
+    if rail_type == "crypto_wallet":
+        return (
+            "(rail_id LIKE '0x%' OR (substr(rail_id,1,1)='T' AND length(rail_id) BETWEEN 26 AND 40))"
+        )
+    return ""
+
+
 def _money_flow_filters(
     direction: str = "deposit",
     rail_type: str = "",
@@ -2407,6 +2441,9 @@ def _money_flow_filters(
     if rail_type:
         conds.append("rail_type=?")
         args.append(rail_type)
+        shape = _rail_id_shape_sql(rail_type)
+        if shape:
+            conds.append(shape)
     if source == "object":
         conds.append("source_key NOT LIKE 'reference:%'")
     elif source == "reference":
@@ -2760,6 +2797,9 @@ def mule_rails(
     if rail_type:
         conds.append("rail_type=?")
         args.append(rail_type)
+        shape = _rail_id_shape_sql(rail_type)
+        if shape:
+            conds.append(shape)
     if q:
         like = "%" + q.replace("%", r"\%").replace("_", r"\_") + "%"
         conds.append(

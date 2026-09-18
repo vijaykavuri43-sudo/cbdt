@@ -71,7 +71,14 @@ export function Deposits() {
 
   function setRail(next: RailType) {
     setRailType(next)
+    setMules(null)
   }
+
+  const railCol =
+    railType === 'bank_account' ? 'Account number'
+    : railType === 'crypto_wallet' ? 'Wallet address'
+    : railType === 'upi' ? 'UPI / VPA'
+    : 'Rail'
 
   function exportFullRailsCsv() {
     const a = document.createElement('a')
@@ -160,7 +167,7 @@ export function Deposits() {
             <thead>
               <tr>
                 <th>Priority</th>
-                <th>UPI / account / wallet</th>
+                <th>{railCol}</th>
                 <th>Holder / routing</th>
                 <th>Gamblers → rail</th>
                 <th>Rail → gamblers</th>

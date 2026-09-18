@@ -79,6 +79,17 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         ids = {r["rail_id"] for r in out["items"]}
         self.assertEqual(ids, {"a@ybl", "b@ybl"})
 
+    def test_canonical_rail_type(self):
+        self.assertEqual(db._canonical_rail_type("upi", "name@oksbi"), "upi")
+        self.assertEqual(db._canonical_rail_type("upi", "123456789012"), "bank_account")
+        self.assertEqual(db._canonical_rail_type("bank_account", "T" + "A" * 33), "crypto_wallet")
+
+    def test_bank_filter_excludes_vpa(self):
+        out = db.money_flows(direction="both", rail_type="bank_account", since="2026-09-01", until="2026-09-30")
+        self.assertTrue(all("@" not in (i["rail_id"] or "") for i in out["items"]))
+        self.assertEqual(out["rows_total"], 1)
+        self.assertEqual(out["items"][0]["rail_id"], "123456")
+
 
 if __name__ == "__main__":
     unittest.main()
