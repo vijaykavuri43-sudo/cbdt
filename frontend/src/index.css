@@ -590,15 +590,19 @@ input[type="date"] {
 .dp-table tr.oq-unique-row { cursor: pointer; }
 .dp-table tr.oq-unique-row-on td { background: rgba(56,189,248,.10) !important; }
 .dp-table tr.oq-hits-row td {
-  background: rgba(6, 14, 28, .72) !important;
+  background: rgba(6, 14, 28, .92) !important;
   padding: 0;
   white-space: normal;
   cursor: default;
   border-bottom: 1px solid var(--border-strong);
+  position: sticky;
+  left: 0;
+  max-width: calc(100vw - 270px);
+  z-index: 1;
 }
-.dp-table tr.oq-hits-row:hover td { background: rgba(6, 14, 28, .72) !important; }
+.dp-table tr.oq-hits-row:hover td { background: rgba(6, 14, 28, .92) !important; }
+.oq-hits-box { padding: 10px 12px 14px; overflow-x: auto; }
 .oq-chevron { display: inline-block; width: 12px; color: var(--dim); margin-right: 6px; font-size: 10px; }
-.oq-hits-box { padding: 10px 12px 14px; }
 .oq-hits-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   margin-bottom: 8px; flex-wrap: wrap;
