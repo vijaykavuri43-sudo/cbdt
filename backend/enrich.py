@@ -528,7 +528,8 @@ _SPENT_CTX = re.compile(
     re.IGNORECASE,
 )
 _PAYMENT_CTX = re.compile(
-    r"payment\s+successful|paid\s+to|paid\s+by|transaction\s+successful|view\s+details",
+    r"payment\s+successful|paid\s+to|paid\s+by|transaction\s+successful|"
+    r"debited\s+from|view\s+details",
     re.IGNORECASE,
 )
 # In-app ad banners beside the receipt ("iPhone 16 Pro ₹50,000 Buy now",
@@ -1014,24 +1015,26 @@ def extract_amount(text: str) -> Optional[float]:
     """
     if not text:
         return None
-    picked = _pick_principal(_collect_amount_candidates(" ".join(text.split())))
-    if picked:
-        return picked[0]
-    return extract_amount_in_words(text)
+    flat = " ".join(text.split())
+    picked = _pick_principal(_collect_amount_candidates(flat))
+    amt = picked[0] if picked else extract_amount_in_words(flat)
+    if amt is None:
+        return None
+    fixed = correct_rupee_eaten(flat, amt)
+    return fixed if fixed is not None else amt
 
 
 def extract_amount_with_currency(text: str) -> tuple[Optional[float], str]:
     """Principal amount + currency code (INR default; USDT/BTC/ETH/TRX…)."""
     if not text:
         return (None, "INR")
-    picked = _pick_principal(_collect_amount_candidates(" ".join(text.split())))
+    flat = " ".join(text.split())
+    picked = _pick_principal(_collect_amount_candidates(flat))
     if picked:
-        return picked
-    # Fallback: amount printed only in words ("Rupees Four Hundred Fifty Only").
-    # Digit candidates yield nothing here (verified 2026-09-11: Paytm slip whose
-    # only digits were a ~60,000 postpaid ad, now correctly skipped). The words
-    # phrase is authoritative — prefer it over leaving the row amountless.
-    words_amt = extract_amount_in_words(text)
+        amt, ccy = picked
+        fixed = correct_rupee_eaten(flat, amt)
+        return (fixed if fixed is not None else amt, ccy)
+    words_amt = extract_amount_in_words(flat)
     return (words_amt, "INR") if words_amt else (None, "INR")
 
 
@@ -1198,7 +1201,14 @@ def detect_twin_artifact(text: str, amount: Optional[float]) -> Optional[dict]:
 
     # count exact whole-token occurrences of X (any comma/space grouping)
     xhits = len(re.findall(r"(?<![\d,])" + _digit_run(xs) + r"(?![\d,])", flat))
-    if xhits < 2:
+    # ₹-eaten amounts start with 2 or 7 (₹→2 / ₹→7). A single Paid-to
+    # '23,000' plus Debited '~3,000' is enough — officer exhibit
+    # deposit/1789721443450.jpeg stored 23,000 for true ₹3,000 because
+    # X appeared once. Other twins still need X twice.
+    rupee_lead = xs[:1] in "27"
+    if xhits < 1:
+        return None
+    if xhits < 2 and not rupee_lead:
         return None
     # Try shorter same-suffix siblings, longest first (Y = X[-6:] … X[-4:]).
     for ylen in (6, 5, 4):
@@ -1228,6 +1238,40 @@ def detect_twin_artifact(text: str, amount: Optional[float]) -> Optional[dict]:
                 "x_hits": xhits,
                 "y_hits": yhits,
             }
+    return None
+
+
+def correct_rupee_eaten(text: str, amount: Optional[float]) -> Optional[float]:
+    """Return the true principal when `amount` is a ₹-glyph-eaten misread.
+
+    Officer exhibit deposit/1789721443450.jpeg (PhonePe 18 Sep 2026): on-screen
+    ₹3,000 stored as 23,000. OCR has '23,000' on Paid-to and '~3,000' on
+    Debited-from. Same family as 1,000→21,000 / 3,000→23,000.
+
+    GPay often prints both: 'Amount 23,000' and 'Rupees Three Thousand Only'
+    — the words are authoritative when they are the ₹-eaten suffix of the
+    digit winner.
+
+    Returns None when no correction applies.
+    """
+    if not text or amount is None:
+        return None
+    flat = " ".join(text.split())
+    try:
+        iv = int(amount)
+    except Exception:
+        return None
+    if float(iv) != float(amount):
+        return None
+    words = extract_amount_in_words(flat)
+    if words is not None:
+        wi = int(words)
+        sa, sw = str(iv), str(wi)
+        if sa != sw and sa[:1] in "27" and sa.endswith(sw) and len(sa) == len(sw) + 1:
+            return float(wi)
+    twin = detect_twin_artifact(flat, amount)
+    if twin:
+        return float(twin["true_amount"])
     return None
 
 
@@ -2284,7 +2328,7 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
                     text = r2.stdout or text
                     flat = " ".join(text.split())
                     scanned = _scan_amount_matches(flat)
-        out["text_sample"] = flat[:400]
+        out["text_sample"] = flat[:1200]
         wallets = extract_wallets(text)
         if wallets:
             out["wallets"] = wallets
@@ -2408,23 +2452,24 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             tesseract_amount = None
             out["amount_value"] = None
             out["amount_inr"] = None
-        # Twin-misread (verified 2026-09-03: both ₹1,000 copies read as
-        # '71,000', Debited row correct '1,000'): identical 5-digit repeats
-        # are invisible to the collision detector (needs DISTINCT variants).
-        # The shorter same-suffix sibling (Debited row, authoritative — debited
-        # must equal paid) is the true amount. Applied locally so the fix
-        # works even with Gemini quota-dead; Vision re-adjudicates when live.
+        # Twin / ₹-eaten (verified 2026-09-03 ₹1,000→71,000; officer 2026-09-18
+        # PhonePe ₹3,000 stored as 23,000). Applied locally so the fix works
+        # even with Gemini quota-dead; Vision re-adjudicates when live.
         try:
-            twin = detect_twin_artifact(text, out.get("amount_value"))
+            eaten = correct_rupee_eaten(text, out.get("amount_value"))
         except Exception:
-            twin = None
-        if twin:
-            out["twin_artifact"] = twin
+            eaten = None
+        twin = None
+        if eaten is not None:
             out["amount_tesseract_raw"] = out.get("amount_value")
-            out["amount_value"] = twin["true_amount"]
+            out["amount_value"] = eaten
             out["amount_inr"] = (
-                twin["true_amount"] if out.get("amount_currency") == "INR" else None
+                eaten if out.get("amount_currency") == "INR" else None
             )
+            out["rupee_eaten"] = True
+            twin = detect_twin_artifact(text, out.get("amount_tesseract_raw"))
+            if twin:
+                out["twin_artifact"] = twin
         use_gemini = False
         if config.GEMINI_ENABLED:
             has_rejected = bool(out.get("amount_ignored"))

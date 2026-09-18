@@ -22,6 +22,7 @@ from .enrich import (  # noqa: E402
     NUM12_RE,
     UTR_RE,
     detect_twin_artifact,
+    correct_rupee_eaten,
     extract_amount,
     extract_bank_accounts,
     extract_participants,
@@ -71,6 +72,43 @@ class LakhEatenAmountTests(unittest.TestCase):
         self.assertIsNotNone(hit)
         assert hit is not None
         self.assertEqual(hit["true_amount"], 1000)
+
+
+class RupeeEatenSingleHitTests(unittest.TestCase):
+    """Officer exhibit deposit/1789721443450.jpeg: ₹3,000 stored as 23,000
+    because Paid-to ate ₹→2 once and Debited kept '~3,000'."""
+
+    EXHIBIT = (
+        "Transaction Successful 02:20 PM on 18 Sep 2026 Paid to FUSO KUMAR "
+        "23,000 7903709938-1@okbizaxis Transfer Details PhonePe Transaction ID "
+        "T2609181419577033515139 Debited from XXXXXX8766 ~3,000 "
+        "UTR: 757251864413"
+    )
+    GPAY_WORDS = (
+        "Paid Successfully Amount 23,000 Rupees Three Thousand Only "
+        "To Sanju Kumar UPI ID: ******1923@okbizaxis"
+    )
+
+    def test_exhibit_phonepe_23000_to_3000(self):
+        self.assertEqual(extract_amount(self.EXHIBIT), 3000.0)
+        self.assertEqual(correct_rupee_eaten(self.EXHIBIT, 23000.0), 3000.0)
+
+    def test_gpay_words_override_eaten_digits(self):
+        self.assertEqual(extract_amount(self.GPAY_WORDS), 3000.0)
+
+    def test_thousand_to_21000(self):
+        text = (
+            "Transaction Successful Paid to ACME 21,000 acme@okaxis "
+            "Debited from HDFC ~1,000 UTR 123456789012"
+        )
+        self.assertEqual(extract_amount(text), 1000.0)
+
+    def test_genuine_23000_without_sibling_kept(self):
+        text = (
+            "Transaction Successful Paid to ACME 23,000 acme@okaxis "
+            "Debited from HDFC 23,000 Rupees Twenty Three Thousand Only"
+        )
+        self.assertEqual(extract_amount(text), 23000.0)
 
 
 class RsPrefixedAmountTests(unittest.TestCase):

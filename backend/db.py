@@ -1813,7 +1813,7 @@ def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
     2026-09-11: range extended to 6 digits — the lakh-eaten case (₹12,000 →
     '212,000', officer-verified) repairs via the same signature.
     """
-    from .enrich import detect_twin_artifact  # lazy: enrich imports db
+    from .enrich import correct_rupee_eaten  # lazy: enrich imports db
 
     scanned = repaired = need_reocr = 0
     samples: list[dict] = []
@@ -1831,9 +1831,8 @@ def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
         " WHERE o.extract_json IS NOT NULL"
         " AND json_extract(o.extract_json,'$.kind') IN ('deposit','withdrawal')"
         " AND json_extract(o.extract_json,'$.engine')='tesseract'"
-        " AND (json_extract(o.extract_json,'$.confidence') IS NULL"
-        "  OR json_extract(o.extract_json,'$.confidence') IN ('low','medium'))"
         " AND json_extract(o.extract_json,'$.twin_artifact') IS NULL"
+        " AND json_extract(o.extract_json,'$.rupee_eaten') IS NULL"
         " LIMIT ?",
         (limit,),
     ).fetchall()
@@ -1845,20 +1844,27 @@ def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
         except Exception:
             continue
         scanned += 1
-        hit = detect_twin_artifact(p.get("text_sample") or "", p.get("amount_inr"))
-        if not hit:
+        hit_amt = correct_rupee_eaten(p.get("text_sample") or "", p.get("amount_inr"))
+        if hit_amt is None:
             need_reocr += 1
             continue
         repaired += 1
         if len(samples) < 10:
             samples.append(
-                {"key": r["key"], "from": hit["artifact"], "to": hit["true_amount"]}
+                {"key": r["key"], "from": p.get("amount_inr"), "to": hit_amt}
             )
         if dry_run:
             continue
-        p["amount_tesseract_raw"] = hit["artifact"]
-        p["amount_inr"] = hit["true_amount"]
-        p["twin_artifact"] = {**hit, "repaired_utc": now, "repaired_from": "batch"}
+        p["amount_tesseract_raw"] = p.get("amount_inr")
+        p["amount_inr"] = hit_amt
+        p["amount_value"] = hit_amt
+        p["rupee_eaten"] = True
+        p["twin_artifact"] = {
+            "artifact": str(int(p["amount_tesseract_raw"])),
+            "true_amount": int(hit_amt),
+            "repaired_utc": now,
+            "repaired_from": "batch",
+        }
         fixes.append((r["key"], p))
     if fixes:
         with _writer_lock:

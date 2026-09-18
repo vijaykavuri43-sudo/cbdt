@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Re-extract amount/VPA/UTR from stored OCR text_sample — no re-OCR.
 
-Fixes rows where tesseract misread the rupee glyph as '=' (amount_inr null),
-spaced/thousand-separator amounts, or missed UTRs, using the already-persisted
-OCR text. Then force-rebuilds the normalized payment index.
+Fixes rupee-eaten amounts (₹3,000 stored as 23,000), null amounts recoverable
+from the sample, and missed UTRs. Batches writes so 400k slips finish in
+minutes rather than hours.
 
-Run inside the s3lm container:
+Run inside the s3lm container after deploy:
   python3 /app/scripts/reparse-from-text.py
-(Deploy first so the updated AMOUNT_PATTERNS / _sanitize_amount are live.)
 """
 import json
 import re
@@ -15,7 +14,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from backend import config, db, enrich  # noqa: E402
+from backend import db, enrich  # noqa: E402
+
+BATCH = 200
 
 
 def main() -> None:
@@ -25,7 +26,8 @@ def main() -> None:
         " WHERE extract_json IS NOT NULL"
         " AND json_extract(extract_json,'$.kind') IN ('deposit','withdrawal')"
     ).fetchall()
-    updated = 0
+    pending: list[tuple[str, dict]] = []
+    scanned = updated = 0
     for r in rows:
         try:
             p = json.loads(r["extract_json"])
@@ -34,11 +36,16 @@ def main() -> None:
         text = (p.get("text_sample") or "").strip()
         if not text:
             continue
+        scanned += 1
         changed = False
         amt = enrich.extract_amount(text)
         cur = p.get("amount_inr")
         if amt is not None and (cur is None or abs(float(cur) - amt) > 0.001):
+            if cur is not None and abs(float(cur) - amt) > 0.001:
+                p["amount_tesseract_raw"] = cur
+                p["rupee_eaten"] = True
             p["amount_inr"] = amt
+            p["amount_value"] = amt
             changed = True
         vpas = enrich.extract_vpas(text)
         if vpas:
@@ -61,16 +68,22 @@ def main() -> None:
                     changed = True
             elif not p.get("utr"):
                 for mn in enrich.NUM12_RE.finditer(text):
-                    before = text[max(0, mn.start() - 40): mn.start()].lower()
+                    before = text[max(0, mn.start() - 40) : mn.start()].lower()
                     if enrich._ACCOUNT_KEYWORDS_RE.search(before):
                         continue
                     p["utr"] = mn.group(1)
                     changed = True
                     break
         if changed:
-            db.mark_enriched(r["key"], p)
+            pending.append((r["key"], p))
             updated += 1
-    print(f"updated={updated} rows")
+            if len(pending) >= BATCH:
+                db.persist_enriched_batch(pending)
+                pending = []
+                print(f"flushed updated={updated} scanned={scanned}", flush=True)
+    if pending:
+        db.persist_enriched_batch(pending)
+    print(f"updated={updated} scanned={scanned} rows")
     res = db.rebuild_payment_index(force=True)
     print(json.dumps(res, ensure_ascii=False)[:500])
 
