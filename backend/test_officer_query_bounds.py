@@ -85,6 +85,10 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         self.assertEqual(out["rows_total"], 2)
         ids = {r["rail_id"] for r in out["items"]}
         self.assertEqual(ids, {"a@ybl", "b@ybl"})
+        by = {r["rail_id"]: r for r in out["items"]}
+        self.assertEqual(by["a@ybl"]["utrs"], "U1")
+        self.assertEqual(by["a@ybl"]["utr_count"], 1)
+        self.assertEqual(by["b@ybl"]["utrs"], "U2")
 
     def test_canonical_rail_type(self):
         self.assertEqual(db._canonical_rail_type("upi", "name@oksbi"), "upi")

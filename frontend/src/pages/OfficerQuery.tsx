@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl } from '../lib/api'
-import { fmtINR, fmtTime, shortKey } from '../lib/format'
+import { fmtINR, fmtTime, previewJoined, shortKey } from '../lib/format'
 
 type Folder = 'all' | 'deposit' | 'withdrawal' | 'bankingqr' | 'other'
 type RailType = 'upi' | 'bank_account' | 'crypto_wallet'
@@ -28,6 +28,8 @@ interface UniqueRow {
   account_holder: string
   ifsc: string
   network: string
+  utrs?: string
+  utr_count?: number
   slips: number
   amount_inr?: number | null
   first_seen: string
@@ -224,10 +226,10 @@ export function OfficerQuery() {
           </div>
         </div>
         <div className="pg-header-right">
-          <button className="btn" disabled={!applied || busy} onClick={downloadUnique} title="One row per UPI/VPA, account or wallet — use for freeze/notice lists">
+          <button className="btn" disabled={!applied || busy} onClick={downloadUnique} title="One row per UPI/VPA, account or wallet, with UTRs when OCR captured them">
             ⬇ Unique addresses
           </button>
-          <button className="btn" disabled={!applied || busy} onClick={downloadAll} title="Every matching slip with object path + timestamps — use for the evidence pack">
+          <button className="btn" disabled={!applied || busy} onClick={downloadAll} title="Every matching slip with object path + UTR + timestamps — use for the evidence pack">
             ⬇ All slips
           </button>
         </div>
@@ -347,8 +349,8 @@ export function OfficerQuery() {
               <strong>{view === 'unique' ? 'One row per address' : 'Every matching slip'}</strong>
               <span className="small dim">
                 {view === 'unique'
-                  ? 'Best for freeze / notice lists. Download Unique addresses.'
-                  : 'Best for the evidence pack. Download All slips (object path + timestamps).'}
+                  ? 'Best for freeze / notice lists. UTRs listed when OCR captured them. Download Unique addresses.'
+                  : 'Best for the evidence pack. Download All slips (object path + UTR + timestamps).'}
               </span>
             </div>
             <div className="dp-table-wrap">
@@ -357,6 +359,7 @@ export function OfficerQuery() {
                   <thead>
                     <tr>
                       <th>{railColLabel(applied.rail_type)}</th>
+                      <th>UTR</th>
                       {applied.rail_type !== 'upi' && <th>{applied.rail_type === 'bank_account' ? 'Holder / IFSC' : 'Network'}</th>}
                       <th className="num">Slips</th>
                       <th className="num">Amount</th>
@@ -366,9 +369,15 @@ export function OfficerQuery() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(uniques?.items ?? []).map((r, i) => (
+                    {(uniques?.items ?? []).map((r, i) => {
+                      const utrs = previewJoined(r.utrs)
+                      return (
                       <tr key={`${r.rail_type}:${r.rail_id}:${i}`}>
                         <td className="mono money-rail">{r.rail_id}</td>
+                        <td className="mono small" title={utrs.title || undefined}>
+                          {utrs.text || '—'}
+                          {utrs.extra > 0 ? <span className="tiny dim"> +{utrs.extra}</span> : null}
+                        </td>
                         {applied.rail_type !== 'upi' && (
                           <td>
                             <div>{r.account_holder || '—'}</div>
@@ -387,9 +396,10 @@ export function OfficerQuery() {
                           ) : <span className="tiny dim">—</span>}
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                     {(uniques?.items ?? []).length === 0 && (
-                      <tr><td colSpan={7} className="dim">No addresses matched these filters.</td></tr>
+                      <tr><td colSpan={8} className="dim">No addresses matched these filters.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -430,7 +440,7 @@ export function OfficerQuery() {
                       </tr>
                     ))}
                     {(slips?.items ?? []).length === 0 && (
-                      <tr><td colSpan={7} className="dim">No slips matched these filters.</td></tr>
+                      <tr><td colSpan={8} className="dim">No slips matched these filters.</td></tr>
                     )}
                   </tbody>
                 </table>

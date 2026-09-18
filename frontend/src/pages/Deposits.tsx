@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, exportRailsUrl } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl } from '../lib/explorers'
-import { fmtINR } from '../lib/format'
+import { fmtINR, previewJoined } from '../lib/format'
 
 type RailType = '' | 'upi' | 'bank_account' | 'crypto_wallet' | 'unknown'
 
@@ -11,6 +11,8 @@ interface MuleRail {
   account_holders: string
   ifscs: string
   networks: string
+  utrs?: string
+  utr_count?: number
   deposit_transactions: number
   withdrawal_transactions: number
   deposit_amount_inr: number
@@ -168,6 +170,7 @@ export function Deposits() {
               <tr>
                 <th>Priority</th>
                 <th>{railCol}</th>
+                <th>UTR</th>
                 <th>Holder / routing</th>
                 <th>Gamblers → rail</th>
                 <th>Rail → gamblers</th>
@@ -175,7 +178,9 @@ export function Deposits() {
               </tr>
             </thead>
             <tbody>
-              {(mules?.items ?? []).map((r) => (
+              {(mules?.items ?? []).map((r) => {
+                const utrs = previewJoined(r.utrs)
+                return (
                 <tr key={`${r.rail_type}:${r.rail_id}`}>
                   <td>
                     <span className={`mule-priority priority-${r.priority}`}>{r.priority} · {r.candidate_score}</span>
@@ -192,6 +197,10 @@ export function Deposits() {
                     )}
                     <span className="money-badge">{railLabels[r.rail_type] || r.rail_type}</span>
                   </td>
+                  <td className="mono small" title={utrs.title || undefined}>
+                    {utrs.text || '—'}
+                    {utrs.extra > 0 ? <span className="tiny dim"> +{utrs.extra}</span> : null}
+                  </td>
                   <td>
                     <div>{r.account_holders || '—'}</div>
                     <div className="tiny dim mono">{r.ifscs || r.networks || ''}</div>
@@ -206,9 +215,10 @@ export function Deposits() {
                   </td>
                   <td className="tiny dim">{r.first_seen || '—'} → {r.last_seen || '—'}</td>
                 </tr>
-              ))}
+                )
+              })}
               {mules && mules.items.length === 0 && (
-                <tr><td colSpan={6} className="dim">No candidate rails match this filter.</td></tr>
+                <tr><td colSpan={7} className="dim">No candidate rails match this filter.</td></tr>
               )}
             </tbody>
           </table>

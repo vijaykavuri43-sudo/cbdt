@@ -2415,6 +2415,18 @@ def _rail_id_shape_sql(rail_type: str) -> str:
     return ""
 
 
+def _pipe_join_csv(raw: str) -> str:
+    """Turn SQLite GROUP_CONCAT output into a stable 'a | b | c' officer list."""
+    seen: list[str] = []
+    found: set[str] = set()
+    for part in (raw or "").replace("|", ",").split(","):
+        token = part.strip()
+        if token and token not in found:
+            found.add(token)
+            seen.append(token)
+    return " | ".join(seen)
+
+
 def _money_flow_filters(
     direction: str = "deposit",
     rail_type: str = "",
@@ -2718,6 +2730,8 @@ def money_flows_unique(
         f"GROUP_CONCAT(DISTINCT NULLIF(account_holder,'')) account_holder,"
         f"GROUP_CONCAT(DISTINCT NULLIF(ifsc,'')) ifsc,"
         f"GROUP_CONCAT(DISTINCT NULLIF(network,'')) network,"
+        f"GROUP_CONCAT(DISTINCT NULLIF(utr,'')) utrs,"
+        f"COUNT(DISTINCT NULLIF(utr,'')) utr_count,"
         f"COUNT(DISTINCT source_key) slips,"
         f"COALESCE(SUM(amount_inr),0) amount_inr,"
         f"MIN(last_modified) first_seen,"
@@ -2729,6 +2743,8 @@ def money_flows_unique(
     ).fetchall()
     items = [dict(r) for r in rows]
     for it in items:
+        it["utrs"] = _pipe_join_csv(it.get("utrs") or "")
+        it["utr_count"] = int(it.get("utr_count") or 0)
         it["has_object"] = not str(it.get("sample_key") or "").startswith("reference:")
     return {
         "folder": folder,
@@ -2804,15 +2820,18 @@ def mule_rails(
         like = "%" + q.replace("%", r"\%").replace("_", r"\_") + "%"
         conds.append(
             "(rail_id LIKE ? ESCAPE '\\' OR account_holder LIKE ? ESCAPE '\\' "
-            "OR ifsc LIKE ? ESCAPE '\\' OR network LIKE ? ESCAPE '\\' OR gambler LIKE ? ESCAPE '\\')"
+            "OR ifsc LIKE ? ESCAPE '\\' OR network LIKE ? ESCAPE '\\' OR gambler LIKE ? ESCAPE '\\' "
+            "OR utr LIKE ? ESCAPE '\\')"
         )
-        args.extend([like] * 5)
+        args.extend([like] * 6)
     where = " AND ".join(conds)
     aggregate = f"""
         SELECT rail_type,rail_id,
           GROUP_CONCAT(DISTINCT NULLIF(account_holder,'')) account_holders,
           GROUP_CONCAT(DISTINCT NULLIF(ifsc,'')) ifscs,
           GROUP_CONCAT(DISTINCT NULLIF(network,'')) networks,
+          GROUP_CONCAT(DISTINCT NULLIF(utr,'')) utrs,
+          COUNT(DISTINCT NULLIF(utr,'')) utr_count,
           COUNT(DISTINCT source_key) transactions,
           COUNT(DISTINCT CASE WHEN direction='deposit' THEN source_key END) deposit_transactions,
           COUNT(DISTINCT CASE WHEN direction='withdrawal' THEN source_key END) withdrawal_transactions,
@@ -2837,6 +2856,9 @@ def mule_rails(
     # One grouped scan supplies rows and totals. The old implementation ran the
     # same aggregate three times, causing avoidable multi-second API latency.
     all_items = [dict(row) for row in c.execute(aggregate, qargs).fetchall()]
+    for row in all_items:
+        row["utrs"] = _pipe_join_csv(row.get("utrs") or "")
+        row["utr_count"] = int(row.get("utr_count") or 0)
     all_items.sort(
         key=lambda row: (
             row["transactions"],

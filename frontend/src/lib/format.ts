@@ -61,6 +61,31 @@ export function shortKey(key: string, max = 64): string {
   return key.slice(0, 24) + ' … ' + key.slice(-36)
 }
 
+/** Split GROUP_CONCAT / pipe-joined officer fields (UTRs, holders). */
+export function splitJoined(raw?: string | null): string[] {
+  if (!raw) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const part of raw.split(/[|,]/)) {
+    const token = part.trim()
+    if (token && !seen.has(token)) {
+      seen.add(token)
+      out.push(token)
+    }
+  }
+  return out
+}
+
+export function previewJoined(raw?: string | null, max = 3): { text: string; extra: number; title: string } {
+  const list = splitJoined(raw)
+  if (!list.length) return { text: '', extra: 0, title: '' }
+  return {
+    text: list.slice(0, max).join(' · '),
+    extra: Math.max(0, list.length - max),
+    title: list.join(' · '),
+  }
+}
+
 const IMG = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp']
 const AUD = ['.wav', '.mp3', '.ogg', '.amr', '.m4a', '.opus', '.webm', '.3gp']
 const VID = ['.mp4', '.mov', '.webm', '.avi']
