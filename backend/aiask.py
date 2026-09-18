@@ -9,7 +9,7 @@ cited sources. Safety rails:
 - gated: POST /api/ask sits behind the same access-key Depends(auth)
 - budgeted: separate small daily cap (S3LM_AIASK_DAILY_CAP, default 500) +
   per-minute rate limit, independent of the OCR Vision budget
-- bounded: question <= 2000 chars, context <= ~12KB, answer <= 1024 tokens
+- bounded: question <= 2000 chars, context <= ~20KB, answer <= 1024 tokens
 - the API key never leaves the server (never echoed in answers/logs)
 """
 
@@ -388,6 +388,181 @@ def _ctx_identifier(q: str) -> tuple[str, list]:
 _IMG_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".jfif", ".avif")
 
 
+# ---------- actual-data gatherers: real addresses/handles/rows, not counts ---
+# (2026-09-18: "list all the wallets" only quoted wallet_stats aggregates —
+# officers need the verbatim identifiers. These return exact DB output.)
+
+
+_WALLET_WORDS = (
+    "wallet",
+    "crypto",
+    "usdt",
+    "tron",
+    "btc",
+    "bitcoin",
+    "eth",
+    "address",
+    "addresses",
+)
+
+
+def _ctx_wallet_list(ql: str) -> tuple[str, list]:
+    """Every distinct wallet address (up to 200, by hits) for list questions."""
+    if not any(w in ql for w in _WALLET_WORDS):
+        return "", []
+    try:
+        rows = db.wallet_distinct(limit=200, sort="hits")
+    except Exception as e:
+        return (
+            f"Wallet list unavailable ({str(e)[:120]} — use Crypto Wallets page).",
+            [],
+        )
+    if not rows:
+        return "No wallets extracted yet.", [
+            {"kind": "wallets", "ref": "/api/wallets/distinct"}
+        ]
+    lines = [
+        f"{r['address']} | {r.get('network') or '?'} | hits={r.get('hits')} "
+        f"| last_seen={r.get('last_seen') or '?'} | sample={r.get('key') or '?'}"
+        for r in rows
+    ]
+    txt = (
+        f"WALLET ADDRESSES (all {len(rows)} distinct, most-hit first — "
+        "quote these verbatim, never invent):\n" + "\n".join(lines)
+    )
+    return txt, [{"kind": "wallets", "ref": "/api/wallets/distinct"}]
+
+
+_UPI_WORDS = (
+    "upi",
+    "vpa",
+    "mule",
+    "rail",
+    "handle",
+    "account",
+    "ifsc",
+    "payee",
+)
+
+
+def _ctx_upi_list(ql: str) -> tuple[str, list]:
+    """Top candidate rails with real handles/IDs (UPI/VPA/bank/crypto)."""
+    if not any(w in ql for w in _UPI_WORDS):
+        return "", []
+    try:
+        res = db.mule_rails(limit=60)
+    except Exception as e:
+        return (
+            f"Rail list unavailable ({str(e)[:120]} — use UPI / Mules page).",
+            [],
+        )
+    items = res.get("items") or []
+    if not items:
+        return "No rails observed yet.", [{"kind": "rails", "ref": "/api/mule-rails"}]
+    lines = [
+        f"{r.get('rail_type')}:{r.get('rail_id')} | txns={r.get('transactions')} "
+        f"| dep=₹{_inr(r.get('deposit_amount_inr') or 0)} "
+        f"| wd=₹{_inr(r.get('withdrawal_amount_inr') or 0)} "
+        f"| gamblers={r.get('gamblers')} "
+        f"| holders={r.get('account_holders') or '?'}"
+        for r in items
+    ]
+    txt = (
+        f"CANDIDATE RAILS (top {len(lines)} of {res.get('total', '?')} — "
+        "quote handles verbatim; these are leads, not proof):\n" + "\n".join(lines)
+    )
+    return txt, [{"kind": "rails", "ref": "/api/mule-rails"}]
+
+
+_LEDGER_WORDS = ("ledger", "xls", "xlsx", "sheet", "sender", "gambler")
+
+
+def _ctx_ledger(ql: str) -> tuple[str, list]:
+    """Ledger XLS/CSV export totals: per-type cash, top senders, coverage."""
+    if not any(w in ql for w in _LEDGER_WORDS):
+        return "", []
+    try:
+        from . import ledger
+
+        s = ledger.summary()
+    except Exception as e:
+        return (
+            f"Ledger summary unavailable ({str(e)[:120]} — use Ledger page).",
+            [],
+        )
+    parts = []
+    for t in s.get("by_type") or []:
+        parts.append(
+            f"{t.get('type')}: txns={t.get('txns'):,} cash=₹{_inr(t.get('cash') or 0)} "
+            f"bonus=₹{_inr(t.get('bonus') or 0)} gamblers={t.get('gamblers')} utrs={t.get('utrs')}"
+        )
+    top = (s.get("by_sender") or [])[:10]
+    if top:
+        parts.append(
+            "TOP DEPOSIT SENDERS: "
+            + "; ".join(
+                f"{r.get('sender')} = ₹{_inr(r.get('cash') or 0)} ({r.get('txns')} txns)"
+                for r in top
+            )
+        )
+    cov, files = s.get("coverage") or {}, s.get("files") or {}
+    parts.append(
+        f"LEDGER FILES: {files.get('indexed')}/{files.get('total')} indexed; "
+        f"UTRs {cov.get('ledger_utrs')} ({cov.get('matched_in_flows')} matched in flows). "
+        "cash = Amount − Bonus from Remark; raw Amount is chips, never cash."
+    )
+    return "LEDGER (XLS/CSV exports):\n" + "\n".join(parts), [
+        {"kind": "ledger", "ref": "/api/ledger/summary"}
+    ]
+
+
+_OBJECT_WORDS = (
+    "bucket",
+    "gcs",
+    "object",
+    "files in",
+    "list files",
+    "recent uploads",
+    "recently uploaded",
+    "latest",
+    "newest",
+    "uploaded",
+    "prefix",
+)
+
+
+def _ctx_objects(ql: str, q: str) -> tuple[str, list]:
+    """Newest object keys overall or inside a named prefix (bucket content)."""
+    if not any(w in ql for w in _OBJECT_WORDS):
+        return "", []
+    prefix = ""
+    m = re.search(r"([\w][\w-]*)/", q)
+    if m:
+        cand = m.group(1).lower() + "/"
+        if cand in [p.lower() for p in config.DEFAULT_PREFIXES]:
+            prefix = next(p for p in config.DEFAULT_PREFIXES if p.lower() == cand)
+    try:
+        res = db.list_objects(prefix, limit=15, order="-modified", flat=True)
+    except Exception as e:
+        return (
+            f"Object listing unavailable ({str(e)[:120]} — use Explorer page).",
+            [],
+        )
+    items = res.get("items") or []
+    if not items:
+        return "No objects found.", [{"kind": "objects", "ref": "/api/live"}]
+    lines = [
+        f"{o.get('key')} | {o.get('size', '?')} bytes | {o.get('last_modified') or '?'}"
+        for o in items
+    ]
+    scope = f"in {prefix}" if prefix else "bucket-wide"
+    txt = (
+        f"NEWEST OBJECTS ({scope}, {res.get('total', '?')} total — "
+        "newest 15 shown):\n" + "\n".join(lines)
+    )
+    return txt, [{"kind": "objects", "ref": "/api/live"}]
+
+
 def _ctx_image(q: str, store: Any) -> tuple[str, list, Optional[tuple[bytes, str]]]:
     """If the question names an object key, fetch it (bounded 8MB) for vision."""
     cands = re.findall(r"[\w\-./]{4,200}\.\w{2,5}", q)
@@ -531,7 +706,11 @@ _SYSTEM = (
     "is missing and suggest the exact dashboard page or query to check. "
     "Be concise: short summary first, then 3-8 bullets. Never invent identifiers. "
     "Numbers under EXACT MATH are exact database results — quote them verbatim, "
-    "never recompute or round them. A COMPUTED count=0 means ZERO transactions "
+    "never recompute or round them. Wallet addresses, rail handles, ledger rows "
+    "and object keys under WALLETS / RAILS / LEDGER / NEWEST OBJECTS are exact "
+    "database output too — when the officer asks to list them, print them "
+    "(up to ~100), never refuse for lack of data and never invent any. "
+    "A COMPUTED count=0 means ZERO transactions "
     "in that window: report 'no transactions recorded in <window>', NEVER "
     "'data unavailable' or 'lacks information'. Only say data is missing when "
     "no EXACT MATH block was provided at all. All dates/times are IST "
@@ -619,18 +798,24 @@ def ask(question: str, store: Any) -> dict:
         t, s = _ctx_overview()
         ctx_parts.append("CASE OVERVIEW:\n" + t)
         sources += s
-    if (
-        any(w in ql for w in ("wallet", "crypto", "usdt", "tron", "btc"))
-        and "wallet" not in " ".join(ctx_parts).lower()[:50]
-    ):
-        try:
-            w = db.wallet_stats()
-            ctx_parts.append(f"WALLETS:\n{w}")
-            sources.append({"kind": "wallets", "ref": "/api/wallets/stats"})
-        except Exception:
-            pass
+    t, s = _ctx_wallet_list(ql)
+    if t:
+        ctx_parts.append("WALLETS:\n" + t)
+        sources += s
+    t, s = _ctx_upi_list(ql)
+    if t:
+        ctx_parts.append("RAILS:\n" + t)
+        sources += s
+    t, s = _ctx_ledger(ql)
+    if t:
+        ctx_parts.append(t)
+        sources += s
+    t, s = _ctx_objects(ql, q)
+    if t:
+        ctx_parts.append(t)
+        sources += s
 
-    context = "\n\n".join(ctx_parts)[:12000]
+    context = "\n\n".join(ctx_parts)[:20000]
     parts: list[dict] = [{"text": f"CASE DATA:\n{context}\n\nOFFICER QUESTION: {q}"}]
     img_key = None
     if img_blob:
