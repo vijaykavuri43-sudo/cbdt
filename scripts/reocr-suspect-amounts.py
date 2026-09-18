@@ -135,7 +135,7 @@ def _one(store: GCSMirrorClient, key: str, old: dict) -> tuple[str, dict | None,
     except Exception as e:
         return key, None, f"fetch:{e}"[:120]
     try:
-        payload = ocr_slip(data, allow_gemini=False)
+        payload = ocr_slip(data, allow_gemini=True)
     except Exception as e:
         return key, None, f"ocr:{e}"[:120]
     payload["kind"] = kind

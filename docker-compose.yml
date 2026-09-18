@@ -47,6 +47,8 @@ services:
       - S3LM_GROQ_API_KEY=${S3LM_GROQ_API_KEY:-}
       - S3LM_GROQ_MODEL=${S3LM_GROQ_MODEL:-qwen/qwen3.8-27b}
       - S3LM_GROQ_FALLBACK_MODEL=${S3LM_GROQ_FALLBACK_MODEL:-openai/gpt-oss-120b}
+      - S3LM_GROQ_VISION_MODEL=${S3LM_GROQ_VISION_MODEL:-qwen/qwen3.6-27b}
+      - S3LM_GROQ_VISION_FALLBACK=${S3LM_GROQ_VISION_FALLBACK:-qwen/qwen3.8-27b}
       - S3LM_COLD_SEC=${S3LM_COLD_SEC:-1800}
       # 2026-09-10: 5000/cycle × 30min cold cadence wrapped 490K-key prefixes
       # in ~49h, so uploads behind the key-watermark surfaced days late.

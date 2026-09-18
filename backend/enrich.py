@@ -2208,6 +2208,164 @@ def _gemini_extract(
         return {"_gemini_error": str(e)[:300]}
 
 
+def _slip_vision_prompt(text_sample: str = "", mode: str = "slip") -> str:
+    if mode == "qr":
+        return (
+            "You are a forensic QR transcriber. This image contains a QR code "
+            "that automated decoders failed to read (rotated, stylized, low "
+            "contrast, or damaged). Transcribe the payment payload encoded in "
+            "the QR VERBATIM — typically a upi://pay?... URI, a VPA like "
+            "name@okbank, or a crypto wallet address. Copy character-for-character; "
+            "never guess missing characters. Return JSON only with keys: "
+            "qr_text (the full decoded string, or null if truly unreadable), "
+            "vpa (string or null), payee_name (string or null), amount_inr "
+            "(number from am= or null). If unsure, use null. Do not invent."
+        )
+    return (
+        "You are a forensic payment-slip extractor. Two receipt kinds exist: "
+        "(A) Indian UPI/bank screenshots (amounts in ₹/Rs/INR). "
+        "(B) Crypto exchange/wallet receipts (Binance/Trust Wallet: amounts in USDT/BTC/ETH/TRX, a 64-hex Txid, a wallet Address). "
+        "For kind A: extract ONLY the principal transaction amount — the large centered amount under 'Payment successful' / 'Transaction Successful' / Paytm checkmark (e.g. ₹200 or ₹150). "
+        "IGNORE: Balance, promo spend, sponsored products, fees, Paytm scratch-card numbers, Ref. No / UTR / RRN used as rupees. "
+        "A 12-digit Ref. No is the utr field, NEVER amount_value. "
+        "For kind B: extract the crypto Amount with its token (e.g. 69.5 USDT — NOT the network fee), the full 64-hex Txid, and the destination wallet Address. "
+        "Return JSON only with keys: amount_value (number or null), amount_currency (string like INR, USDT, BTC, ETH, TRX — default INR for kind A), "
+        "utr (12-digit string or null, kind A only), txid (64-hex string or null, kind B only), wallet_address (string or null, kind B only), "
+        "vpa (string or null), beneficiary_name (string or null), sender_name (string or null), ifsc (string or null), bank_account (string or null). "
+        "If unsure, use null. Do not invent. Text sample for reference: "
+        + (text_sample[:300] if text_sample else "")
+    )
+
+
+def _parse_model_json(txt: str) -> Optional[dict]:
+    import json as _json
+
+    txt = (txt or "").strip()
+    if txt.startswith("```"):
+        txt = txt.strip("`")
+        if txt.lower().startswith("json"):
+            txt = txt[4:].strip()
+    try:
+        parsed = _json.loads(txt)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        m = re.search(r"\{.*\}", txt, re.S)
+        if not m:
+            return None
+        try:
+            parsed = _json.loads(m.group(0))
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+
+
+def _sanitize_vision_fields(g: dict, ocr_text: str = "") -> dict:
+    """Drop a vision amount that is clearly a UPI/Paytm reference id."""
+    if not g:
+        return g
+    amt = g.get("amount_value")
+    if amt is None:
+        amt = g.get("amount_inr")
+    utr = str(g.get("utr") or "")
+    try:
+        if amt is not None and amount_is_ref_id(ocr_text, float(amt), utr):
+            g = dict(g)
+            g["amount_value"] = None
+            g["amount_inr"] = None
+            g["ref_as_amount"] = True
+    except (TypeError, ValueError):
+        pass
+    return g
+
+
+def _groq_extract(
+    data: bytes, text_sample: str = "", mode: str = "slip"
+) -> Optional[dict]:
+    """Groq vision (qwen/qwen3.6-27b, fallback qwen/qwen3.8-27b) slip/QR extract.
+
+    Same JSON contract as _gemini_extract. Never invents: caller must still
+    refuse ref-as-amount via _sanitize_vision_fields.
+    """
+    if not config.GROQ_ENABLED:
+        return {"_groq_error": "groq-disabled"}
+    try:
+        import base64
+        import httpx
+
+        small, mime = _gemini_shrink(data)
+        b64 = base64.b64encode(small).decode("ascii")
+        prompt = _slip_vision_prompt(text_sample, mode)
+        body = {
+            "model": config.GROQ_VISION_MODEL,
+            "temperature": 0.0,
+            "max_completion_tokens": 1024,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
+                        },
+                    ],
+                }
+            ],
+        }
+        client = httpx.Client(timeout=60.0)
+        models = [config.GROQ_VISION_MODEL]
+        if config.GROQ_VISION_FALLBACK not in models:
+            models.append(config.GROQ_VISION_FALLBACK)
+        last_err = "unknown"
+        try:
+            for model in models:
+                body["model"] = model
+                r = client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {config.GROQ_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=body,
+                )
+                if r.status_code in (400, 404):
+                    last_err = f"{r.status_code}@{model}: {r.text[:160]}"
+                    continue
+                if r.status_code == 429 or r.status_code >= 500:
+                    last_err = f"{r.status_code}@{model}: {r.text[:200]}"
+                    continue
+                if r.status_code >= 400:
+                    last_err = f"{r.status_code}@{model}: {r.text[:160]}"
+                    continue
+                j = r.json()
+                msg = ((j.get("choices") or [{}])[0].get("message") or {})
+                txt = msg.get("content") or ""
+                parsed = _parse_model_json(txt)
+                if not parsed:
+                    last_err = f"bad-json@{model}"
+                    continue
+                parsed["_groq_raw"] = txt[:600]
+                parsed["_model"] = model
+                parsed["_vision_engine"] = "groq"
+                return parsed
+            return {"_groq_error": last_err[:200]}
+        finally:
+            client.close()
+    except Exception as e:
+        return {"_groq_error": str(e)[:300]}
+
+
+def _merge_vision(out: dict, g: dict, ocr_text: str = "") -> None:
+    g = _sanitize_vision_fields(g, ocr_text)
+    tag = g.get("_vision_engine") or "gemini"
+    _merge_gemini(out, g)
+    if tag == "groq":
+        eng = out.get("engine") or ""
+        out["engine"] = eng.replace("gemini", "groq") if "gemini" in eng else "tesseract+groq"
+        out["_groq"] = {k: g[k] for k in g if not k.startswith("_")}
+
+
 def _merge_gemini_wallet(out: dict, addr: str) -> None:
     """Append a Gemini-spotted wallet address if tesseract missed it.
 
@@ -2604,34 +2762,47 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             twin = detect_twin_artifact(text, out.get("amount_tesseract_raw"))
             if twin:
                 out["twin_artifact"] = twin
-        use_gemini = False
-        if config.GEMINI_ENABLED:
+        use_vision = False
+        vision_ok = bool(config.GEMINI_ENABLED or config.GROQ_ENABLED)
+        if vision_ok:
             has_rejected = bool(out.get("amount_ignored"))
-            # Only auto-invoke when tesseract found nothing (e.g. faint ₹ glyph) —
-            # the 200 vs 31785 case is now solved by context-aware scoring, no need to burn tokens.
             if tesseract_amount is None:
-                # If we have rejected promo but no principal, likely ₹ was missed — Gemini can rescue
-                use_gemini = True
-            elif collision or twin or has_rejected:
-                # Winner uncorroborated (medium confidence): let Vision adjudicate
-                use_gemini = True
-            # Optional: also invoke if tesseract amount is plausible but confidence would be low
-            # and the slip contains a high-value promo that dwarfed the true amount (defensive)
-            # Disabled by default for cost; uncomment to enable:
-            # elif has_rejected and out.get("confidence") == "low" and tesseract_amount is not None:
-            #     use_gemini = True
-            pass
-        # Also allow forced Gemini via env flag for officers who want max accuracy
-        if config.GEMINI_ENABLED and use_gemini:
+                use_vision = True
+            elif collision or twin or has_rejected or out.get("ref_as_amount"):
+                use_vision = True
+            elif (
+                out.get("amount_value") is not None
+                and not out.get("utr")
+                and not NUM12_RE.search(text or "")
+            ):
+                # Officer PhonePe exhibit: ₹3,000 stored, UTR on-screen missed.
+                use_vision = True
+        if use_vision:
             if not allow_gemini:
-                # Spawned worker: defer to the parent batch-verify (budget/breaker).
                 out["needs_gemini"] = True
             else:
-                g = _gemini_extract(data, out.get("text_sample") or "")
-                if g and not g.get("_gemini_error"):
-                    _merge_gemini(out, g)
+                g = None
+                if config.GEMINI_ENABLED:
+                    g = _gemini_extract(data, out.get("text_sample") or "")
+                groq_needed = (
+                    not g
+                    or g.get("_gemini_error")
+                    or (
+                        g.get("amount_value") is None
+                        and g.get("amount_inr") is None
+                        and g.get("utr") is None
+                    )
+                )
+                if groq_needed and config.GROQ_ENABLED:
+                    g2 = _groq_extract(data, out.get("text_sample") or "")
+                    if g2 and not g2.get("_groq_error"):
+                        g = g2
+                if g and not g.get("_gemini_error") and not g.get("_groq_error"):
+                    _merge_vision(out, g, text or "")
                 elif g and g.get("_gemini_error"):
                     out["_gemini_error"] = g["_gemini_error"]
+                elif g and g.get("_groq_error"):
+                    out["_groq_error"] = g["_groq_error"]
 
         if (
             out.get("amount_value") is None
@@ -2644,7 +2815,7 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
         else:
             # Downgrade confidence if we kept an ignored promo candidate — UI shows badge
             out["confidence"] = "medium" if not out.get("amount_ignored") else "low"
-            if out.get("engine") == "tesseract+gemini":
+            if out.get("engine") in ("tesseract+gemini", "tesseract+groq", "gemini", "groq"):
                 out["confidence"] = "high"
     except Exception as e:
         out["error"] = str(e)[:200]
@@ -2652,19 +2823,27 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
 
 
 def gemini_ocr_slip(data: bytes) -> dict:
-    """Force Gemini path (used by Re-run OCR/QR when key present)."""
+    """Force Vision path (Gemini then Groq) for officer Re-run OCR."""
     base = ocr_slip(data)
-    # If still tesseract-only, force a Gemini call regardless of heuristic.
-    # Manual trigger: bypasses the auto reserve so the officer Re-run always
-    # spends when any quota remains (free-tier 20/day/model, 2026-09-03).
-    if config.GEMINI_ENABLED and base.get("engine") == "tesseract":
-        g = _gemini_extract(data, base.get("text_sample") or "", manual=True)
-        if g and not g.get("_gemini_error") and g.get("amount_value") is not None:
-            _merge_gemini(base, g)
-            base["engine"] = "gemini"
+    if base.get("engine") == "tesseract":
+        g = None
+        if config.GEMINI_ENABLED:
+            g = _gemini_extract(data, base.get("text_sample") or "", manual=True)
+        if (not g or g.get("_gemini_error") or g.get("amount_value") is None) and config.GROQ_ENABLED:
+            g2 = _groq_extract(data, base.get("text_sample") or "")
+            if g2 and not g2.get("_groq_error"):
+                g = g2
+        if g and not g.get("_gemini_error") and not g.get("_groq_error"):
+            _merge_vision(base, g, base.get("text_sample") or "")
+            if g.get("_vision_engine") == "groq":
+                base["engine"] = "groq"
+            else:
+                base["engine"] = "gemini"
             base["confidence"] = "high"
         elif g and g.get("_gemini_error"):
             base["_gemini_error"] = g["_gemini_error"]
+        elif g and g.get("_groq_error"):
+            base["_groq_error"] = g["_groq_error"]
     return base
 
 
