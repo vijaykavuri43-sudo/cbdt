@@ -2553,6 +2553,45 @@ def _source_link(key: str) -> str:
     return f"{config.PUBLIC_URL}/api/object?key={quote(key, safe='')}&download=1"
 
 
+_BUCKET_KEY_RE = re.compile(
+    r"(?:^|[+\s])("
+    r"(?:deposit|withdrawal|chat_file|bankingqr|qrcode|paymentgateway|payment|"
+    r"csv-files|uploads|voice_notes|voice)/[^\s,|+]+"
+    r")",
+    re.I,
+)
+
+
+def _looks_like_bucket_key(value: str) -> bool:
+    s = (value or "").strip()
+    if not s or " " in s or s.startswith("http") or "/api/" in s.lower():
+        return False
+    return "/" in s and not s.lower().startswith("dashboard")
+
+
+def _source_folder(key: str) -> str:
+    s = (key or "").strip()
+    if "/" not in s:
+        return ""
+    return s.split("/", 1)[0]
+
+
+def _officer_source_path(
+    proof_key: str, source_ref: str, live_keys: list[str] | None = None
+) -> tuple[str, str, list[str]]:
+    """Officer-facing bucket path (deposit/withdrawal/chat/…), never /api/wallets."""
+    live = [k for k in (live_keys or []) if _looks_like_bucket_key(k)]
+    proof = proof_key if _looks_like_bucket_key(proof_key) else ""
+    extracted = ""
+    m = _BUCKET_KEY_RE.search(source_ref or "")
+    if m:
+        extracted = m.group(1)
+    path = proof or (live[0] if live else "") or extracted
+    folder = _source_folder(path)
+    all_keys = list(dict.fromkeys(([path] if path else []) + live))
+    return path, folder, all_keys
+
+
 def _iter_export_csv(columns: tuple, rows: list) -> Any:
     """Yield a full officer exhibit CSV in chunks (bounded memory)."""
     buf = io.StringIO()
@@ -2644,6 +2683,7 @@ _WALLET_HIT_EXPORT_COLUMNS = (
     "address",
     "network",
     "label",
+    "source_folder",
     "source_file",
     "last_modified_utc",
     "amount",
@@ -2664,15 +2704,16 @@ _WALLET_DISTINCT_EXPORT_COLUMNS = (
     "hits",
     "first_seen_utc",
     "last_seen_utc",
-    "label",
+    "source_folder",
     "sample_source_file",
+    "all_source_files",
+    "label",
     "amount",
     "amount_currency",
     "confidence",
     "checksum",
     "known_operator",
     "dashboard_source_link",
-    "all_source_files",
     "all_dashboard_links",
     "arkham_url",
     "tronscan_url",
@@ -2690,6 +2731,9 @@ _WALLET_REF_EXPORT_COLUMNS = (
     "le_master",
     "case_ids",
     "notes",
+    "source_folder",
+    "source_path",
+    "all_source_files",
     "source_ref",
     "proof_s3_key",
     "in_live",
@@ -2768,6 +2812,7 @@ def export_wallets(
                     "address": addr,
                     "network": r["network"] or "",
                     "label": r["standard"] or "",
+                    "source_folder": _source_folder(key),
                     "source_file": key,
                     "last_modified_utc": r["last_modified"] or "",
                     "amount": amt if amt is not None else "",
@@ -2808,6 +2853,7 @@ def export_wallets(
                         "hits": it.get("hits") or len(all_keys) or 1,
                         "first_seen_utc": it.get("first_seen") or "",
                         "last_seen_utc": it.get("last_seen") or "",
+                        "source_folder": _source_folder(key or (all_keys[0] if all_keys else "")),
                         "label": it.get("standard") or "",
                         "sample_source_file": key or (all_keys[0] if all_keys else ""),
                         "amount": amt if amt is not None else "",
@@ -2835,13 +2881,20 @@ def export_wallets(
     def build_reference():
         live = _live_wallet_set()
         master = {r["address_lower"]: r for r in load_master_wallet_rows()}
-        times = db.wallet_times_by_address([r.get("address") or "" for r in load_reference_wallets()])
+        ref_rows = load_reference_wallets()
+        times = db.wallet_times_by_address([r.get("address") or "" for r in ref_rows])
+        keys_by_addr = _wallet_source_keys()
         rows = []
-        for r in load_reference_wallets():
+        for r in ref_rows:
             addr = r.get("address") or ""
             m = master.get(addr.lower())
             t = times.get(addr) or {}
             arkham, tron = _wallet_explorer_urls(addr)
+            path, folder, all_keys = _officer_source_path(
+                r.get("proof_s3_key") or "",
+                r.get("source_ref") or "",
+                keys_by_addr.get(addr) or [],
+            )
             rows.append(
                 {
                     "address": addr,
@@ -2852,6 +2905,9 @@ def export_wallets(
                     "le_master": "yes" if m else "no",
                     "case_ids": (m or {}).get("case_ids") or "",
                     "notes": (m or {}).get("notes") or "",
+                    "source_folder": folder,
+                    "source_path": path,
+                    "all_source_files": " | ".join(all_keys),
                     "source_ref": r.get("source_ref") or "",
                     "proof_s3_key": r.get("proof_s3_key") or "",
                     "in_live": "yes" if addr in live else "no",
@@ -2869,18 +2925,18 @@ def export_wallets(
 
     if kind == "hits":
         return _export_response(
-            cached("export-wallets:hits-v1", 30.0, build_hits),
+            cached("export-wallets:hits-v2", 30.0, build_hits),
             _WALLET_HIT_EXPORT_COLUMNS,
             "crypto-wallet-hits",
         )
     if kind == "reference":
         return _export_response(
-            cached("export-wallets:reference-v2", 30.0, build_reference),
+            cached("export-wallets:reference-v3", 30.0, build_reference),
             _WALLET_REF_EXPORT_COLUMNS,
             "crypto-wallets-identified",
         )
     return _export_response(
-        cached("export-wallets:distinct-v1", 30.0, build_distinct),
+        cached("export-wallets:distinct-v2", 30.0, build_distinct),
         _WALLET_DISTINCT_EXPORT_COLUMNS,
         "crypto-wallets-distinct",
     )
@@ -3269,11 +3325,15 @@ def wallets_reference(_=Depends(auth)):
     master = {r["address_lower"]: r for r in load_master_wallet_rows()}
     ref_rows = load_reference_wallets()
     present = db.keys_in_mirror([r.get("proof_s3_key") or "" for r in ref_rows])
+    keys_by_addr = _wallet_source_keys()
     items = []
     for r in ref_rows:
         addr = r.get("address") or ""
         pk = r.get("proof_s3_key") or ""
         m = master.get(addr.lower())
+        path, folder, all_keys = _officer_source_path(
+            pk, r.get("source_ref") or "", keys_by_addr.get(addr) or []
+        )
         items.append(
             {
                 **r,
@@ -3285,6 +3345,9 @@ def wallets_reference(_=Depends(auth)):
                 "notes": (m or {}).get("notes") or "",
                 "le_confidence": (m or {}).get("confidence") or "",
                 "le_fact_type": (m or {}).get("fact_type") or "",
+                "source_path": path,
+                "source_folder": folder,
+                "all_source_files": all_keys,
             }
         )
     items.sort(key=lambda i: (0 if i.get("le_master") else 1, i.get("address") or ""))

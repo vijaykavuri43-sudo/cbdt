@@ -61,6 +61,9 @@ interface RefWallet {
   le_fact_type?: string
   first_seen?: string
   last_seen?: string
+  source_path?: string
+  source_folder?: string
+  all_source_files?: string[]
 }
 interface RefResp {
   items: RefWallet[]
@@ -320,7 +323,7 @@ export function Wallets() {
                 <th>Address</th>
                 <th>Network</th>
                 <th>Label</th>
-                <th>Origin</th>
+                <th>Source</th>
                 <th>{distinct ? 'First seen' : 'Object time'}</th>
                 <th>Detail</th>
               <th>Status</th>
@@ -335,6 +338,9 @@ export function Wallets() {
                 <td className="small">{r.standard ?? '—'}</td>
                 <td className="small dim mono" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key || ''}>
                   {originShort(r.key ?? '')}
+                  {r.key?.includes('/') && (
+                    <div className="tiny dim">{r.key.split('/')[0]}</div>
+                  )}
                 </td>
                 <td className="small" title={distinct ? `First ${r.first_seen || '—'} UTC · last ${r.last_seen || '—'} UTC` : `${r.last_modified || ''} UTC`}>
                   {fmtIST(distinct ? r.first_seen : r.last_modified)}
@@ -381,7 +387,7 @@ export function Wallets() {
             <h1 className="pg-header-title">Identified wallets (reference)</h1>
             <div className="pg-header-sub">
               {ref
-                ? <>All {ref.identified_total.toLocaleString()} previously-identified wallets — hawala, operator, beneficiary, desk, dashboard rails. LE Submission Master operator wallets ({ref.le_master_total ?? 0}, CASE-2026-102) are listed first and badged. {ref.live_decoded.toLocaleString()} also live-decoded above · {ref.missing_from_live.toLocaleString()} reference-only.</>
+                ? <>All {ref.identified_total.toLocaleString()} previously-identified wallets — hawala, operator, beneficiary, desk. CASE-2026-102 operator wallets ({ref.le_master_total ?? 0}) listed first. {ref.live_decoded.toLocaleString()} also live-decoded above · {ref.missing_from_live.toLocaleString()} reference-only.</>
                 : refError
                   ? <>Reference list failed to load — press Retry below. Live bucket-decoded wallets above are unaffected.</>
                   : <>Loading the previously-identified wallet census…</>}
@@ -420,11 +426,6 @@ export function Wallets() {
               <tr key={w.address} style={w.le_master ? { background: 'rgba(46,184,126,0.06)' } : undefined}>
                 <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>
                   {w.address}
-                  {w.le_master && (
-                    <span className="ex-badge" style={{ marginLeft: 6, borderColor: 'var(--accent2)', color: 'var(--accent2)', fontSize: 9 }} title={w.notes || 'LE Submission Master · CASE-2026-102'}>
-                      LE master{w.label ? ` · ${w.label}` : ''}
-                    </span>
-                  )}
                 </td>
                 <td>{w.network ?? '—'}</td>
                 <td className="small" title={w.notes || ''}>{w.label || w.role || '—'}</td>
@@ -435,8 +436,11 @@ export function Wallets() {
                     <div className="tiny dim">last {fmtIST(w.last_seen)}</div>
                   )}
                 </td>
-                <td className="small dim mono" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.source_ref || w.case_ids || ''}>
-                  {w.case_ids || w.source_ref || '—'}
+                <td className="small dim mono" style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.source_path || w.source_ref || ''}>
+                  {w.source_path ? originShort(w.source_path) : '—'}
+                  {w.source_folder && (
+                    <div className="tiny dim">{w.source_folder}</div>
+                  )}
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {w.in_mirror && w.proof_s3_key
@@ -447,7 +451,6 @@ export function Wallets() {
                   {w.address && <>{' · '}<a href={arkhamAddressUrl(w.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(w.address, null) ?? '#'} target="_blank" rel="noreferrer" className="small">Tronscan ↗</a></>}
                 </td>
                 <td>
-                  {w.le_master && <span className="ex-badge" style={{ marginRight: 6, fontSize: 9 }} title="high · fact">{w.le_confidence || 'high'} · {w.le_fact_type || 'fact'}</span>}
                   {w.in_live
                     ? <span className="ex-badge" title="Also decoded from a live bucket image in the table above">live ✓</span>
                     : <span className="ex-badge ex-badge-new" title="Not decoded from any bucket image currently in the mirror — source object is a spreadsheet/config or outside the mirror">ref-only</span>}
