@@ -189,11 +189,11 @@ function FileCard({
 
 // ---- Main Explorer ----
 export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { p: string; t: number } | null }) {
-  const [source, setSource] = useState<'manifest' | 'live'>('manifest')
+  const [source] = useState<'manifest' | 'live'>('manifest')
   const [prefix, setPrefix] = useState('')
   const [q, setQ] = useState('')
   const [searchAll, setSearchAll] = useState(true)
-  const [order, setOrder] = useState<'key' | '-modified' | '-seen' | 'size'>('-seen')
+  const [order] = useState<'key' | '-modified' | '-seen' | 'size'>('-seen')
   const [ext, setExt] = useState('')
   const [sinceDays, setSinceDays] = useState('')
   const [fromDate, setFromDate] = useState('')
@@ -204,7 +204,6 @@ export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { 
   const [limit] = useState(50)
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState('')
-  const [autoSync, setAutoSync] = useState('')
   const [data, setData] = useState<{ total: number; items: ObjRow[] }>({ total: 0, items: [] })
   const [dirs, setDirs] = useState<{ seg: string; n: number; size: number }[]>([])
   const [dirsPrefix, setDirsPrefix] = useState('')
@@ -408,15 +407,6 @@ export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { 
     setPrefix(normPrefix(p)); setQ('')
   }
 
-  function goParent() {
-    const parts = normPrefix(prefix).replace(/\/$/, '').split('/').filter(Boolean)
-    if (!parts.length) return
-    parts.pop()
-    resetFolderView()
-    setPrefix(parts.length ? parts.join('/') + '/' : '')
-    setQ('')
-  }
-
   function tryJumpToPath(raw: string) {
     const t = raw.trim().replace(/^\/+/, '')
     if (!t) return false
@@ -472,12 +462,6 @@ export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { 
       setTimeout(() => setSyncMsg(''), 4000)
     } catch (e) { setSyncMsg(String(e)) } finally { setSyncing(false) }
   }
-
-  useEffect(() => {
-    if (!autoSync) return
-    const id = setInterval(doSync, Number(autoSync) * 1000)
-    return () => clearInterval(id)
-  }, [autoSync, prefix])
 
   function selectPage() {
     setSel((s) => { const n = new Set(s); for (const o of rows()) if (n.size < 5000) n.add(o.key); return n })

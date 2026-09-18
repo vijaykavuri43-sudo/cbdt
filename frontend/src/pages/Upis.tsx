@@ -17,7 +17,7 @@ export function Upis() {
   const PAGE_SIZE = 500
   const [data, setData] = useState<{ master_size: number; items: UpiRow[]; new_not_in_master: number; new_total?: number; total?: number } | null>(null)
   const [onlyNew, setOnlyNew] = useState(false)
-  const [distinct, setDistinct] = useState(true)
+  const distinct = true
   const [hideSenders, setHideSenders] = useState(true)
   const [page, setPage] = useState(0)
   const [error, setError] = useState('')
