@@ -42,6 +42,11 @@ services:
       - S3LM_AI_MODEL=${S3LM_AI_MODEL:-gemini-2.5-flash}
       - S3LM_AIASK_DAILY_CAP=${S3LM_AIASK_DAILY_CAP:-500}
       - S3LM_AIASK_PER_MIN=${S3LM_AIASK_PER_MIN:-10}
+      # Groq Cloud text failover for the AI investigator (key lives ONLY in
+      # the VM .env, never in git). Verified 2026-09-18.
+      - S3LM_GROQ_API_KEY=${S3LM_GROQ_API_KEY:-}
+      - S3LM_GROQ_MODEL=${S3LM_GROQ_MODEL:-qwen/qwen3.8-27b}
+      - S3LM_GROQ_FALLBACK_MODEL=${S3LM_GROQ_FALLBACK_MODEL:-openai/gpt-oss-120b}
       - S3LM_COLD_SEC=${S3LM_COLD_SEC:-1800}
       # 2026-09-10: 5000/cycle × 30min cold cadence wrapped 490K-key prefixes
       # in ~49h, so uploads behind the key-watermark surfaced days late.

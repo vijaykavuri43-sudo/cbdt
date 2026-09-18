@@ -52,6 +52,9 @@ def aiask_stats() -> dict:
                 "day_utc": _day,
                 "cap": AIASK_DAILY_CAP,
                 "model": AI_MODEL,
+                "groq_model": (
+                    f"groq:{config.GROQ_MODEL}" if config.GROQ_ENABLED else ""
+                ),
             }
         )
     return d
@@ -421,45 +424,103 @@ def _ctx_image(q: str, store: Any) -> tuple[str, list, Optional[tuple[bytes, str
     return "", [], None
 
 
-def _generate(prompt_parts: list[dict], system: str) -> Optional[str]:
+def _generate_groq(prompt_text: str, system: str) -> tuple[Optional[str], str]:
+    """Groq Cloud failover (OpenAI-compat chat completions). Text-only.
+
+    Tries GROQ_MODEL then GROQ_FALLBACK_MODEL. Returns (answer, model_used).
+    """
     import time as _t
 
     try:
         from .enrich import _gemini_client_shared
     except Exception:
-        return None
-    body = {
-        "contents": [{"parts": [{"text": system}, *prompt_parts]}],
-        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024},
-    }
-    url = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{AI_MODEL}:generateContent?key={config.GEMINI_API_KEY}"
-    )
+        return None, ""
     client = _gemini_client_shared()
+    base = {
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt_text},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 1024,
+    }
     last_err = "unknown"
-    for attempt in range(3):
+    for model in (config.GROQ_MODEL, config.GROQ_FALLBACK_MODEL):
+        if not model:
+            continue
         try:
-            r = client.post(url, json=body)
-            if r.status_code == 404:  # model retired -> lite fallback once
-                fb = url.replace(AI_MODEL, "gemini-2.5-flash-lite")
-                r = client.post(fb, json=body)
+            r = client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
+                json={**base, "model": model},
+            )
             if r.status_code == 429:
-                # Retrying a dead quota inside one request only burns latency;
-                # keep the FULL body (scope/quotaId) for stats, fail fast.
-                last_err = f"429@{AI_MODEL}: {r.text[:500]}"
-                break
+                last_err = f"429@groq:{model}"
+                _t.sleep(5.0)
+                continue
             if r.status_code >= 500:
-                last_err = f"{r.status_code}"
-                _t.sleep(2.0 * (2**attempt))
+                last_err = f"{r.status_code}@groq:{model}"
+                _t.sleep(2.0)
                 continue
             r.raise_for_status()
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            return r.json()["choices"][0]["message"]["content"], f"groq:{model}"
         except Exception as e:
-            last_err = str(e)[:200]
-            _t.sleep(2.0 * (2**attempt))
+            last_err = f"groq:{model}:{str(e)[:150]}"
+            _t.sleep(2.0)
     _note(False, last_err)
-    return None
+    return None, ""
+
+
+def _generate(prompt_parts: list[dict], system: str) -> tuple[Optional[str], str]:
+    """Gemini primary + Groq text failover. Returns (answer, model_used)."""
+    import time as _t
+
+    last_err = "ai-offline"
+    if config.GEMINI_ENABLED:
+        try:
+            from .enrich import _gemini_client_shared
+        except Exception:
+            return None, ""
+        body = {
+            "contents": [{"parts": [{"text": system}, *prompt_parts]}],
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1024},
+        }
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{AI_MODEL}:generateContent?key={config.GEMINI_API_KEY}"
+        )
+        client = _gemini_client_shared()
+        last_err = "unknown"
+        for attempt in range(3):
+            try:
+                r = client.post(url, json=body)
+                if r.status_code == 404:  # model retired -> lite fallback once
+                    fb = url.replace(AI_MODEL, "gemini-2.5-flash-lite")
+                    r = client.post(fb, json=body)
+                if r.status_code == 429:
+                    # Retrying a dead quota inside one request only burns latency;
+                    # keep the FULL body (scope/quotaId) for stats, fail fast.
+                    last_err = f"429@{AI_MODEL}: {r.text[:500]}"
+                    break
+                if r.status_code >= 500:
+                    last_err = f"{r.status_code}"
+                    _t.sleep(2.0 * (2**attempt))
+                    continue
+                r.raise_for_status()
+                return (
+                    r.json()["candidates"][0]["content"]["parts"][0]["text"],
+                    AI_MODEL,
+                )
+            except Exception as e:
+                last_err = str(e)[:200]
+                _t.sleep(2.0 * (2**attempt))
+    has_image = any("inline_data" in p for p in prompt_parts)
+    if config.GROQ_ENABLED and not has_image:
+        # Groq failover is text-only (no vision on available models).
+        prompt_text = "".join(p.get("text", "") for p in prompt_parts)
+        return _generate_groq(prompt_text, system)
+    _note(False, last_err)
+    return None, ""
 
 
 _SYSTEM = (
@@ -488,9 +549,9 @@ def ask(question: str, store: Any) -> dict:
             "sources": [],
             "model": AI_MODEL,
         }
-    if not config.GEMINI_ENABLED:
+    if not (config.GEMINI_ENABLED or config.GROQ_ENABLED):
         return {
-            "answer": "AI assistant is offline — set the Gemini key on the VM first.",
+            "answer": "AI assistant is offline — set the Gemini or Groq key on the VM first.",
             "sources": [],
             "model": AI_MODEL,
         }
@@ -589,14 +650,15 @@ def ask(question: str, store: Any) -> dict:
             )
         except Exception:
             pass
-    ans = _generate(parts, _SYSTEM)
+    ans, used_model = _generate(parts, _SYSTEM)
     if ans is None:
         return {
             "answer": "AI backend unreachable right now (quota/network). The dashboard pages still work — try Search / Money Flows directly.",
             "sources": sources,
-            "model": AI_MODEL,
+            "model": used_model or AI_MODEL,
         }
     _note(True)
+    used_model = used_model or AI_MODEL
     if img_key:
         sources = [{"kind": "object", "ref": img_key}] + sources
     # de-dupe sources, cap 12
@@ -606,4 +668,4 @@ def ask(question: str, store: Any) -> dict:
         if k not in seen:
             seen.add(k)
             uniq.append(s)
-    return {"answer": ans, "sources": uniq[:12], "model": AI_MODEL}
+    return {"answer": ans, "sources": uniq[:12], "model": used_model}

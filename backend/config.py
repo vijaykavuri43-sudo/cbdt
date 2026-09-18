@@ -193,6 +193,25 @@ GEMINI_DAILY_CAP = max(0, int(os.environ.get("S3LM_GEMINI_DAILY_CAP", "100000"))
 # Max Gemini verifications handed to the background thread per drain batch.
 GEMINI_PER_BATCH = max(1, int(os.environ.get("S3LM_GEMINI_PER_BATCH", "48")))
 
+# Groq Cloud failover for the officer AI assistant (OpenAI-compat API).
+# Verified 2026-09-18 with the case key (live probes): usable chat models are
+# qwen/qwen3.8-27b (direct answers, best drop-in primary) and
+# openai/gpt-oss-120b (strongest, reasoning arrives in a separate field).
+# Old llama-3.x models are retired from Groq. Text-only: image questions stay
+# on Gemini (no available Groq model does vision).
+GROQ_API_KEY = (
+    os.environ.get("S3LM_GROQ_API_KEY", "").strip()
+    or os.environ.get("GROQ_API_KEY", "").strip()
+)
+GROQ_MODEL = (
+    os.environ.get("S3LM_GROQ_MODEL", "qwen/qwen3.8-27b").strip() or "qwen/qwen3.8-27b"
+)
+GROQ_FALLBACK_MODEL = (
+    os.environ.get("S3LM_GROQ_FALLBACK_MODEL", "openai/gpt-oss-120b").strip()
+    or "openai/gpt-oss-120b"
+)
+GROQ_ENABLED = bool(GROQ_API_KEY)
+
 # Optional pre-joined transaction corpus. These paths are searched in order;
 # absence is harmless and live OCR/QR extraction continues normally.
 REFERENCE_ROOT = Path(os.environ.get("S3LM_REFERENCE_ROOT", INTELLIGENCE_ROOT))
