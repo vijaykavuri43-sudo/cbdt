@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl } from '../lib/api'
 import { fmtINR, fmtTime, shortKey } from '../lib/format'
 
-type Folder = 'deposit' | 'withdrawal' | 'bankingqr' | 'other'
+type Folder = 'all' | 'deposit' | 'withdrawal' | 'bankingqr' | 'other'
 type RailType = 'upi' | 'bank_account' | 'crypto_wallet'
 type View = 'slips' | 'unique'
 
@@ -53,6 +53,7 @@ interface UniqueResp {
 }
 
 const FOLDERS: { id: Folder; label: string; hint: string }[] = [
+  { id: 'all', label: 'All', hint: 'Every folder in the bucket' },
   { id: 'deposit', label: 'Deposit', hint: 'deposit/ customer slips' },
   { id: 'withdrawal', label: 'Withdrawal', hint: 'withdrawal/ payout proofs' },
   { id: 'bankingqr', label: 'Banking QR', hint: 'bankingqr/ + qrcode/' },
@@ -88,7 +89,7 @@ function railColLabel(rail: RailType): string {
 export function OfficerQuery() {
   const [fromDate, setFromDate] = useState(defaultFrom)
   const [toDate, setToDate] = useState(defaultTo)
-  const [folder, setFolder] = useState<Folder>('deposit')
+  const [folder, setFolder] = useState<Folder>('all')
   const [railType, setRailType] = useState<RailType>('upi')
   const [view, setView] = useState<View>('unique')
   const [queryInput, setQueryInput] = useState('')
@@ -112,7 +113,7 @@ export function OfficerQuery() {
     q: next.q,
     since: next.since,
     until: next.until,
-    folder: next.folder,
+    folder: next.folder === 'all' ? '' : next.folder,
     source: 'object',
   })
 
@@ -310,7 +311,7 @@ export function OfficerQuery() {
       {!applied && !error && (
         <div className="dp-empty">
           <div className="dp-empty-icon">📅</div>
-          Set dates, pick the source folder and UPI / bank / wallet, then Apply.
+          Set dates, pick All or a source folder, then UPI / bank / wallet, then Apply.
         </div>
       )}
 

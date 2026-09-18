@@ -18,7 +18,7 @@ Local investigation dashboard for **read-only monitoring of the publicly exposed
 | **Live Feed** | SSE stream — every new object appears as a card (screenshot thumbnails, wav players, decoded QR badges) with optional sound alert. This is the "catch them live" screen |
 | **Mule Money Flows** | Role-aware deposit and withdrawal evidence: gambler → receiving rail and sending rail → gambler, consolidated candidate ranking, confidence and exact provenance |
 | **UPI / VPAs** | Unique VPAs decoded from payment QRs, cross-checked against the case mule master list; NEW VPAs highlighted |
-| **Date range** | Folder + UPI/bank/wallet query with unique-address or all-slips CSV |
+| **Date range** | All folders or one (Deposit / Withdrawal / Banking QR / Other) + UPI/bank/wallet CSV |
 | **AI Investigator** | Plain-language questions over the live bucket index |
 
 ## Deploy (GitHub-based — no tarballs)

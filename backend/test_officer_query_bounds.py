@@ -73,6 +73,13 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         self.assertEqual(wd["rows_total"], 1)
         self.assertEqual(wd["items"][0]["source_key"], "withdrawal/c.jpg")
 
+    def test_folder_all_includes_deposit_and_withdrawal(self):
+        out = db.money_flows(direction="both", folder="", since="2026-09-01", until="2026-09-30", limit=50)
+        keys = {i["source_key"] for i in out["items"]}
+        self.assertEqual(keys, {"deposit/a.jpg", "deposit/b.jpg", "withdrawal/c.jpg"})
+        also = db.money_flows(direction="both", folder="all", since="2026-09-01", until="2026-09-30", limit=50)
+        self.assertEqual({i["source_key"] for i in also["items"]}, keys)
+
     def test_unique_upi(self):
         out = db.money_flows_unique(folder="deposit", rail_type="upi", since="2026-09-01", until="2026-09-30")
         self.assertEqual(out["rows_total"], 2)

@@ -2139,7 +2139,7 @@ def money_flows_api(
     source: str = Query("", pattern="^(|object|reference)$"),
     since: str = Query("", max_length=32),
     until: str = Query("", max_length=32),
-    folder: str = Query("", pattern="^(|deposit|withdrawal|bankingqr|other)$"),
+    folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     _=Depends(auth),
 ):
     """Normalized gambler↔payment-rail flows from OCR, QR, and case references.
@@ -2372,7 +2372,7 @@ def export_money_flows(
     source: str = Query("object", pattern="^(|object|reference)$"),
     since: str = Query("", max_length=32),
     until: str = Query("", max_length=32),
-    folder: str = Query("", pattern="^(|deposit|withdrawal|bankingqr|other)$"),
+    folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     _=Depends(auth),
 ):
     """Officer Query CSV (opens in Excel): filtered flows with object + stamps.
@@ -2458,7 +2458,7 @@ def money_flows_unique_api(
     source: str = Query("object", pattern="^(|object|reference)$"),
     since: str = Query("", max_length=32),
     until: str = Query("", max_length=32),
-    folder: str = Query("", pattern="^(|deposit|withdrawal|bankingqr|other)$"),
+    folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     _=Depends(auth),
 ):
     """One row per UPI/VPA, bank account, or crypto wallet for officer unique lists."""
@@ -2486,7 +2486,7 @@ def export_money_flows_unique(
     source: str = Query("object", pattern="^(|object|reference)$"),
     since: str = Query("", max_length=32),
     until: str = Query("", max_length=32),
-    folder: str = Query("", pattern="^(|deposit|withdrawal|bankingqr|other)$"),
+    folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     _=Depends(auth),
 ):
     """Unique address CSV — one VPA / account / wallet per row (not every slip)."""

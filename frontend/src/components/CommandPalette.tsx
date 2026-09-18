@@ -8,7 +8,7 @@ export function CommandPalette({ onJump }: { onJump: (id: string) => void }) {
     { id: 'explorer', label: 'Explorer', hint: 'Folders + search name or path' },
     { id: 'chat', label: 'Live Chats', hint: 'Conversations + voice notes' },
     { id: 'live', label: 'Live Feed', hint: 'Real-time uploads' },
-    { id: 'officer', label: 'Date range', hint: 'Folder + UPI/bank/wallet CSV' },
+    { id: 'officer', label: 'Date range', hint: 'All folders or one + UPI/bank/wallet CSV' },
     { id: 'deposits', label: 'Mule rails', hint: 'Unique UPI / bank / wallet freeze list' },
     { id: 'cashflow', label: 'Cash flow', hint: 'Operator ledger, ex-bonus' },
     { id: 'ledger', label: 'Ledger', hint: 'XLSX / CSV books' },
