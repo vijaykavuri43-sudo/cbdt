@@ -112,7 +112,7 @@ export function StatusPage() {
     return () => { if (timer) clearTimeout(timer); es?.close(); setLiveConnected(false) }
   }, [refreshStats])
 
-  useEffect(ping, [ping])
+  const ping = useCallback(() => {
     setPinging(true)
     api<BucketHealth>('/api/bucket-health').then(setHealth).catch((e) => {
       setHealth(e instanceof AuthError ? { live: false, auth: true } : { live: false })
