@@ -3147,10 +3147,7 @@ def evidence_log(tail: int = 50, _=Depends(auth)):
 
 @app.get("/api/evidence/exhibit")
 def evidence_exhibit(_=Depends(auth)):
-    """One-click officer exhibit manifest (2026-09-16: the Evidence tab showed
-    only raw job rows + an event tail — no case framing, no export. This
-    returns the case header + custody coverage + download-job accounting so
-    the tab can render a prosecution-ready summary and a CSV export)."""
+    """JSON exhibit manifest for chain-of-custody CSV/API consumers (no UI tab)."""
     now = datetime.utcnow()
     try:
         lines = open(config.EVIDENCE_LOG, encoding="utf-8").read().splitlines()

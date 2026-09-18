@@ -17,8 +17,9 @@ Local investigation dashboard for **read-only monitoring of the publicly exposed
 | **Bucket Explorer** | Folder tree over the full manifest (SQLite), search, sort, image/audio/text preview, multi-select download with sha256 |
 | **Live Feed** | SSE stream — every new object appears as a card (screenshot thumbnails, wav players, decoded QR badges) with optional sound alert. This is the "catch them live" screen |
 | **Mule Money Flows** | Role-aware deposit and withdrawal evidence: gambler → receiving rail and sending rail → gambler, consolidated candidate ranking, confidence and exact provenance |
-| **UPI / Mules** | VPAs decoded from payment QRs, cross-checked against the case mule master list; NEW VPAs highlighted |
-| **Evidence & Downloads** | Bulk download jobs → files land in `intelligence/analysis/CASE-2026-CBTF/live-monitor/<UTC-date>/` with `_MANIFEST.json`, sha256 chain-of-custody appended to `intelligence/audit/collection-log.jsonl` |
+| **UPI / VPAs** | Unique VPAs decoded from payment QRs, cross-checked against the case mule master list; NEW VPAs highlighted |
+| **Date range** | Folder + UPI/bank/wallet query with unique-address or all-slips CSV |
+| **AI Investigator** | Plain-language questions over the live bucket index |
 
 ## Deploy (GitHub-based — no tarballs)
 
@@ -119,5 +120,5 @@ mule score/priority is an `analyst_conclusion` that requires corroboration.
 
 ```
 backend/   FastAPI app (config, db, s3client, collector, enrich, evidence)
-frontend/  Vite React TS app (pages: Overview, Explorer, LiveFeed, Deposits, Upis, Evidence)
+frontend/  Vite React TS app (pages: Overview, Explorer, LiveFeed, Date range, Mule rails, Wallets, Ask)
 ```
