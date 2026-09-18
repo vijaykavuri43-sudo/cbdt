@@ -110,6 +110,11 @@ export function Wallets() {
   const [network, setNetwork] = useState('')
   const [sort, setSort] = useState('recent')
   const [dlBusy, setDlBusy] = useState<'' | 'hits' | 'distinct' | 'reference'>('')
+  const [popup, setPopup] = useState<'' | 'hits' | 'distinct' | 'reference'>('')
+  const [popupHits, setPopupHits] = useState<WalletRow[]>([])
+  const [popupRef, setPopupRef] = useState<RefWallet[]>([])
+  const [popupErr, setPopupErr] = useState('')
+  const [popupBusy, setPopupBusy] = useState(false)
 
   const refresh = useCallback(() => {
     // 2026-09-16: paginated — old wallets never fall off the newest-N window.
@@ -193,6 +198,35 @@ export function Wallets() {
     }
   }
 
+  async function openPopup(kind: 'hits' | 'distinct' | 'reference') {
+    setPopup(kind)
+    setPopupErr('')
+    setPopupHits([])
+    setPopupRef([])
+    setPopupBusy(true)
+    try {
+      if (kind === 'reference') {
+        const r = ref ?? await api<RefResp>('/api/wallets/reference', {}, 60000)
+        if (!ref) setRef(r)
+        setPopupRef(r.items ?? [])
+      } else {
+        const r = await api<WalletsResp>('/api/wallets', { limit: 2000, offset: 0, distinct: kind === 'distinct' ? 1 : 0 }, 60000)
+        setPopupHits((r.items ?? []).filter((i) => (i.key || '').trim() !== '' || (i.address || '').trim() !== ''))
+      }
+    } catch (e: any) {
+      setPopupErr(e?.message || String(e))
+    } finally {
+      setPopupBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!popup) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPopup('') }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [popup])
+
   return (
     <>
       <div className="pg-header">
@@ -201,7 +235,7 @@ export function Wallets() {
           <div>
             <h1 className="pg-header-title">Crypto Wallets</h1>
             <div className="pg-header-sub">
-              Source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}</span> · wallets parsed from deposit / withdrawal / banking QR / payment / chat screenshots · click a card to download CSV
+              Source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}</span> · wallets parsed from deposit / withdrawal / banking QR / payment / chat screenshots · click a card to open all rows
             </div>
           </div>
         </div>
@@ -228,29 +262,29 @@ export function Wallets() {
         <button
           type="button"
           className="st-card st-card-accent st-card-click"
-          disabled={!!dlBusy}
-          title="Download every bucket-decoded image×wallet row as CSV"
-          onClick={() => void downloadKind('hits', `crypto-wallet-hits-${new Date().toISOString().slice(0, 10)}.csv`)}
+          disabled={popupBusy}
+          title="Open every bucket-decoded image×wallet row on this page"
+          onClick={() => void openPopup('hits')}
         >
           <div className="st-card-label">Wallet hits (bucket-decoded)</div>
           <div className="st-card-value accent">{(data?.wallet_hits_total ?? rows.length).toLocaleString()}</div>
           <div className="st-card-sub">
-            {dlBusy === 'hits' ? 'Preparing CSV…' : `click to download ${(data?.wallet_hits_total ?? 0).toLocaleString()} rows · each hit = one source file`}
+            {popup === 'hits' && popupBusy ? 'Opening…' : `click to view ${(data?.wallet_hits_total ?? 0).toLocaleString()} rows · each hit = one source file`}
           </div>
         </button>
         <button
           type="button"
           className="st-card st-card-click"
-          disabled={!!dlBusy}
-          title="Download one row per distinct address with all source files as CSV"
-          onClick={() => void downloadKind('distinct', `crypto-wallets-distinct-${new Date().toISOString().slice(0, 10)}.csv`)}
+          disabled={popupBusy}
+          title="Open one row per distinct address with all source files"
+          onClick={() => void openPopup('distinct')}
         >
           <div className="st-card-label">Distinct addresses</div>
           <div className="st-card-value">{(data?.distinct_wallets ?? 0).toLocaleString()}</div>
           <div className="st-card-sub">
-            {dlBusy === 'distinct'
-              ? 'Preparing CSV…'
-              : `click to download ${(data?.distinct_wallets ?? 0).toLocaleString()} unique wallets · all source files + proof links`}
+            {popup === 'distinct' && popupBusy
+              ? 'Opening…'
+              : `click to view ${(data?.distinct_wallets ?? 0).toLocaleString()} unique wallets · all source files + proof`}
           </div>
         </button>
         <div className="st-card">
@@ -397,12 +431,12 @@ export function Wallets() {
         <div className="pg-header-right">
           <button
             className="btn"
-            disabled={!!dlBusy}
+            disabled={popupBusy}
             style={{ fontSize: 11 }}
-            title="Download the identified census CSV, LE master operator rows flagged"
-            onClick={() => void downloadKind('reference', `crypto-wallets-identified-${new Date().toISOString().slice(0, 10)}.csv`)}
+            title="Open the identified census on this page"
+            onClick={() => void openPopup('reference')}
           >
-            {dlBusy === 'reference' ? 'Preparing CSV…' : `⬇ Census CSV (${(ref?.identified_total ?? 0).toLocaleString()})`}
+            {popup === 'reference' && popupBusy ? 'Opening…' : `View census (${(ref?.identified_total ?? 0).toLocaleString()})`}
           </button>
         </div>
       </div>
@@ -473,6 +507,111 @@ export function Wallets() {
       <div className="small dim" style={{ marginTop: 8 }}>
         Attribution labels are report attributions, not proof of ownership/control — corroborate via Tronscan history, VASP/KYC, banking records, device evidence.
       </div>
+
+      {popup && (
+        <div className="modal-backdrop" onClick={() => setPopup('')}>
+          <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700 }}>
+                  {popup === 'hits' && `Wallet hits — ${(popupBusy ? data?.wallet_hits_total : popupHits.length)?.toLocaleString() ?? '…'} rows`}
+                  {popup === 'distinct' && `Distinct wallets — ${(popupBusy ? data?.distinct_wallets : popupHits.length)?.toLocaleString() ?? '…'} addresses`}
+                  {popup === 'reference' && `Identified census — ${(popupBusy ? ref?.identified_total : popupRef.length)?.toLocaleString() ?? '…'} wallets`}
+                </div>
+                <div className="small dim">
+                  {popup === 'hits' && 'Every bucket-decoded image × wallet. Source is deposit / withdrawal / chat / bankingqr.'}
+                  {popup === 'distinct' && 'One row per live address. Source is the bucket object path.'}
+                  {popup === 'reference' && 'Previously-identified reference list. Source is the bucket object path, not /api/wallets.'}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                <button
+                  className="btn"
+                  disabled={!!dlBusy || popupBusy}
+                  onClick={() => void downloadKind(popup, `crypto-wallets-${popup}-${new Date().toISOString().slice(0, 10)}.csv`)}
+                >
+                  {dlBusy === popup ? 'Preparing CSV…' : '⬇ Download CSV'}
+                </button>
+                <button className="btn btn-primary" onClick={() => setPopup('')}>Close <span className="kbd" style={{ marginLeft: 4 }}>Esc</span></button>
+              </div>
+            </div>
+            <div className="modal-body" style={{ padding: 0 }}>
+              {popupErr && <div className="money-error" style={{ margin: 12 }}>{popupErr}</div>}
+              {popupBusy && <div className="small dim" style={{ padding: 18 }}>Loading all rows…</div>}
+              {!popupBusy && popup !== 'reference' && (
+                <div className="dp-table-wrap" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                  <table className="dp-table">
+                    <thead>
+                      <tr>
+                        <th>Address</th>
+                        <th>Network</th>
+                        <th>Label</th>
+                        <th>Source</th>
+                        <th>{popup === 'distinct' ? 'First seen' : 'Object time'}</th>
+                        <th>Detail</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {popupHits.map((r) => (
+                        <tr key={(r.key || '') + (r.address ?? '') + (r.last_modified || '')}>
+                          <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>{r.address}</td>
+                          <td>{r.network ?? '—'}</td>
+                          <td className="small">{r.standard ?? '—'}</td>
+                          <td className="small dim mono" title={r.key || ''}>
+                            {originShort(r.key ?? '')}
+                            {r.key?.includes('/') && <div className="tiny dim">{r.key.split('/')[0]}</div>}
+                          </td>
+                          <td className="small">{fmtIST(popup === 'distinct' ? r.first_seen : r.last_modified)}</td>
+                          <td className="small dim">{fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency ?? (r.amount_inr != null ? 'INR' : null))}{r.hits != null ? ` · ${r.hits}×` : ''}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            {r.key && <a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view proof</a>}
+                            {r.address && <>{' · '}<a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a></>}
+                          </td>
+                        </tr>
+                      ))}
+                      {popupHits.length === 0 && (
+                        <tr><td colSpan={7} className="dp-empty">No rows</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!popupBusy && popup === 'reference' && (
+                <div className="dp-table-wrap" style={{ maxHeight: '70vh', overflow: 'auto' }}>
+                  <table className="dp-table">
+                    <thead>
+                      <tr>
+                        <th>Address</th>
+                        <th>Network</th>
+                        <th>Role</th>
+                        <th>First seen</th>
+                        <th>Source</th>
+                        <th>Live</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {popupRef.map((w) => (
+                        <tr key={w.address}>
+                          <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>{w.address}</td>
+                          <td>{w.network ?? '—'}</td>
+                          <td className="small">{w.label || w.role || '—'}</td>
+                          <td className="small">{w.first_seen ? fmtIST(w.first_seen) : '—'}</td>
+                          <td className="small dim mono" title={w.source_path || w.source_ref || ''}>
+                            {w.source_path ? originShort(w.source_path) : '—'}
+                            {w.source_folder && <div className="tiny dim">{w.source_folder}</div>}
+                          </td>
+                          <td>{w.in_live ? 'live ✓' : 'ref-only'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
