@@ -149,7 +149,12 @@ class PaytmRefAsAmountTests(unittest.TestCase):
         self.assertEqual(extract_amount(text), 2100000.0)
         self.assertFalse(amount_is_ref_id(text, 2100000.0, "123456789012"))
 
-    def test_proven_correction_ref_to_150(self):
+    def test_paytm_hero_150_when_rupee_glyph_eaten(self):
+        text = (
+            "146 paytm Fuso Kumar UPI ID: 7903709938-1@okbizaxis a 150 "
+            "18 Sept, 01:46 PM Ref. No: 314965897745 SCRATCHCARD ~ 3149658 97745"
+        )
+        self.assertEqual(extract_amount(text), 150.0)
         from .enrich import proven_amount_correction
 
         new, reason = proven_amount_correction(

@@ -520,6 +520,14 @@ AMOUNT_PATTERNS = [
     re.compile(
         r"(?:\brs\.?\b|\binr\b)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", re.IGNORECASE
     ),
+    # Paytm success: UPI ID then the hero rupees with the ₹ glyph eaten
+    # (officer exhibit deposit/1789719398070.jpg: "okbizaxis a 150" stored
+    # as 31,49,658 from the scratch split of Ref. No 314965897745).
+    # 3–6 digits so day-of-month "18" is not captured.
+    re.compile(
+        r"upi\s*id\s*:\s*\S+\s+[^\d]{0,12}(\d{3,6})\b",
+        re.IGNORECASE,
+    ),
 ]
 # Context clues that an amount is NOT the principal transaction — balance, promo/ads
 _BALANCE_CTX = re.compile(r"balance\s*[:>\-]?\s*[₹%]?\s*[0-9,]*", re.IGNORECASE)
@@ -755,6 +763,7 @@ _AMOUNT_PATTERN_WEIGHTS = {
     4: 6,  # "=2,500" — tesseract reads ₹ as '=' (verified PhonePe misread)
     5: 4,  # spaced thousands "1 000" / "2 000"
     7: 5,  # Rs./INR-prefixed without label
+    8: 12,  # Paytm UPI-ID then hero 3–6 digit amount
     # default 3: bare 2,000 — fallback when ₹ missed by OCR
 }
 
