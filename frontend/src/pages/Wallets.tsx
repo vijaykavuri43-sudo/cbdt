@@ -25,8 +25,8 @@ interface WalletsResp {
   items: WalletRow[]
   wallet_hits_total: number
   distinct_wallets: number
-  by_network: { network: string; count: number; hits?: number }[]
-  extraction_status?: { pending?: number; pending_live?: number; slip_backlog?: number; pending_full_scan?: number }
+  by_network: { network: string; count: number }[]
+  extraction_status?: { pending?: number; pending_live?: number; slip_backlog?: number }
   source?: string
   total?: number
 }
@@ -142,7 +142,7 @@ export function Wallets() {
           <div>
             <h1 className="pg-header-title">Crypto wallets</h1>
             <div className="pg-header-sub">
-              One row per distinct address decoded from bucket images. Date range → Crypto wallets unique uses this same census (plus any OCR-only rails).
+              One row per distinct address decoded from bucket images, with the sample source file for freeze/notice.
             </div>
           </div>
         </div>
@@ -175,23 +175,16 @@ export function Wallets() {
           <div className="st-card-label">Distinct addresses</div>
           <div className="st-card-value accent">{(data?.distinct_wallets ?? 0).toLocaleString()}</div>
           <div className="st-card-sub">
-            {(data?.wallet_hits_total ?? 0).toLocaleString()} image hits · Date range unique Crypto matches this list when folder is All
+            {(data?.wallet_hits_total ?? 0).toLocaleString()} image hits across the bucket · CSV downloads this unique list with source links
           </div>
         </div>
       </div>
-
-      {!!data?.extraction_status?.pending_full_scan && (
-        <div className="tiny dim" style={{ marginBottom: 10 }}>
-          Wallet QR scan still has {data.extraction_status.pending_full_scan.toLocaleString()} images queued — decode is running, not stuck.
-        </div>
-      )}
 
       {data && data.by_network.length > 0 && (
         <div style={{ marginBottom: 12 }} className="small dim">
           {data.by_network.map((n) => (
             <span key={n.network} className="mono" style={{ marginRight: 12 }}>
-              {n.network}: <b>{n.count.toLocaleString()}</b> addresses
-              {n.hits != null ? <span className="dim"> · {n.hits.toLocaleString()} images</span> : null}
+              {n.network}: <b>{n.count.toLocaleString()}</b>
             </span>
           ))}
         </div>
@@ -212,7 +205,7 @@ export function Wallets() {
           >
             <option value="">All networks</option>
             {(data?.by_network ?? []).map((n) => (
-              <option key={n.network} value={n.network}>{n.network} ({n.count.toLocaleString()} addresses)</option>
+              <option key={n.network} value={n.network}>{n.network} ({n.count.toLocaleString()})</option>
             ))}
           </select>
           <select
@@ -255,9 +248,7 @@ export function Wallets() {
                   {originShort(r.key ?? '')}
                 </td>
                 <td className="small dim">
-                  {(r.amount_currency && r.amount_currency.toUpperCase() !== 'INR')
-                    ? fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency)
-                    : '—'}
+                  {fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency ?? (r.amount_inr != null ? 'INR' : null))}
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   <a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view source</a>

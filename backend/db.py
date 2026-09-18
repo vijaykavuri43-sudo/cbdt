@@ -3425,16 +3425,13 @@ def wallet_stats() -> dict:
         "SELECT COUNT(*) n, COUNT(DISTINCT address) d FROM wallet_hits"
     ).fetchone()
     by_net = c.execute(
-        "SELECT network net, COUNT(*) n, COUNT(DISTINCT address) addrs FROM wallet_hits"
-        " GROUP BY network ORDER BY addrs DESC"
+        "SELECT network net, COUNT(*) n FROM wallet_hits"
+        " GROUP BY network ORDER BY n DESC"
     ).fetchall()
     return {
         "wallet_hits": row["n"] or 0,
         "distinct_wallets": row["d"] or 0,
-        "by_network": [
-            {"network": r["net"], "count": r["addrs"] or 0, "hits": r["n"] or 0}
-            for r in by_net
-        ],
+        "by_network": [{"network": r["net"], "count": r["n"]} for r in by_net],
     }
 
 
