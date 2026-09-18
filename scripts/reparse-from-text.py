@@ -40,10 +40,35 @@ def main() -> None:
         changed = False
         amt = enrich.extract_amount(text)
         cur = p.get("amount_inr")
-        if amt is not None and (cur is None or abs(float(cur) - amt) > 0.001):
-            if cur is not None and abs(float(cur) - amt) > 0.001:
-                p["amount_tesseract_raw"] = cur
+        raw = p.get("amount_tesseract_raw")
+        eaten = None
+        if cur is not None:
+            eaten = enrich.correct_rupee_eaten(text, float(cur))
+        if eaten is None and raw is not None:
+            try:
+                eaten = enrich.correct_rupee_eaten(text, float(raw))
+            except (TypeError, ValueError):
+                eaten = None
+        if eaten is not None:
+            if cur is None or abs(float(cur) - eaten) > 0.001:
+                p["amount_tesseract_raw"] = cur if cur is not None else raw
                 p["rupee_eaten"] = True
+                p["amount_inr"] = eaten
+                p["amount_value"] = eaten
+                changed = True
+        elif cur is None and amt is not None:
+            p["amount_inr"] = amt
+            p["amount_value"] = amt
+            changed = True
+        elif (
+            cur is not None
+            and amt is not None
+            and float(cur) < 100
+            and amt >= 100
+            and abs(float(cur) - amt) > 0.001
+        ):
+            # Restore rows a prior reparse smashed with OCR debris (~4).
+            p["amount_tesseract_raw"] = raw or cur
             p["amount_inr"] = amt
             p["amount_value"] = amt
             changed = True

@@ -786,6 +786,11 @@ def _scan_amount_matches(flat: str) -> list[dict]:
                 continue
             if len(raw.split(".", 1)[0]) > 9:
                 continue
+            # OCR debris "~ 4" / "= 8" beside Transfer Details (officer
+            # exhibit deposit/1789721443450.jpeg: reparse stored ₹4 instead
+            # of ₹3,000). PhonePe ~amounts are thousands (~3,000).
+            if pi in (3, 4) and len(raw.split(".", 1)[0]) < 3:
+                continue
             ctx_before = flat[max(0, s - 60) : s]
             ctx_after = flat[e : e + 60]
             ctx_before_low = ctx_before.lower()

@@ -103,7 +103,14 @@ class RupeeEatenSingleHitTests(unittest.TestCase):
         )
         self.assertEqual(extract_amount(text), 1000.0)
 
-    def test_genuine_23000_without_sibling_kept(self):
+    def test_tilde_debris_does_not_beat_true_amount(self):
+        text = (
+            "Transaction Successful Paid to FUSO KUMAR 23,000 "
+            "7903709938-1@okbizaxis Transfer Details ~ 4 "
+            "PhonePe Transaction ID T2609181419577033515139 "
+            "Debited from XXXXXX8766 ~3,000"
+        )
+        self.assertEqual(extract_amount(text), 3000.0)
         text = (
             "Transaction Successful Paid to ACME 23,000 acme@okaxis "
             "Debited from HDFC 23,000 Rupees Twenty Three Thousand Only"
