@@ -46,20 +46,29 @@ export function OfficerStrip() {
     const cutoff = new Date(Date.now() - 864e5).toISOString().slice(0, 19) + 'Z'
     api<Flows>('/api/money-flows', { direction: 'deposit', source: 'object', since: cutoff, limit: 1 }).then(setDep).catch(() => {})
     api<Flows>('/api/money-flows', { direction: 'withdrawal', source: 'object', since: cutoff, limit: 1 }).then(setWd).catch(() => {})
-    api<RailsList>('/api/mule-rails', {
-      priority: 'high',
-      limit: 8,
-      source: 'object',
-      active_since: cutoff,
-    }).then((r) => {
-      setHigh24(r.total ?? 0)
-      setAlerts(r.items ?? [])
-      const t = r.summary?.by_rail_type || {}
+    const highQ = { priority: 'high', source: 'object', active_since: cutoff }
+    Promise.all([
+      api<RailsList>('/api/mule-rails', { ...highQ, limit: 8 }),
+      api<RailsList>('/api/mule-rails', { ...highQ, limit: 2, rail_type: 'crypto_wallet' }),
+      api<RailsList>('/api/mule-rails', { ...highQ, limit: 2, rail_type: 'bank_account' }),
+    ]).then(([all, wallets, accounts]) => {
+      setHigh24(all.total ?? 0)
+      const t = all.summary?.by_rail_type || {}
       setMix({
         upi: t.upi ?? 0,
         wallet: t.crypto_wallet ?? 0,
         account: t.bank_account ?? 0,
       })
+      const seen = new Set<string>()
+      const mixed: RailItem[] = []
+      for (const r of [...(wallets.items || []), ...(accounts.items || []), ...(all.items || [])]) {
+        const k = `${r.rail_type}:${r.rail_id}`
+        if (!r.rail_id || seen.has(k)) continue
+        seen.add(k)
+        mixed.push(r)
+        if (mixed.length >= 8) break
+      }
+      setAlerts(mixed)
     }).catch(() => {})
   }, [])
   useEffect(refresh, [refresh])
