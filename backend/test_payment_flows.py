@@ -615,6 +615,12 @@ class SourceFilterTests(unittest.TestCase):
         self.assertEqual(
             db.mule_rails(limit=10000, offset=0, new_since="2027-01-01")["total"], 0
         )
+        self.assertEqual(
+            db.mule_rails(limit=10000, offset=0, active_since="2026-09-01")["total"], 1
+        )
+        self.assertEqual(
+            db.mule_rails(limit=10000, offset=0, active_since="2026-08-01")["total"], 2
+        )
 
 
 class LedgerParseTests(unittest.TestCase):

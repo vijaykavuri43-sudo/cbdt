@@ -2942,6 +2942,7 @@ def mule_rails(
     offset: int = 0,
     source: str = "",
     new_since: str = "",
+    active_since: str = "",
 ) -> dict:
     """Aggregate observed gambler↔rail flows for analyst triage.
 
@@ -2979,6 +2980,19 @@ def mule_rails(
         )
         args.extend([like] * 6)
     where = " AND ".join(conds)
+    having_bits: list[str] = []
+    having_args: list = []
+    if new_since:
+        having_bits.append("MIN(last_modified)>=?")
+        having_args.append(new_since)
+    if active_since:
+        # Rails that received a deposit in the window — not merely first-seen
+        # then. Officers need 24h receiving UPIs / wallets / accounts.
+        having_bits.append(
+            "SUM(CASE WHEN direction='deposit' AND last_modified>=? THEN 1 ELSE 0 END)>0"
+        )
+        having_args.append(active_since)
+    having_sql = (" HAVING " + " AND ".join(having_bits)) if having_bits else ""
     aggregate = f"""
         SELECT rail_type,rail_id,
           GROUP_CONCAT(DISTINCT NULLIF(account_holder,'')) account_holders,
@@ -3003,9 +3017,9 @@ def mule_rails(
           MAX(last_modified) last_seen
         FROM payment_transactions WHERE {where}
         GROUP BY rail_type,rail_id
-        {("HAVING MIN(last_modified)>=?" if new_since else "")}
+        {having_sql}
     """
-    qargs = args + ([new_since] if new_since else [])
+    qargs = args + having_args
     c = connect()
     # One grouped scan supplies rows and totals. The old implementation ran the
     # same aggregate three times, causing avoidable multi-second API latency.
@@ -3029,6 +3043,11 @@ def mule_rails(
             bool(row["deposit_transactions"] and row["withdrawal_transactions"])
             for row in all_items
         ),
+        "by_rail_type": {
+            "upi": sum(1 for row in all_items if row.get("rail_type") == "upi"),
+            "crypto_wallet": sum(1 for row in all_items if row.get("rail_type") == "crypto_wallet"),
+            "bank_account": sum(1 for row in all_items if row.get("rail_type") == "bank_account"),
+        },
     }
     return {
         "fact_type": "fact",

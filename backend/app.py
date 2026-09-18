@@ -2278,11 +2278,12 @@ def mule_rails_api(
     offset: int = Query(0, ge=0),
     source: str = Query("", pattern="^(|object|reference)$"),
     new_since: str = Query("", max_length=32),
+    active_since: str = Query("", max_length=32),
     _=Depends(auth),
 ):
     """Rank observed payment rails for corroboration—not automatic attribution."""
     cache_key = (
-        f"mule-rails:{rail_type}:{q}:{priority}:{limit}:{offset}:{source}:{new_since}"
+        f"mule-rails:{rail_type}:{q}:{priority}:{limit}:{offset}:{source}:{new_since}:{active_since}"
     )
 
     def build():
@@ -2295,6 +2296,7 @@ def mule_rails_api(
             offset=0,
             source=source,
             new_since=new_since,
+            active_since=active_since,
         )
         all_items = _score_mule_rail_items(raw["items"])
         priority_counts = {
@@ -2304,6 +2306,11 @@ def mule_rails_api(
         if priority:
             all_items = [item for item in all_items if item["priority"] == priority]
         raw["summary"]["priority_counts"] = priority_counts
+        raw["summary"]["by_rail_type"] = {
+            "upi": sum(1 for item in all_items if item.get("rail_type") == "upi"),
+            "crypto_wallet": sum(1 for item in all_items if item.get("rail_type") == "crypto_wallet"),
+            "bank_account": sum(1 for item in all_items if item.get("rail_type") == "bank_account"),
+        }
         raw["total"] = len(all_items)
         raw["items"] = all_items[offset : offset + limit]
         raw["scoring_note"] = (
