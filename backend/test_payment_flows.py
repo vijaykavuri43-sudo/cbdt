@@ -402,6 +402,35 @@ class MoneyFlowTests(unittest.TestCase):
         self.assertEqual(item["withdrawal_transactions"], 1)
         self.assertEqual(item["gamblers"], 2)
 
+    def test_mule_rails_excludes_ocr_template_junk(self):
+        # 2026-09-18: junk VPAs ('only@food', 'kumar@transfer') topped the
+        # rails and were quoted as #1 "mule" by the AI investigator.
+        for key, vpa in (
+            ("deposit/junk1.png", "only@food"),
+            ("deposit/junk2.png", "kumar@transfer"),
+            ("deposit/real.png", "realmule@okaxis"),
+        ):
+            self._object(key)
+            db.mark_enriched(
+                key,
+                {
+                    "kind": "deposit",
+                    "gambler": "G8",
+                    "amount_inr": 500,
+                    "vpa_details": [
+                        {
+                            "vpa": vpa,
+                            "role": "beneficiary",
+                            "role_confidence": "high",
+                        }
+                    ],
+                },
+            )
+        ids = [i["rail_id"] for i in db.mule_rails(limit=10000)["items"]]
+        self.assertNotIn("only@food", ids)
+        self.assertNotIn("kumar@transfer", ids)
+        self.assertIn("realmule@okaxis", ids)
+
 
 class _PagedStore:
     def __init__(self, objects):

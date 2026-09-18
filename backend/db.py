@@ -2498,6 +2498,16 @@ def mule_rails(
     """
     conds = ["rail_id!=''", "rail_type!='unknown'"]
     args: list = []
+    # OCR template junk (receipt boilerplate Tesseract misreads as a VPA,
+    # e.g. 'only@food', 'kumar@transfer'): feed/distinct/exports excluded it
+    # since 2026-09-11 but this aggregate missed the filter, so junk topped
+    # the rails (quoted as #1 "mule" by the AI investigator 2026-09-18).
+    # Same patterns as _VPA_JUNK_PATTERNS, applied to rail_id ('@' in the
+    # patterns means non-VPA rail types are unaffected).
+    conds.append(
+        "NOT (" + " OR ".join(["lower(rail_id) LIKE ?"] * len(_VPA_JUNK_PATTERNS)) + ")"
+    )
+    args.extend([p.lower() for p in _VPA_JUNK_PATTERNS])
     if source == "object":
         conds.append("source_key NOT LIKE 'reference:%'")
     elif source == "reference":
