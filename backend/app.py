@@ -2693,6 +2693,8 @@ _WALLET_REF_EXPORT_COLUMNS = (
     "source_ref",
     "proof_s3_key",
     "in_live",
+    "first_seen_utc",
+    "last_seen_utc",
     "arkham_url",
     "tronscan_url",
     "fact_type",
@@ -2833,10 +2835,12 @@ def export_wallets(
     def build_reference():
         live = _live_wallet_set()
         master = {r["address_lower"]: r for r in load_master_wallet_rows()}
+        times = db.wallet_times_by_address([r.get("address") or "" for r in load_reference_wallets()])
         rows = []
         for r in load_reference_wallets():
             addr = r.get("address") or ""
             m = master.get(addr.lower())
+            t = times.get(addr) or {}
             arkham, tron = _wallet_explorer_urls(addr)
             rows.append(
                 {
@@ -2851,6 +2855,8 @@ def export_wallets(
                     "source_ref": r.get("source_ref") or "",
                     "proof_s3_key": r.get("proof_s3_key") or "",
                     "in_live": "yes" if addr in live else "no",
+                    "first_seen_utc": t.get("first_seen") or "",
+                    "last_seen_utc": t.get("last_seen") or "",
                     "arkham_url": arkham,
                     "tronscan_url": tron,
                     "fact_type": r.get("fact_type") or "fact",
@@ -2869,7 +2875,7 @@ def export_wallets(
         )
     if kind == "reference":
         return _export_response(
-            cached("export-wallets:reference-v1", 30.0, build_reference),
+            cached("export-wallets:reference-v2", 30.0, build_reference),
             _WALLET_REF_EXPORT_COLUMNS,
             "crypto-wallets-identified",
         )
@@ -3282,6 +3288,11 @@ def wallets_reference(_=Depends(auth)):
             }
         )
     items.sort(key=lambda i: (0 if i.get("le_master") else 1, i.get("address") or ""))
+    times = db.wallet_times_by_address([i.get("address") or "" for i in items])
+    for i in items:
+        t = times.get(i.get("address") or "") or {}
+        i["first_seen"] = t.get("first_seen") or ""
+        i["last_seen"] = t.get("last_seen") or ""
     identified = len(items)
     decoded = sum(1 for i in items if i["in_live"])
     return {

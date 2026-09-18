@@ -583,7 +583,9 @@ class Collector:
                 keys = db.pending_wallets(96)
                 if keys:
                     self.enricher.drain_specific(
-                        keys, workers=max(1, config.ENRICH_WORKERS // 2)
+                        keys,
+                        workers=max(1, config.ENRICH_WORKERS // 2),
+                        full_scan=True,
                     )
             except Exception:
                 pass

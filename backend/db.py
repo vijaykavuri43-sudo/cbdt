@@ -1110,23 +1110,24 @@ _WALLET_HINT_LIKES = " OR ".join(
 def pending_wallets(limit: int = 96) -> list[str]:
     """Wallet-priority queue for the background wallet_loop drain.
 
-    Picks pending (a) ALL bankingqr/qrcode/paymentgateway images and
-    (b) hint-named chat_file images, newest first. Bounded to tens of
-    thousands of rows — never the full 287K chat backlog at once.
-    Two-phase like pending_enrichment: fresh head via idx_obj_seen range
-    scan (~ms), bulk fill unsorted (a full ORDER BY over the filtered set
-    cost ~5s on the 1.2M-row manifest).
+    Picks pending (a) ALL bankingqr/qrcode/paymentgateway/payment images,
+    (b) hint-named chat_file images, and (c) any chat_file image seen in the
+    last 24h even without a crypto filename — so generic chat screenshots
+    still get wallet OCR. Never the full 287K chat backlog. Deposit and
+    withdrawal slips are owned by slip_loop (ocr_slip + QR also extracts
+    wallets).
     """
     where = (
         "(enriched=0 AND extract_json IS NULL) "
         "AND (enrich_retry_utc IS NULL "
         "OR enrich_retry_utc <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
         f"AND {_IMG_CLAUSE} "
-        "AND (top_prefix IN ('bankingqr/','qrcode/','paymentgateway/') "
+        "AND (top_prefix IN ('bankingqr/','qrcode/','paymentgateway/','payment/') "
         f"OR (top_prefix='chat_file/' AND ({_WALLET_HINT_LIKES}))) "
     )
     c = connect()
     fresh_cut = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
+    day_cut = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 86400))
     head = [
         r["key"]
         for r in c.execute(
@@ -1135,6 +1136,24 @@ def pending_wallets(limit: int = 96) -> list[str]:
             (fresh_cut, limit),
         ).fetchall()
     ]
+    seen = set(head)
+    if len(head) < limit:
+        chat_where = (
+            "(enriched=0 AND extract_json IS NULL) "
+            "AND (enrich_retry_utc IS NULL "
+            "OR enrich_retry_utc <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
+            f"AND {_IMG_CLAUSE} AND top_prefix='chat_file/' AND seen_utc >= ?"
+        )
+        for r in c.execute(
+            f"SELECT key FROM objects WHERE {chat_where} "
+            "ORDER BY seen_utc DESC LIMIT ?",
+            (day_cut, limit),
+        ).fetchall():
+            if r["key"] not in seen:
+                head.append(r["key"])
+                seen.add(r["key"])
+            if len(head) >= limit:
+                break
     if len(head) >= limit:
         return head
     fill = [
@@ -1144,7 +1163,6 @@ def pending_wallets(limit: int = 96) -> list[str]:
             (limit,),
         ).fetchall()
     ]
-    seen = set(head)
     return head + [k for k in fill if k not in seen][: limit - len(head)]
 
 
@@ -3613,6 +3631,29 @@ def _wallet_counts_legacy() -> dict:
         " WHERE o.extract_json IS NOT NULL"
     ).fetchone()
     return {"feed_total": row["n"] or 0, "distinct_total": row["d"] or 0}
+
+
+def wallet_times_by_address(addresses: list[str]) -> dict[str, dict[str, str]]:
+    """First/last object last_modified per address from wallet_hits (indexed)."""
+    out: dict[str, dict[str, str]] = {}
+    addrs = [a for a in addresses if a]
+    if not addrs or not wallet_index_ready():
+        return out
+    chunk = 400
+    c = connect()
+    for i in range(0, len(addrs), chunk):
+        part = addrs[i : i + chunk]
+        ph = ",".join("?" * len(part))
+        for r in c.execute(
+            "SELECT address, MIN(last_modified) first_seen, MAX(last_modified) last_seen "
+            f"FROM wallet_hits WHERE address IN ({ph}) GROUP BY address",
+            part,
+        ).fetchall():
+            out[r["address"]] = {
+                "first_seen": r["first_seen"] or "",
+                "last_seen": r["last_seen"] or "",
+            }
+    return out
 
 
 def live_wallet_addresses() -> set[str]:

@@ -2686,13 +2686,15 @@ class EnrichmentWorker:
         finally:
             self._drain_lock.release()
 
-    def drain_specific(self, keys: list, workers: int = 1):
+    def drain_specific(self, keys: list, workers: int = 1, full_scan: bool = False):
         """Wallet/slip-priority drain over caller-picked keys.
 
         Own lock (never blocks the live pending drain); shares _cpu_pool.
         Callers pass halved workers so concurrent drains fit the core count.
         Keys already in flight in another drain are skipped via the claim
         registry (duplicate-OCR guard) instead of being re-fetched/re-OCR'd.
+        full_scan=True lets unhinted chat_file images run wallet OCR (wallet_loop
+        only; slip_loop stays False so deposit/withdrawal use the normal path).
         """
         if not keys:
             return
@@ -2702,7 +2704,7 @@ class EnrichmentWorker:
         try:
             fresh = claim_keys(list(keys))
             try:
-                self._drain_keys(fresh, workers, False, "specific")
+                self._drain_keys(fresh, workers, full_scan, "specific")
             finally:
                 release_keys(fresh)
         finally:

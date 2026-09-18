@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, createRefreshGuard, eventsUrl, exportWalletsUrl, objectUrl, post, saveCsvFromUrl, tabHidden } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
-import { fmtMoney } from '../lib/format'
+import { fmtIST, fmtMoney } from '../lib/format'
 
 // Every row is one address decoded from a live bucket image (QR / slip /
 // crypto chat screenshot). Origin is ALWAYS the exact S3 bucket object key —
@@ -59,6 +59,8 @@ interface RefWallet {
   notes?: string
   le_confidence?: string
   le_fact_type?: string
+  first_seen?: string
+  last_seen?: string
 }
 interface RefResp {
   items: RefWallet[]
@@ -196,7 +198,7 @@ export function Wallets() {
           <div>
             <h1 className="pg-header-title">Crypto Wallets</h1>
             <div className="pg-header-sub">
-              Source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}</span> · click a card to download that list as CSV · two tables: live bucket decodes, then identified census (LE operator wallets are badged there)
+              Source: <span className="mono">{data?.source ?? 'gs://cbtf-case-evidence-518405669914/s3-mirror/'}</span> · wallets parsed from deposit / withdrawal / banking QR / payment / chat screenshots · click a card to download CSV
             </div>
           </div>
         </div>
@@ -319,6 +321,7 @@ export function Wallets() {
                 <th>Network</th>
                 <th>Label</th>
                 <th>Origin</th>
+                <th>{distinct ? 'First seen' : 'Object time'}</th>
                 <th>Detail</th>
               <th>Status</th>
               <th></th>
@@ -333,6 +336,12 @@ export function Wallets() {
                 <td className="small dim mono" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key || ''}>
                   {originShort(r.key ?? '')}
                 </td>
+                <td className="small" title={distinct ? `First ${r.first_seen || '—'} UTC · last ${r.last_seen || '—'} UTC` : `${r.last_modified || ''} UTC`}>
+                  {fmtIST(distinct ? r.first_seen : r.last_modified)}
+                  {distinct && r.last_seen && r.last_seen !== r.first_seen && (
+                    <div className="tiny dim">last {fmtIST(r.last_seen)}</div>
+                  )}
+                </td>
                 <td className="small dim" style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.role === 'sender' ? 'From · sender' : r.role === 'beneficiary' ? 'To · recipient' : ''}>
                   {fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency ?? (r.amount_inr != null ? 'INR' : null))}
                 </td>
@@ -346,7 +355,7 @@ export function Wallets() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={7} className="dp-empty">
+                <td colSpan={8} className="dp-empty">
                   <div className="dp-empty-icon">₿</div>
                   <div style={{ fontWeight: 700, marginBottom: 4 }}>No wallets yet on this monitor host</div>
                   <div className="small dim" style={{ maxWidth: 720, margin: '0 auto', lineHeight: 1.5 }}>
@@ -400,6 +409,7 @@ export function Wallets() {
               <th>Network</th>
               <th>Role</th>
               <th>Attribution</th>
+              <th>First seen</th>
               <th>Source</th>
               <th>Proof</th>
               <th>Live</th>
@@ -419,6 +429,12 @@ export function Wallets() {
                 <td>{w.network ?? '—'}</td>
                 <td className="small" title={w.notes || ''}>{w.label || w.role || '—'}</td>
                 <td className="small">{w.attribution || w.notes || '—'}</td>
+                <td className="small" title={w.first_seen ? `${w.first_seen} UTC` : 'Not yet decoded from a live bucket image'}>
+                  {w.first_seen ? fmtIST(w.first_seen) : '—'}
+                  {w.last_seen && w.last_seen !== w.first_seen && (
+                    <div className="tiny dim">last {fmtIST(w.last_seen)}</div>
+                  )}
+                </td>
                 <td className="small dim mono" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.source_ref || w.case_ids || ''}>
                   {w.case_ids || w.source_ref || '—'}
                 </td>
@@ -440,7 +456,7 @@ export function Wallets() {
             ))}
             {(ref?.items ?? []).length === 0 && (
               <tr>
-                <td colSpan={7} className="dp-empty">
+                <td colSpan={8} className="dp-empty">
                   <div className="dp-empty-icon">📋</div>
                   {refError
                     ? <><div style={{ fontWeight: 700, marginBottom: 4 }}>Could not load reference wallets: {refError}</div><button className="btn" onClick={loadRef}>Retry</button></>
