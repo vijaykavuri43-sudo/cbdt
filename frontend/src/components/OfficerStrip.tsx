@@ -10,7 +10,7 @@ interface RailItem {
   candidate_score: number; priority: string; first_seen: string;
 }
 interface RailsList extends Rails { items: RailItem[] }
-interface NewCount { new_not_in_master?: number }
+interface NewCount { new_not_in_master?: number; distinct_wallets?: number }
 
 // Officer briefing strip: last-24h live-evidence money movement + rail triage
 // counts. Amounts are linked-row sums (operator chips may include bonus — see
@@ -33,7 +33,7 @@ export function OfficerStrip() {
     api<Rails>('/api/mule-rails', { limit: 1, new_since: cutoff }).then((r) => setNewRails(r.total ?? 0)).catch(() => {})
     api<RailsList>('/api/mule-rails', { priority: 'high', limit: 5, new_since: cutoff }).then((r) => setAlerts(r.items ?? [])).catch(() => {})
     api<NewCount>('/api/upis', { limit: 1 }).then((r) => setNewVpa(r.new_not_in_master ?? 0)).catch(() => {})
-    api<NewCount>('/api/wallets', { limit: 1 }).then((r) => setNewWal(r.new_not_in_master ?? 0)).catch(() => {})
+    api<NewCount>('/api/wallets', { limit: 1 }).then((r) => setNewWal(r.distinct_wallets ?? r.new_not_in_master ?? 0)).catch(() => {})
   }, [])
   useEffect(refresh, [refresh])
   useEffect(() => {
@@ -58,11 +58,11 @@ export function OfficerStrip() {
         ))}
       </div>
     )}
-    <section className="st-cards money-cards" style={{ marginBottom: 16 }} title="Officer briefing — last 24h live bucket evidence">
+    <section className="st-cards ov-briefing" style={{ marginBottom: 16 }} title="Officer briefing — last 24h live bucket evidence">
       <div className="st-card st-card-accent"><div className="st-card-label">Live deposits · 24h · history from Jul 22, 2026</div><div className="st-card-value accent">{(dep?.transactions ?? 0).toLocaleString()} txns</div><div className="tiny dim money">{fmtINR(dep?.sum_amount_inr)} · {(dep?.transactions ?? 0) === 0 ? `source quiet since ${fmtTime(dep?.src_newest)}` : `newest slip ${fmtTime(dep?.src_newest)}`}</div></div>
       <div className="st-card st-card-money"><div className="st-card-label">Live withdrawals · 24h</div><div className="st-card-value money">{(wd?.transactions ?? 0).toLocaleString()} txns</div><div className="tiny dim money">{fmtINR(wd?.sum_amount_inr)} · {(wd?.transactions ?? 0) === 0 ? `source quiet since ${fmtTime(wd?.src_newest)}` : `newest slip ${fmtTime(wd?.src_newest)}`}</div></div>
       <div className="st-card st-card-warn"><div className="st-card-label">High-priority rails</div><div className="st-card-value warn">{high ?? '—'}</div><div className="tiny dim">{newRails ?? '—'} first seen in 24h · candidates, not attribution</div></div>
-      <div className="st-card"><div className="st-card-label">NEW VPAs / wallets</div><div className="st-card-value">{newVpa ?? '—'} / {newWal ?? '—'}</div><div className="tiny dim">not in master lists</div></div>
+      <div className="st-card"><div className="st-card-label">NEW VPAs / wallets</div><div className="st-card-value">{newVpa ?? '—'} / {newWal ?? '—'}</div><div className="tiny dim">VPAs not in master · wallets = distinct bucket-decoded</div></div>
     </section>
     </>
   )

@@ -191,8 +191,8 @@ export function StatusPage() {
       {/* Officer briefing — last-24h live money movement + rail triage */}
       <OfficerStrip />
 
-      {/* Stat cards */}
-      <div className="st-cards">
+      {/* Stat cards — 12 Sep officer row, without New-since-start */}
+      <div className="st-cards ov-index">
         <div className={`st-card ${st?.phase === 'live-polling' ? 'st-card-accent' : ''}`}>
           <div className="st-card-icon">📡</div>
           <div className="st-card-label">Collector</div>
@@ -209,12 +209,6 @@ export function StatusPage() {
           <div className="st-card-label">Preserved objects indexed</div>
           <div className="st-card-value accent">{(st?.objects_total ?? 0).toLocaleString()}</div>
           <div className="st-card-sub">{fmtBytes(totalBytes)} total data</div>
-        </div>
-
-        <div className="st-card st-card-warn">
-          <div className="st-card-icon">🆕</div>
-          <div className="st-card-label">New since start</div>
-          <div className="st-card-value warn">+{(st?.new_since_start ?? 0).toLocaleString()}</div>
         </div>
 
         <div className={`st-card st-card-money ${liveConnected && eventPulse ? 'st-card-live' : ''}`}>
