@@ -21,7 +21,7 @@
 | Health endpoint | `http://<IP>[:port]/api/healthz` (public, no auth) |
 | App dir on VM | `/opt/s3lm/s3-live-monitor` (git clone of this repo, branch `main`) |
 | Containers | `s3lm` (dash :80→8787) · `s3sync` (mirror worker b1) · `s3lm-b2` (:81) · `s3sync-b2` · `s3lm-b3` (:82) · `s3sync-b3` |
-| Dashboard auth | gated — access key per dashboard: `docker exec <s3lm\|s3lm-b2\|s3lm-b3> cat /root/.local/share/s3-live-monitor/access-token.txt` **on the VM** (each instance has its OWN token; every `/api` route except `/api/healthz` needs `Authorization: Bearer <key>`) |
+| Dashboard auth | SINGLE shared key (2026-09-20): all three dashboards (`s3lm`, `s3lm-b2`, `s3lm-b3`) accept the primary key — read it via `docker exec s3lm cat /root/.local/share/s3-live-monitor/access-token.txt` **on the VM**. (b2/b3 token files in their volumes were overwritten with the primary key; volumes persist across deploys so it survives redeploys. To rotate: write new key to all three files + restart.) Every `/api` route except `/api/healthz` needs `Authorization: Bearer <key>` |
 | Watchdog | `/usr/local/bin/s3lm-watchdog.sh` via cron `/etc/cron.d/s3lm-watchdog` (restarts `s3lm` only after 3 consecutive failed checks; logs to syslog as `s3lm-watchdog`) |
 
 ## 2. SSH — copy-paste (ALWAYS pass `--project` and `--zone`)
