@@ -132,8 +132,28 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-title">GCS EVIDENCE MONITOR</div>
-          <div className="brand-sub mono">{status?.bucket_url.split('//')[1]?.split('/')[0] ?? '…'}</div>
+          <div className="brand-sub mono">{status?.source_label ?? status?.bucket_url.split('//')[1]?.split('/')[0] ?? '…'}</div>
         </div>
+        {status?.peers && status.peers.length > 0 && (
+          <div className="nav-group">
+            <div className="nav-group-label">Sources</div>
+            {status.peers.map((p) => {
+              const here = (status.source_label ?? '') === p.label
+              const href = `${window.location.protocol}//${window.location.hostname}:${p.port}/`
+              return here ? (
+                <div key={p.label} className="nav-item active mono" style={{ fontSize: 12 }}>
+                  <span className="nav-icon">◉</span>
+                  {p.label}
+                </div>
+              ) : (
+                <a key={p.label} className="nav-item mono" style={{ fontSize: 12 }} href={href}>
+                  <span className="nav-icon">○</span>
+                  {p.label} <span className="dim">:{p.port}</span>
+                </a>
+              )
+            })}
+          </div>
+        )}
         <nav>
           {NAV.map((g) => (
             <div key={g.label} className="nav-group">

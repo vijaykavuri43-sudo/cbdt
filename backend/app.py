@@ -447,7 +447,7 @@ def mirror_sync(_=Depends(auth)):
     """
     payload: dict = {
         "gcs_bucket": config.GCS_BUCKET,
-        "status_prefix": "s3-mirror-sync/",
+        "status_prefix": config.SYNC_STATUS_PREFIX,
         "authorization_ref": config.AUTH_REF,
     }
     try:
@@ -457,7 +457,7 @@ def mirror_sync(_=Depends(auth)):
         if client is None:
             raise RuntimeError("GCS client unavailable (object_source not gcs)")
         bucket = client.bucket(config.GCS_BUCKET)
-        blob = bucket.get_blob("s3-mirror-sync/status.json")
+        blob = bucket.get_blob(config.SYNC_STATUS_PREFIX + "status.json")
         if blob is None:
             payload.update(
                 {
@@ -546,6 +546,8 @@ def _build_status():
     except Exception:
         st["objects_total"] = st.get("objects_total", 0)
     st["bucket_url"] = config.SOURCE_ID
+    st["source_label"] = config.SOURCE_LABEL
+    st["peers"] = config.PEERS
     st["object_source"] = config.OBJECT_SOURCE
     st["effective_source"] = _actual_source()
     st["case"] = config.CASE_ID
@@ -2147,9 +2149,7 @@ def money_flows_api(
     Officer Query tab uses direction=both + folder (deposit/withdrawal/bankingqr/other)
     + since/until. Existing Mule Money Flows tab keeps deposit|withdrawal defaults.
     """
-    cache_key = (
-        f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}"
-    )
+    cache_key = f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}"
     # q-searches were cached 5s: every retry re-ran the expensive GROUP BYs.
     # 60s is fine for a search view (no-q fast path stays at 5s).
     return cached(
@@ -2282,9 +2282,7 @@ def mule_rails_api(
     _=Depends(auth),
 ):
     """Rank observed payment rails for corroboration—not automatic attribution."""
-    cache_key = (
-        f"mule-rails:{rail_type}:{q}:{priority}:{limit}:{offset}:{source}:{new_since}:{active_since}"
-    )
+    cache_key = f"mule-rails:{rail_type}:{q}:{priority}:{limit}:{offset}:{source}:{new_since}:{active_since}"
 
     def build():
         # Rank the complete filtered set before pagination so page order and
@@ -2320,8 +2318,12 @@ def mule_rails_api(
         raw["summary"]["priority_counts"] = priority_counts
         raw["summary"]["by_rail_type"] = {
             "upi": sum(1 for item in all_items if item.get("rail_type") == "upi"),
-            "crypto_wallet": sum(1 for item in all_items if item.get("rail_type") == "crypto_wallet"),
-            "bank_account": sum(1 for item in all_items if item.get("rail_type") == "bank_account"),
+            "crypto_wallet": sum(
+                1 for item in all_items if item.get("rail_type") == "crypto_wallet"
+            ),
+            "bank_account": sum(
+                1 for item in all_items if item.get("rail_type") == "bank_account"
+            ),
         }
         raw["total"] = len(all_items)
         raw["items"] = all_items[offset : offset + limit]
@@ -2445,11 +2447,15 @@ def export_money_flows(
             )
         return out
 
-    cache_key = f"export-flows:{direction}:{rail_type}:{q}:{source}:{since}:{until}:{folder}"
+    cache_key = (
+        f"export-flows:{direction}:{rail_type}:{q}:{source}:{since}:{until}:{folder}"
+    )
     rows = cached(cache_key, 30.0, build)
     tag = f"{folder or direction}-{(rail_type or 'all')}-{since or 'start'}-to-{until or 'now'}"
     tag = re.sub(r"[^A-Za-z0-9._-]+", "_", tag)[:80]
-    return _export_response(rows, _MONEY_FLOW_EXPORT_COLUMNS, f"officer-money-flows-{tag}")
+    return _export_response(
+        rows, _MONEY_FLOW_EXPORT_COLUMNS, f"officer-money-flows-{tag}"
+    )
 
 
 _UNIQUE_EXPORT_COLUMNS = (
@@ -2486,7 +2492,9 @@ def money_flows_unique_api(
     _=Depends(auth),
 ):
     """One row per UPI/VPA, bank account, or crypto wallet for officer unique lists."""
-    cache_key = f"flows-u:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}"
+    cache_key = (
+        f"flows-u:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}"
+    )
     return cached(
         cache_key,
         60.0,
@@ -2516,9 +2524,7 @@ def money_flows_unique_hits_api(
     _=Depends(auth),
 ):
     """Every origin object for one unique Date-range address (closable expander)."""
-    cache_key = (
-        f"flows-u-hits:{rail_type}:{rail_id}:{source}:{since}:{until}:{folder}:{limit}:{offset}"
-    )
+    cache_key = f"flows-u-hits:{rail_type}:{rail_id}:{source}:{since}:{until}:{folder}:{limit}:{offset}"
     return cached(
         cache_key,
         30.0,
@@ -2802,11 +2808,15 @@ def _wallet_source_keys() -> dict[str, list[str]]:
     """All bucket object keys per distinct wallet address (newest first)."""
     out: dict[str, list[str]] = {}
     try:
-        rows = db.connect().execute(
-            "SELECT address, key FROM wallet_hits"
-            " WHERE address!='' AND key!=''"
-            " ORDER BY last_modified DESC"
-        ).fetchall()
+        rows = (
+            db.connect()
+            .execute(
+                "SELECT address, key FROM wallet_hits"
+                " WHERE address!='' AND key!=''"
+                " ORDER BY last_modified DESC"
+            )
+            .fetchall()
+        )
     except Exception:
         return out
     for r in rows:
@@ -2857,7 +2867,9 @@ def export_wallets(
             addr = r["address"] or ""
             key = r["key"] or ""
             arkham, tron = _wallet_explorer_urls(addr)
-            amt = r["amount_value"] if r["amount_value"] is not None else r["amount_inr"]
+            amt = (
+                r["amount_value"] if r["amount_value"] is not None else r["amount_inr"]
+            )
             rows.append(
                 {
                     "address": addr,
@@ -2904,7 +2916,9 @@ def export_wallets(
                         "hits": it.get("hits") or len(all_keys) or 1,
                         "first_seen_utc": it.get("first_seen") or "",
                         "last_seen_utc": it.get("last_seen") or "",
-                        "source_folder": _source_folder(key or (all_keys[0] if all_keys else "")),
+                        "source_folder": _source_folder(
+                            key or (all_keys[0] if all_keys else "")
+                        ),
                         "label": it.get("standard") or "",
                         "sample_source_file": key or (all_keys[0] if all_keys else ""),
                         "amount": amt if amt is not None else "",
@@ -2912,11 +2926,13 @@ def export_wallets(
                         "confidence": it.get("confidence") or "",
                         "checksum": it.get("checksum") or "",
                         "known_operator": "yes" if addr.lower() in master else "no",
-                        "dashboard_source_link": _source_link(key) if key else (
-                            _source_link(all_keys[0]) if all_keys else ""
-                        ),
+                        "dashboard_source_link": _source_link(key)
+                        if key
+                        else (_source_link(all_keys[0]) if all_keys else ""),
                         "all_source_files": " | ".join(all_keys),
-                        "all_dashboard_links": " | ".join(_source_link(k) for k in all_keys),
+                        "all_dashboard_links": " | ".join(
+                            _source_link(k) for k in all_keys
+                        ),
                         "arkham_url": arkham,
                         "tronscan_url": tron,
                         "case": config.CASE_ID,
@@ -3347,7 +3363,9 @@ def wallets_api(
         "sort": sort,
         "master_size": len(master_rows),
         "master_rows": master_rows,
-        "master_source": f"LE-SUBMISSION-MASTER/{master_name}" if master_rows else master_name,
+        "master_source": f"LE-SUBMISSION-MASTER/{master_name}"
+        if master_rows
+        else master_name,
         "new_not_in_master": new_not_in_master,
     }
 

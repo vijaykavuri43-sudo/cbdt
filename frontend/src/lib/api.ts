@@ -272,6 +272,8 @@ export interface Status {
   bucket_live_ok_utc?: string | null
   started_utc: string
   bucket_url: string
+  source_label?: string
+  peers?: { label: string; port: number }[]
   object_source?: string
   effective_source?: string
   case: string

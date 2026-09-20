@@ -23,6 +23,33 @@ GCS_BUCKET = os.environ.get("S3LM_GCS_BUCKET", "cbtf-case-evidence-518405669914"
 GCS_PREFIX = os.environ.get("S3LM_GCS_PREFIX", "s3-mirror/")
 SOURCE_ID = f"gs://{GCS_BUCKET}/{GCS_PREFIX}" if OBJECT_SOURCE == "gcs" else BUCKET_URL
 
+# Multi-source support (3-dashboard setup, 2026-09-20): each dashboard instance
+# monitors ONE upstream S3 bucket. SOURCE_LABEL identifies it in the UI/status;
+# SYNC_STATUS_PREFIX is the GCS prefix where that bucket's s3sync worker
+# publishes status.json (must match the worker's S3SYNC_STATUS_PREFIX).
+# PEERS advertises sibling dashboards: "label|port;label|port" — the frontend
+# builds links from window.location.hostname + port (no build-time env baked).
+SOURCE_LABEL = os.environ.get("S3LM_SOURCE_LABEL", "bx-s3-dev-001").strip()
+SYNC_STATUS_PREFIX = (
+    os.environ.get("S3LM_SYNC_STATUS_PREFIX", "s3-mirror-sync/").strip("/") + "/"
+)
+
+
+def _parse_peers() -> list:
+    peers = []
+    for chunk in os.environ.get("S3LM_PEERS", "").split(";"):
+        chunk = chunk.strip()
+        if not chunk or "|" not in chunk:
+            continue
+        label, port = chunk.split("|", 1)
+        label, port = label.strip(), port.strip()
+        if label and port.isdigit():
+            peers.append({"label": label, "port": int(port)})
+    return peers
+
+
+PEERS = _parse_peers()
+
 DATA_DIR = Path(
     os.environ.get("S3LM_DATA", Path.home() / ".local" / "share" / "s3-live-monitor")
 )
@@ -35,6 +62,13 @@ INTELLIGENCE_ROOT = Path(
     os.environ.get("S3LM_INTELLIGENCE_ROOT", REPO_ROOT / "intelligence")
 )
 DOWNLOADS_ROOT = INTELLIGENCE_ROOT / "analysis" / CASE_ID / "live-monitor"
+# Multi-source isolation: sibling dashboards share the intelligence mount, so
+# each non-primary instance appends its subdir (S3LM_DOWNLOADS_SUBDIR) to keep
+# per-object evidence downloads + officer exports from colliding on identical
+# S3 key names across buckets. Default empty = legacy path (unchanged).
+_DOWNLOADS_SUBDIR = os.environ.get("S3LM_DOWNLOADS_SUBDIR", "").strip().strip("/")
+if _DOWNLOADS_SUBDIR:
+    DOWNLOADS_ROOT = DOWNLOADS_ROOT / _DOWNLOADS_SUBDIR
 EVIDENCE_LOG = INTELLIGENCE_ROOT / "audit" / "collection-log.jsonl"
 
 MASTER_UPI_LIST = (
@@ -236,19 +270,36 @@ REFERENCE_UTR_VPA = (
     / "analysis.utr-vpa-join.tsv"
 )
 
-HOT_PREFIXES = [
-    "deposit/",
-    "withdrawal/",
-    "bankingqr/",
-    "qrcode/",
-    "payment/",
-    "chat_file/",
-    "csv-files/",
-    "uploads/",
-]
 
-QR_PREFIXES = ("bankingqr/", "qrcode/", "payment/", "paymentgateway/")
-OCR_PREFIXES = ("deposit/", "withdrawal/")
+def _csv_prefixes(env_name: str, default: list) -> list:
+    """CSV env override for prefix lists (multi-source tuning per instance)."""
+    raw = os.environ.get(env_name, "").strip()
+    if not raw:
+        return list(default)
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+HOT_PREFIXES = _csv_prefixes(
+    "S3LM_HOT_PREFIXES",
+    [
+        "deposit/",
+        "withdrawal/",
+        "bankingqr/",
+        "qrcode/",
+        "payment/",
+        "chat_file/",
+        "csv-files/",
+        "uploads/",
+    ],
+)
+
+QR_PREFIXES = tuple(
+    _csv_prefixes(
+        "S3LM_QR_PREFIXES",
+        ["bankingqr/", "qrcode/", "payment/", "paymentgateway/"],
+    )
+)
+OCR_PREFIXES = tuple(_csv_prefixes("S3LM_OCR_PREFIXES", ["deposit/", "withdrawal/"]))
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 AUDIO_EXTS = {
     ".wav",
@@ -264,35 +315,38 @@ AUDIO_EXTS = {
 }
 TEXT_EXTS = {".txt", ".json", ".csv", ".xml", ".log", ".md", ".html", ".js", ".css"}
 
-DEFAULT_PREFIXES = [
-    "Logo/",
-    "all-casino/",
-    "apk/",
-    "audio/",
-    "aura/",
-    "ball-video/",
-    "ball_by_ball/",
-    "bankingqr/",
-    "banner/",
-    "casino-images/",
-    "chat_file/",
-    "coming-soon/",
-    "csv-files/",
-    "currency/",
-    "deposit/",
-    "icons/",
-    "level/",
-    "notification/",
-    "payment/",
-    "paymentgateway/",
-    "qrcode/",
-    "score-board/",
-    "st8-gaming/",
-    "theme-logo/",
-    "undefined/",
-    "uploads/",
-    "virtual_games/",
-    "withdrawal/",
-]
+DEFAULT_PREFIXES = _csv_prefixes(
+    "S3LM_DEFAULT_PREFIXES",
+    [
+        "Logo/",
+        "all-casino/",
+        "apk/",
+        "audio/",
+        "aura/",
+        "ball-video/",
+        "ball_by_ball/",
+        "bankingqr/",
+        "banner/",
+        "casino-images/",
+        "chat_file/",
+        "coming-soon/",
+        "csv-files/",
+        "currency/",
+        "deposit/",
+        "icons/",
+        "level/",
+        "notification/",
+        "payment/",
+        "paymentgateway/",
+        "qrcode/",
+        "score-board/",
+        "st8-gaming/",
+        "theme-logo/",
+        "undefined/",
+        "uploads/",
+        "virtual_games/",
+        "withdrawal/",
+    ],
+)
 
 ensure_dirs = [DATA_DIR, DOWNLOADS_ROOT]
