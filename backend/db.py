@@ -1052,13 +1052,16 @@ def pending_slips(limit: int = 24) -> list[str]:
     deposit/withdrawal/payment images, newest first — these carry the
     receiving-rail VPAs/UTRs the QR-tier queue never sees. Same two-phase
     pattern as pending_wallets: fresh-hour head, then unsorted bulk fill.
+    Prefix set is config-driven (_slip_prefixes) so bucket-specific slip
+    prefixes (e.g. payment-proofs/) drain instead of idling forever.
     """
+    slip_clause, slip_args = _slip_prefix_clause()
     where = (
         "(enriched=0 AND extract_json IS NULL) "
         "AND (enrich_retry_utc IS NULL "
         "OR enrich_retry_utc <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
         f"AND {_IMG_CLAUSE} "
-        "AND top_prefix IN ('deposit/','withdrawal/','payment/')"
+        f"AND {slip_clause}"
     )
     c = connect()
     fresh_cut = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 3600))
@@ -1067,7 +1070,7 @@ def pending_slips(limit: int = 24) -> list[str]:
         for r in c.execute(
             f"SELECT key FROM objects WHERE {where} AND seen_utc >= ? "
             "ORDER BY seen_utc DESC LIMIT ?",
-            (fresh_cut, limit),
+            (slip_args + [fresh_cut, limit]),
         ).fetchall()
     ]
     if len(head) >= limit:
@@ -1076,11 +1079,25 @@ def pending_slips(limit: int = 24) -> list[str]:
         r["key"]
         for r in c.execute(
             f"SELECT key FROM objects WHERE {where} LIMIT ?",
-            (limit,),
+            (slip_args + [limit]),
         ).fetchall()
     ]
     seen = set(head)
     return head + [k for k in fill if k not in seen][: limit - len(head)]
+
+
+def _slip_prefixes() -> list:
+    """Prefixes owned by slip_loop. Config-driven (2026-09-21 b3 review:
+    hardcoded deposit/withdrawal/payment orphaned payment-proofs/ and
+    payment-proof/ — 8.6k images invisible to every queue). payment/ stays
+    for pre-env back-compat (live queue also covers it; the overlap term
+    in enrichment_progress keeps counts honest)."""
+    return list(dict.fromkeys(list(config.OCR_PREFIXES) + ["payment/"]))
+
+
+def _slip_prefix_clause() -> tuple[str, list]:
+    prefs = _slip_prefixes()
+    return "top_prefix IN (" + ",".join(["?"] * len(prefs)) + ")", prefs
 
 
 def pending_wallet_candidates(limit: int = 200) -> list[str]:
@@ -4222,6 +4239,7 @@ def pending_slip_count() -> int:
     backlog visible so eligible/coverage/ETA stay honest. Served by the
     idx_obj_enrich_pending partial index — no full-table scan.
     """
+    slip_clause, slip_args = _slip_prefix_clause()
     return (
         connect()
         .execute(
@@ -4230,7 +4248,8 @@ def pending_slip_count() -> int:
             "AND (enrich_retry_utc IS NULL "
             "OR enrich_retry_utc <= strftime('%Y-%m-%dT%H:%M:%SZ','now')) "
             f"AND {_IMG_CLAUSE} "
-            "AND top_prefix IN ('deposit/','withdrawal/','payment/')"
+            f"AND {slip_clause}",
+            slip_args,
         )
         .fetchone()[0]
     )
@@ -4256,12 +4275,13 @@ def enrichment_progress() -> dict:
     # stay honest (2026-09-16). Intersect the live WHERE with the slip
     # prefixes so this holds under any SLIP_OCR setting.
     overlap_where, overlap_args = _pending_where(full_scan=False)
+    slip_clause, slip_args = _slip_prefix_clause()
     overlap = (
         connect()
         .execute(
             "SELECT COUNT(*) c FROM objects WHERE (" + overlap_where + ") "
-            "AND top_prefix IN ('deposit/','withdrawal/','payment/')",
-            overlap_args,
+            f"AND {slip_clause}",
+            overlap_args + slip_args,
         )
         .fetchone()["c"]
     )

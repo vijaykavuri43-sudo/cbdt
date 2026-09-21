@@ -262,8 +262,8 @@ services:
       - S3LM_DOWNLOADS_SUBDIR=tw-artifacts-center
       - S3LM_DEFAULT_PREFIXES=QR-images/,payment-proofs/,development/
       - S3LM_HOT_PREFIXES=QR-images/,payment-proofs/
-      - S3LM_QR_PREFIXES=bankingqr/,qrcode/,payment/,paymentgateway/,QR-images/,payment-proofs/
-      - S3LM_OCR_PREFIXES=deposit/,withdrawal/,payment-proofs/
+      - S3LM_QR_PREFIXES=bankingqr/,qrcode/,payment/,paymentgateway/,QR-images/,payment-proofs/,payment-proof/
+      - S3LM_OCR_PREFIXES=deposit/,withdrawal/,payment-proofs/,payment-proof/
       - S3LM_ENRICH_MAX_AGE_HOURS=0
       - S3LM_ENRICH_WORKERS=2
       - S3LM_ENRICH_BATCH=64

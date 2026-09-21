@@ -3064,10 +3064,14 @@ def crypto_filename_hint(key: str) -> bool:
 
 def classify(key: str, full_chat_scan: bool = False) -> str:
     top = key.split("/", 1)[0] + "/"
-    if top in config.QR_PREFIXES:
-        return "qr"
+    # OCR prefixes win over QR prefixes when a prefix sits in both lists
+    # (2026-09-21 b3 review: payment-proofs/ was QR-first, so 4.8k payment
+    # screenshots got QR-decode-only and lost all OCR text/wallets; the OCR
+    # path runs ocr_slip AND merges QR results, so it is strictly richer).
     if top in config.OCR_PREFIXES:
         return "deposit" if "deposit" in top else "withdrawal"
+    if top in config.QR_PREFIXES:
+        return "qr"
     if top == "chat_file/":
         if crypto_filename_hint(key):
             return "deposit"  # gambler-submitted wallet/USDT proof screenshots
