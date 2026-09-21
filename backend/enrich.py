@@ -2937,14 +2937,105 @@ def gemini_ocr_slip(data: bytes) -> dict:
     return base
 
 
+def _threshold_point(v: int) -> int:
+    return 255 if v > 128 else 0
+
+
+def _tesseract_variant_text(data: bytes, variant: str) -> str:
+    """One local tesseract pass over a preprocessed variant (no network).
+
+    Variants mirror the sweep that resolved 5/15 holdout slips locally on
+    2026-09-21 (2x upscale, autocontrast, threshold, psm 6). Gemini is never
+    consulted anywhere on this path — officer instruction 2026-09-21.
+    """
+    try:
+        from PIL import Image, ImageOps
+        import io
+
+        img = Image.open(io.BytesIO(data))
+        try:
+            img = ImageOps.exif_transpose(img)
+        except Exception:
+            pass
+        img = img.convert("L")
+        if variant in ("autocontrast", "upscale_contrast"):
+            try:
+                img = ImageOps.autocontrast(img, cutoff=1.0)
+            except Exception:
+                pass
+        if variant == "threshold":
+            try:
+                img = img.point(_threshold_point)
+            except Exception:
+                pass
+        if variant in ("upscale", "upscale_contrast"):
+            try:
+                resample = getattr(Image, "LANCZOS", None) or getattr(
+                    Image.Resampling, "LANCZOS", 1
+                )
+                img = img.resize((img.size[0] * 2, img.size[1] * 2), resample)
+            except Exception:
+                img = img.resize((img.size[0] * 2, img.size[1] * 2))
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as f:
+            img.save(f.name)
+            r = subprocess.run(
+                [
+                    "tesseract",
+                    f.name,
+                    "stdout",
+                    "--oem",
+                    "1",
+                    "--psm",
+                    "6",
+                    "-l",
+                    "eng",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            return r.stdout or ""
+    except Exception:
+        return ""
+
+
 def groq_ocr_slip(data: bytes) -> dict:
-    """Force Vision path WITHOUT Gemini: tesseract base + Groq vision merge.
+    """Officer re-OCR path WITHOUT Gemini: tesseract sweep + Groq vision merge.
 
     Officer single-key re-OCR (2026-09-21: Gemini off by instruction; Groq
-    holds the OCR quota). Same merge/sanitize contract as gemini_ocr_slip,
-    engine recorded as tesseract+groq. Never raises past a recorded error.
+    holds the OCR quota, local tesseract sweep is the primary reader). The
+    base ocr_slip runs with allow_gemini=False so a missing amount can never
+    trigger a Gemini call; then 2x/autocontrast/threshold variant passes run
+    locally and any CHECKSUM-VALID TRON wallet the single pass missed is
+    merged in (that sweep resolved 5 holdout slips verbatim on 2026-09-21).
+    Same merge/sanitize contract as gemini_ocr_slip, engine recorded as
+    tesseract+groq. Never raises past a recorded error.
     """
-    base = ocr_slip(data)
+    base = ocr_slip(data, allow_gemini=False)
+    try:
+        seen_texts = {base.get("text_sample") or ""}
+        have = {
+            w.get("address") for w in (base.get("wallets") or []) if isinstance(w, dict)
+        }
+        extra: list[dict] = []
+        for variant in ("upscale", "autocontrast", "threshold"):
+            text = _tesseract_variant_text(data, variant)
+            flat = " ".join((text or "").split())
+            if not flat or flat in seen_texts:
+                continue
+            seen_texts.add(flat)
+            for w in extract_wallets(text):
+                addr = w.get("address")
+                if addr in have or w.get("checksum") != "valid":
+                    # Only math-proven addresses merge — a variant pass must
+                    # never smuggle an unvalidated guess into the payload.
+                    continue
+                have.add(addr)
+                extra.append({**w, "ocr_pass": f"tesseract-{variant}"})
+        if extra:
+            base["wallets"] = (base.get("wallets") or []) + extra
+    except Exception:
+        pass
     if base.get("engine") == "tesseract":
         g = None
         if config.GROQ_ENABLED:

@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Any
 
 from . import config, db
@@ -2125,6 +2125,65 @@ def enrich_repair_wallets(
         )
     except Exception as e:
         raise HTTPException(500, f"repair-wallets failed: {e}")
+
+
+class _SourceReplace(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    frm: str = Field("", alias="from")
+    to: str = ""
+
+
+class _SourceDrop(BaseModel):
+    address: str = ""
+    reason: str = ""
+    evidence: str = ""
+
+
+class _SourceCorrection(BaseModel):
+    key: str = ""
+    replace: list[_SourceReplace] = []
+    add: list[str] = []
+    drop: list[_SourceDrop] = []
+    provenance: str = ""
+
+
+class _SourceReadsBody(BaseModel):
+    corrections: list[_SourceCorrection] = []
+    dry_run: bool = True
+
+
+@app.post("/api/enrich/apply-source-reads")
+def enrich_apply_source_reads(body: _SourceReadsBody, _=Depends(auth)):
+    """Apply officer-verified source-image wallet reads (strict math proof).
+
+    dry_run=true (default) validates and reports without writing. Each
+    correction: replace needs from-addr in row + checksum-valid to-addr;
+    add needs checksum-valid addr; drop needs in-row addr + reason +
+    non-wallet evidence (QR payload / txid context). Failures land in
+    `skipped`, never written. Every write is provenance-stamped per key.
+    """
+    try:
+        corrections = [
+            {
+                "key": c.key,
+                "replace": [{"from": r.frm, "to": r.to} for r in c.replace],
+                "add": list(c.add),
+                "drop": [
+                    {
+                        "address": d.address,
+                        "reason": d.reason,
+                        "evidence": d.evidence,
+                    }
+                    for d in c.drop
+                ],
+                "provenance": c.provenance,
+            }
+            for c in body.corrections
+        ]
+        return db.apply_source_wallet_reads(corrections, dry_run=bool(body.dry_run))
+    except Exception as e:
+        raise HTTPException(500, f"apply-source-reads failed: {e}")
 
 
 # ---------------- SSE live feed ----------------

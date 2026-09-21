@@ -2343,6 +2343,212 @@ def repair_txid_wallets(
     }
 
 
+def apply_source_wallet_reads(corrections: list[dict], dry_run: bool = True) -> dict:
+    """Apply officer-verified source-image reads to stored wallet rows.
+
+    STRICT contract (2026-09-21: never assert from a guess):
+    - replace {from,to}: `from` must already be in the row's wallets[];
+      `to` must be a TRON-charset 34-char string that PASSES base58check —
+      or an EVM case-restore (0x+40hex, same hex ignoring case, mandatory
+      provenance: only the stored casing is corrected, no new address).
+    - add [addr]: same math proof required for each addr; skips addrs
+      already present.
+    - drop [{address,reason,evidence}]: `address` must already be in the
+      row; `evidence` (QR payload / txid context proving non-wallet) is
+      mandatory; reason in {qr_fragment, txid_fragment, upi_payload}.
+    Anything failing validation is reported in `skipped`, never written.
+    Provenance is stamped per key (source_wallet_reads) so every change is
+    auditable back to the image read. wallet_hits mirrors the write.
+    """
+    from .enrich import _tron_checksum_ok  # lazy: enrich imports db
+
+    _TRON_STRICT = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+    _DROP_REASONS = {"qr_fragment", "txid_fragment", "upi_payload"}
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    applied: list[dict] = []
+    skipped: list[dict] = []
+    fixes: list[tuple[str, dict]] = []
+    n_replaced = n_added = n_dropped = 0
+    c = connect()
+    for corr in corrections or []:
+        key = str((corr or {}).get("key") or "")
+        prov = str((corr or {}).get("provenance") or "")
+        if not key:
+            skipped.append({"key": key, "reason": "missing key"})
+            continue
+        r = c.execute("SELECT extract_json FROM objects WHERE key=?", (key,)).fetchone()
+        if not r or not r["extract_json"]:
+            skipped.append({"key": key, "reason": "row or payload missing"})
+            continue
+        try:
+            p = json.loads(r["extract_json"])
+        except Exception:
+            skipped.append({"key": key, "reason": "payload unparsable"})
+            continue
+        wallets = p.get("wallets") or []
+        by_addr = {
+            str(w.get("address")): i
+            for i, w in enumerate(wallets)
+            if isinstance(w, dict) and w.get("address")
+        }
+        log: dict = {"key": key, "replaced": [], "added": [], "dropped": []}
+        ok = True
+        for rep in corr.get("replace") or []:
+            frm, to = str(rep.get("from") or ""), str(rep.get("to") or "")
+            if frm not in by_addr:
+                skipped.append(
+                    {"key": key, "reason": f"replace from-addr not in row: {frm}"}
+                )
+                ok = False
+                break
+            if (
+                len(to) != 34
+                or not to.startswith("T")
+                or any(ch not in _TRON_STRICT for ch in to)
+                or not _tron_checksum_ok(to)
+            ):
+                import re as _re
+
+                if not (
+                    _re.fullmatch(r"0x[0-9a-fA-F]{40}", to)
+                    and frm.lower() == to.lower()
+                    and prov
+                ):
+                    skipped.append(
+                        {
+                            "key": key,
+                            "reason": f"replace to-addr fails checksum: {to}",
+                        }
+                    )
+                    ok = False
+                    break
+                # EVM case-restore: same hex address ignoring case, restoring
+                # the source-observed (EIP-55) casing from a unanimous
+                # multi-pass image read. No new address is asserted — only
+                # the stored casing is corrected, so no checksum math applies.
+                # Provenance is mandatory.
+                idx = by_addr[frm]
+                old = wallets[idx]
+                wallets[idx] = {
+                    **old,
+                    "address": to,
+                    "confidence": "high",
+                    "source_read": True,
+                    "evm_case_restored": True,
+                    "source_provenance": prov,
+                }
+                del by_addr[frm]
+                by_addr[to] = idx
+                log["replaced"].append({"from": frm, "to": to})
+                n_replaced += 1
+                continue
+            idx = by_addr[frm]
+            old = wallets[idx]
+            wallets[idx] = {
+                **old,
+                "address": to,
+                "confidence": "high",
+                "checksum": "valid",
+                "source_read": True,
+                "source_provenance": prov,
+            }
+            del by_addr[frm]
+            by_addr[to] = idx
+            log["replaced"].append({"from": frm, "to": to})
+            n_replaced += 1
+        if not ok:
+            continue
+        for addr in corr.get("add") or []:
+            addr = str(addr or "")
+            if addr in by_addr:
+                continue
+            if (
+                len(addr) != 34
+                or not addr.startswith("T")
+                or any(ch not in _TRON_STRICT for ch in addr)
+                or not _tron_checksum_ok(addr)
+            ):
+                skipped.append(
+                    {"key": key, "reason": f"add addr fails checksum: {addr}"}
+                )
+                ok = False
+                break
+            wallets.append(
+                {
+                    "address": addr,
+                    "network": "TRON",
+                    "standard": "TRC-20",
+                    "confidence": "high",
+                    "checksum": "valid",
+                    "source_read": True,
+                    "source_provenance": prov,
+                    "role": "unknown",
+                    "role_confidence": "low",
+                }
+            )
+            by_addr[addr] = len(wallets) - 1
+            log["added"].append(addr)
+            n_added += 1
+        if not ok:
+            continue
+        for d in corr.get("drop") or []:
+            addr = str((d or {}).get("address") or "")
+            reason = str((d or {}).get("reason") or "")
+            evidence = str((d or {}).get("evidence") or "")
+            if addr not in by_addr:
+                skipped.append({"key": key, "reason": f"drop addr not in row: {addr}"})
+                ok = False
+                break
+            if reason not in _DROP_REASONS or not evidence:
+                skipped.append(
+                    {
+                        "key": key,
+                        "reason": f"drop needs reason+evidence: {addr}",
+                    }
+                )
+                ok = False
+                break
+            idx = by_addr[addr]
+            wallets[idx] = None  # type: ignore[assignment]
+            log["dropped"].append(
+                {"address": addr, "reason": reason, "evidence": evidence[:300]}
+            )
+            n_dropped += 1
+        if not ok:
+            continue
+        wallets = [w for w in wallets if w is not None]
+        p["wallets"] = wallets
+        p["source_wallet_reads"] = {
+            "applied_utc": now,
+            "provenance": prov,
+            "replaced": log["replaced"],
+            "added": log["added"],
+            "dropped": log["dropped"],
+        }
+        applied.append(log)
+        fixes.append((key, p))
+    if fixes and not dry_run:
+        with _writer_lock:
+            wc = connect()
+            for key, p in fixes:
+                wc.execute(
+                    "UPDATE objects SET extract_json=? WHERE key=?",
+                    (json.dumps(p, ensure_ascii=False), key),
+                )
+                _sync_wallet_hits(wc, key, p)
+            wc.commit()
+    return {
+        "corrections": len(corrections or []),
+        "applied": len(applied),
+        "skipped": skipped,
+        "wallets_replaced": n_replaced,
+        "wallets_added": n_added,
+        "wallets_dropped": n_dropped,
+        "dry_run": dry_run,
+        "log": applied,
+    }
+
+
 def refresh_payment_summaries() -> dict:
     """Materialize common dashboard aggregates; live rows refresh every minute."""
     refreshed = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
