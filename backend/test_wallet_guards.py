@@ -214,6 +214,30 @@ class TxidWalletRepairPolicyTests(unittest.TestCase):
         )
         self.assertEqual(p["wallets"], [])
 
+    def test_math_valid_mislabeled_row_is_relabeled_unchanged(self):
+        # b1 2026-09-21: rows extracted before the checksum field existed
+        # carry checksum='' on math-valid TRON strings. Repair must upgrade
+        # ONLY the label — no recovery guess, address untouched.
+        self.assertTrue(_tron_checksum_ok(REAL_TRON))
+        res, p = _repair_row(
+            "deposit/repair-test-relabel.jpg",
+            [
+                {
+                    "address": REAL_TRON,
+                    "network": "TRON",
+                    "standard": "TRC-20",
+                    "confidence": "high",
+                    "checksum": "",
+                    "role": "unknown",
+                    "role_confidence": "low",
+                }
+            ],
+            "To " + REAL_TRON,
+        )
+        self.assertEqual(p["wallets"][0]["address"], REAL_TRON)
+        self.assertEqual(p["wallets"][0]["checksum"], "valid")
+        self.assertGreaterEqual(res["wallets_relabeled"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

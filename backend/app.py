@@ -1857,14 +1857,24 @@ def ai_ask_stats(_=Depends(auth)):
 
 
 @app.post("/api/enrich")
-def enrich_now(key: str, gemini: int = 0, _=Depends(auth)):
-    """Re-run enrichment for a single object; gemini=1 forces Gemini Vision when configured."""
+def enrich_now(
+    key: str,
+    gemini: int = 0,
+    kind: str = Query("", pattern="^(|qr|deposit|withdrawal)$"),
+    _=Depends(auth),
+):
+    """Re-run enrichment for a single object; gemini=1 forces Vision re-OCR.
+
+    Vision provider is Groq (Gemini off by 2026-09-21 instruction; Groq holds
+    the OCR quota). QR images decode locally (zxing) with no Vision call.
+    kind= overrides classification for keys with no enrichable prefix
+    (single-key officer action, recorded as enrich_kind_override)."""
     from .enrich import (
         EnrichmentWorker,
         classify,
         decode_qr_image,
         fetch_bytes,
-        gemini_ocr_slip,
+        groq_ocr_slip,
         ocr_slip,
     )
 
@@ -1883,15 +1893,27 @@ def enrich_now(key: str, gemini: int = 0, _=Depends(auth)):
             "Gemini not configured on this host — set GEMINI_API_KEY / S3LM_GEMINI_API_KEY and restart",
         )
     if gemini:
-        # Forced Gemini path: bypass worker heuristic and call gemini_ocr_slip directly
+        # Forced Vision path: bypass worker heuristic and call groq_ocr_slip
+        # directly (Groq holds the quota; no Gemini per 2026-09-21).
         try:
             data = fetch_bytes(object_store, key)
         except Exception as e:
             raise HTTPException(404, f"object not found: {e}")
-        kind = classify(key)
+        auto_kind = classify(key)
+        kind_overridden = False
+        want = (kind or "").strip().lower()
+        if auto_kind == "none" and want in ("qr", "deposit", "withdrawal"):
+            # Officer override for single-key Vision re-OCR: the key carries
+            # no enrichable prefix (e.g. chat_file without filename hint) but
+            # the image is known evidence. Recorded in payload for audit.
+            auto_kind = want
+            kind_overridden = True
+        kind = auto_kind
         if kind in ("deposit", "withdrawal"):
-            payload = gemini_ocr_slip(data)
+            payload = groq_ocr_slip(data)
             payload["kind"] = kind
+            if kind_overridden:
+                payload["enrich_kind_override"] = kind
             # still merge QR as EnrichmentWorker does
             q = decode_qr_image(data)
             if q.get("amount_inr") is not None or q.get("vpa"):

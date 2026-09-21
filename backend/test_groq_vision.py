@@ -107,6 +107,49 @@ class GroqVisionTests(unittest.TestCase):
         finally:
             config.GROQ_ENABLED, config.GROQ_API_KEY = saved
 
+    def test_groq_ocr_slip_merges_without_gemini(self):
+        """Officer re-OCR path (2026-09-21): tesseract base + Groq merge only.
+
+        Groq is the quota-holding Vision provider; Gemini must not be called.
+        """
+        from .enrich import groq_ocr_slip
+
+        from . import config as _config
+
+        saved = _config.GROQ_ENABLED
+        _config.GROQ_ENABLED = True
+        try:
+            base = {
+                "kind": "ocr",
+                "engine": "tesseract",
+                "text_sample": "To TJXhSVWjd2Uo9uu1abhSdZztq9cGEMQPqx",
+                "amount_value": None,
+            }
+            vision = {
+                "amount_value": 500,
+                "amount_currency": "INR",
+                "wallet_address": "TJXhSVWjd2Uo9uu1abhSdZztq9cGEMQPqx",
+                "_vision_engine": "groq",
+                "_model": "qwen/test",
+            }
+            with (
+                mock.patch("backend.enrich.ocr_slip", return_value=dict(base)),
+                mock.patch("backend.enrich._groq_extract", return_value=dict(vision)),
+                mock.patch("backend.enrich._gemini_extract") as gx,
+            ):
+                out = groq_ocr_slip(_tiny_jpeg())
+        finally:
+            _config.GROQ_ENABLED = saved
+        gx.assert_not_called()
+        self.assertEqual(out["engine"], "tesseract+groq")
+        self.assertEqual(out["confidence"], "high")
+        self.assertTrue(
+            any(
+                w.get("address") == "TJXhSVWjd2Uo9uu1abhSdZztq9cGEMQPqx"
+                for w in out.get("wallets", [])
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

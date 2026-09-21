@@ -2179,7 +2179,7 @@ def repair_txid_wallets(
     )
 
     scanned = repaired = need_reocr = dropped_total = 0
-    recovered_total = flagged_total = 0
+    recovered_total = flagged_total = relabeled_total = 0
     samples: list[dict] = []
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     c = connect()
@@ -2210,10 +2210,24 @@ def repair_txid_wallets(
         kept: list[dict] = []
         dropped: list[dict] = []
         recovered: list[dict] = []
+        relabeled: list[str] = []
         undecided = False
         for w in wallets:
             addr = str(w.get("address") or "")
             if not addr:
+                continue
+            if (
+                w.get("network") == "TRON"
+                and w.get("checksum") != "valid"
+                and _tron_checksum_ok(addr)
+            ):
+                # Math is the authority: a TRON-charset string passing
+                # base58check was only ever mislabeled (rows extracted
+                # before the checksum field existed). Upgrade the label,
+                # change nothing else. No assumption, no recovery guess.
+                w = {**w, "checksum": "valid"}
+                relabeled.append(addr)
+                kept.append(w)
                 continue
             reason = None
             if (
@@ -2273,9 +2287,10 @@ def repair_txid_wallets(
                 kept.append(w)
         if undecided:
             need_reocr += 1
-        # Recovered/flagged wallets also modify the payload (address fix or
-        # needs_gemini), so they must be written even with zero drops.
-        touched = bool(dropped or recovered or p.get("needs_gemini"))
+        # Recovered/relabeled/flagged wallets also modify the payload (address
+        # fix, checksum label, or needs_gemini), so they must be written even
+        # with zero drops.
+        touched = bool(dropped or recovered or relabeled or p.get("needs_gemini"))
         if not touched:
             # Nothing to change, but mark scanned so rescan skips settled rows.
             p["txid_wallets_repaired"] = {
@@ -2289,6 +2304,7 @@ def repair_txid_wallets(
         repaired += 1
         dropped_total += len(dropped)
         recovered_total += len(recovered)
+        relabeled_total += len(relabeled)
         if len(samples) < 15:
             samples.append(
                 {"key": r["key"], "dropped": dropped, "recovered": recovered}
@@ -2301,6 +2317,7 @@ def repair_txid_wallets(
             "repaired_from": "batch-force" if force else "batch",
             "dropped": dropped,
             "recovered": recovered,
+            "relabeled": relabeled,
             "kept": len(kept),
         }
         fixes.append((r["key"], p))
@@ -2320,6 +2337,7 @@ def repair_txid_wallets(
         "need_reocr": need_reocr,
         "wallets_dropped": dropped_total,
         "wallets_recovered": recovered_total,
+        "wallets_relabeled": relabeled_total,
         "dry_run": dry_run,
         "samples": samples,
     }

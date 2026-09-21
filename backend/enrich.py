@@ -2937,6 +2937,28 @@ def gemini_ocr_slip(data: bytes) -> dict:
     return base
 
 
+def groq_ocr_slip(data: bytes) -> dict:
+    """Force Vision path WITHOUT Gemini: tesseract base + Groq vision merge.
+
+    Officer single-key re-OCR (2026-09-21: Gemini off by instruction; Groq
+    holds the OCR quota). Same merge/sanitize contract as gemini_ocr_slip,
+    engine recorded as tesseract+groq. Never raises past a recorded error.
+    """
+    base = ocr_slip(data)
+    if base.get("engine") == "tesseract":
+        g = None
+        if config.GROQ_ENABLED:
+            g = _groq_extract(data, base.get("text_sample") or "")
+        else:
+            g = {"_groq_error": "groq-disabled"}
+        if g and not g.get("_groq_error"):
+            _merge_vision(base, g, base.get("text_sample") or "")
+            base["confidence"] = "high"
+        elif g and g.get("_groq_error"):
+            base["_groq_error"] = g["_groq_error"]
+    return base
+
+
 def crypto_filename_hint(key: str) -> bool:
     """chat_file images worth OCR-scanning for wallet addresses (cheap key filter).
 
