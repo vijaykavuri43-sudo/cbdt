@@ -2168,6 +2168,7 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
         _recover_tron_ocr,
         _tron_checksum_ok,
         infer_rail_role,
+        recover_tron_ocr,
     )
 
     scanned = repaired = need_reocr = dropped_total = 0
@@ -2211,7 +2212,7 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
                 # Degraded lead, not proven junk: recover the true address
                 # when lookalike variants validate, else keep flagged for
                 # Vision re-OCR. Never drop — an officer lead must survive.
-                fixed = _recover_tron_ocr(addr)
+                fixed = recover_tron_ocr(addr)
                 pos = sample.find(addr)
                 if pos >= 0:
                     role, rc = infer_rail_role(sample, pos, pos + len(addr))
@@ -2433,9 +2434,7 @@ def _rail_id_shape_sql(rail_type: str) -> str:
             "AND NOT (substr(rail_id,1,1)='T' AND length(rail_id) BETWEEN 26 AND 40)"
         )
     if rail_type == "crypto_wallet":
-        return (
-            "(rail_id LIKE '0x%' OR (substr(rail_id,1,1)='T' AND length(rail_id) BETWEEN 26 AND 40))"
-        )
+        return "(rail_id LIKE '0x%' OR (substr(rail_id,1,1)='T' AND length(rail_id) BETWEEN 26 AND 40))"
     return ""
 
 
@@ -2768,7 +2767,13 @@ def money_flows_unique(
     """One row per UPI/VPA, bank account, or wallet in the date+folder window."""
     if (rail_type or "").strip().lower() == "crypto_wallet":
         return _money_flows_unique_crypto(
-            q=q, source=source, since=since, until=until, folder=folder, limit=limit, offset=offset
+            q=q,
+            source=source,
+            since=since,
+            until=until,
+            folder=folder,
+            limit=limit,
+            offset=offset,
         )
     where, args = _money_flow_filters(
         direction="both",
@@ -2842,7 +2847,9 @@ def _money_flows_unique_crypto(
     """
     limit = max(1, min(int(limit), 1000))
     offset = max(0, int(offset))
-    wh_where, wh_args = _wallet_hit_window_filters(q=q, since=since, until=until, folder=folder)
+    wh_where, wh_args = _wallet_hit_window_filters(
+        q=q, since=since, until=until, folder=folder
+    )
     pt_where, pt_args = _money_flow_filters(
         direction="both",
         rail_type="crypto_wallet",
@@ -2859,7 +2866,9 @@ def _money_flows_unique_crypto(
     )
     union_args = list(wh_args) + list(pt_args)
     c = connect()
-    total = c.execute(f"SELECT COUNT(*) n FROM ({union_sql})", union_args).fetchone()["n"]
+    total = c.execute(f"SELECT COUNT(*) n FROM ({union_sql})", union_args).fetchone()[
+        "n"
+    ]
     hit_row = c.execute(
         f"SELECT COUNT(*) hits, COUNT(DISTINCT address) addrs FROM wallet_hits WHERE {wh_where}",
         wh_args,
@@ -3231,8 +3240,12 @@ def mule_rails(
         ),
         "by_rail_type": {
             "upi": sum(1 for row in all_items if row.get("rail_type") == "upi"),
-            "crypto_wallet": sum(1 for row in all_items if row.get("rail_type") == "crypto_wallet"),
-            "bank_account": sum(1 for row in all_items if row.get("rail_type") == "bank_account"),
+            "crypto_wallet": sum(
+                1 for row in all_items if row.get("rail_type") == "crypto_wallet"
+            ),
+            "bank_account": sum(
+                1 for row in all_items if row.get("rail_type") == "bank_account"
+            ),
         },
     }
     return {

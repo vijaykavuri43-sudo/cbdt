@@ -91,6 +91,56 @@ class TronChecksumTests(unittest.TestCase):
     def test_unrecoverable_returns_none(self):
         self.assertIsNone(_recover_tron_ocr("T000000000000000000000000000000000"))
 
+    # 2026-09-21 census dispute: 39 reported strings, all checksum-INVALID.
+    # None may ever validate; the named lookalike classes must recover.
+    DISPUTE_INVALID = [
+        "TQAiceryW8Pbrpav4gvkNgevVEjpunqm8a",
+        "TJXWJEDRrR7dCSRzVkyQbL2A9ZVh7VHdd1",
+        "TBzz7udHadGokPXJ6TFUVPW6S7LfBEjF9D",
+        "TANW4QKFYFBZX2qQ8yuZCoVNC4qrVUNJpQ",
+        "TQYCXJBLEXbSYSEBriHHpeGvVS9FutyrZM",
+        "THKa488cYP3dwiNikS9UW8N7nruVFtnhia",
+        "TJNgidmSZir8aDWM1PRrTtw5PenMoFb9ss",
+        "TCgLo2vsT4BNxXB5ZNKvW9vgv9tS4TvAkt",
+    ]
+
+    def test_dispute_strings_all_fail_checksum(self):
+        for s in self.DISPUTE_INVALID:
+            self.assertFalse(_tron_checksum_ok(s), s)
+
+    def test_case_flip_pair_recovers(self):
+        from .enrich import recover_tron_ocr
+
+        self.assertEqual(
+            recover_tron_ocr("TBzz7udHadGokPXJ6TFUVPW6S7LfBEjF9D"),
+            "TBzz7udHadGokPXJ6TFUvPw6S7LfBEjF9D",
+        )
+
+    def test_extended_lookalike_classes_recover(self):
+        from .enrich import recover_tron_ocr
+
+        pairs = {
+            # N/h (hawala#2), g/q (N4), E/6 (N5), i/1 (C10), S/5 (C7)
+            "TANW4QKFYFBZX2qQ8yuZCoVNC4qrVUNJpQ": "TAhW4QKFYFBZX2qQ8yuZCoVNC4qrVUNJpQ",
+            "TQAiceryW8Pbrpav4gvkNgevVEjpunqm8a": "TQAiceryW8Pbrpav4gvkNqevVEjpunqm8a",
+            "TQYCXJBLEXbSYSEBriHHpeGvVS9FutyrZM": "TQYCXJBL6XbSYSEBriHHpeGvVS9FutyrZM",
+            "TJNgidmSZir8aDWM1PRrTtw5PenMoFb9ss": "TJNg1dmSZir8aDWM1PRrTtw5PenMoFb9ss",
+            "THKa488cYP3dwiNikS9UW8N7nruVFtnhia": "THKa488cYP3dwiNik59UW8N7nruVFtnhia",
+        }
+        for bad, good in pairs.items():
+            got = recover_tron_ocr(bad)
+            self.assertIsNotNone(got, bad)
+            self.assertEqual(got, good, bad)
+            assert got is not None
+            self.assertTrue(_tron_checksum_ok(got))
+
+    def test_both_variants_invalid_stays_unrecovered(self):
+        from .enrich import recover_tron_ocr
+
+        # N2: canonical and dispute variant are BOTH checksum-invalid —
+        # no valid twin exists within edit distance; must stay flagged.
+        self.assertIsNone(recover_tron_ocr("TCgLo2vsT4BNxXB5ZNKvW9vgv9tS4TvAkt"))
+
 
 def _repair_row(key, wallets, sample):
     import json

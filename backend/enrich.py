@@ -284,50 +284,117 @@ def _tron_checksum_ok(addr: str) -> bool:
 # Relaxed TRON shape for OCR-degraded reads (lookalike errors 0/O, 5/S…).
 # Matches are NEVER kept directly — only checksum-validated variants are.
 TRON_RELAXED_RE = re.compile(r"\b(T[1-9A-HJ-NP-Za-km-z0OIil]{33})\b")
+# Lookalike graph verified against live OCR failures (CASE-2026-CBTF).
+# 2026-09-21: extended with the in-charset classes behind the 39-string
+# census dispute — N/h (TANW4Q→TAhW4Q hawala#2), g/q (TQAice Ngev→Nqev N4),
+# E/6 (TQYCXJBL-E→6 N5), 9/g/q cluster. Case flips (V/v, W/w: TBzz UVPW→UvPw
+# N1) are NOT enumerated here (combinatorial explosion) — the distance-≤2
+# fallback in _recover_tron_ocr covers them in a bounded pass instead.
 _TRON_CONFUSE = {
     "0": "oOQ",
     "O": "o0Q",
     "o": "0O",
-    "I": "1l",
-    "l": "1I",
-    "1": "lI",
+    "I": "1lL",
+    "L": "1I",
+    "l": "1Ii",
+    "i": "1lI",
+    "1": "lIi",
     "S": "589",
     "5": "S6",
     "8": "B6",
     "B": "86",
-    "6": "b85",
+    "6": "b85E",
     "b": "6",
+    "E": "6F",
+    "F": "E",
+    "9": "gq",
+    "g": "q9",
+    "q": "g9",
+    "N": "nhH",
+    "H": "Nnh",
+    "h": "NnH",
+    "n": "h",
 }
+
+
+def _tron_ocr_opts(token: str) -> Optional[list[list[str]]]:
+    """Per-position substitution options over the combined lookalike graph.
+
+    Each position may keep its char, take a confusion-map lookalike, or
+    take its case flip (TRON base58 is case-significant, so a flip is a
+    genuine OCR hypothesis). Returns None for non-TRON shapes.
+    """
+    if len(token) != 34 or not token.startswith("T"):
+        return None
+    strict = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+    opts: list[list[str]] = []
+    for ch in token:
+        o = {ch}
+        for alt in _TRON_CONFUSE.get(ch, ""):
+            if alt in strict:
+                o.add(alt)
+        if ch.isalpha():
+            flip = ch.swapcase()
+            if flip in strict:
+                o.add(flip)
+        opts.append(sorted(o))
+    return opts
 
 
 def _recover_tron_ocr(token: str, combo_cap: int = 1500) -> Optional[str]:
     """Return a checksum-valid variant of an OCR-degraded T-address, else None.
 
-    Tries lookalike substitutions at ambiguous positions (capped combinatorial
-    budget). A wrong guess cannot survive: only base58check-valid output wins.
+    Closest-first: single-edit faults dominate live OCR failures, so exact
+    distance-1 variants are tested before distance-2, before the sparse
+    multi-edit DFS. (The old all-positions DFS bailed on real addresses
+    once the confusion map grew past a handful of spots — 2026-09-21.)
+    A wrong guess cannot survive: only base58check-valid output wins.
     """
-    spots = [
-        (i, token[i] + "".join(o for o in _TRON_CONFUSE[token[i]] if o != token[i]))
-        for i, ch in enumerate(token)
-        if ch in _TRON_CONFUSE
-    ]
-    if not spots:
+    opts = _tron_ocr_opts(token)
+    if opts is None:
         return None
+    base = list(token)
+    n = len(base)
+    alts = [(i, [a for a in opts[i] if a != base[i]]) for i in range(n)]
+    # distance 1
+    for i, choices in alts:
+        for alt in choices:
+            cand = "".join(base[:i] + [alt] + base[i + 1 :])
+            if _tron_checksum_ok(cand):
+                return cand
+    # distance 2 (bounded — the live-census worst case is ~2.5k candidates)
+    tested = 0
+    for a in range(len(alts)):
+        i, choices_i = alts[a]
+        for alt_i in choices_i:
+            for b in range(a + 1, len(alts)):
+                j, choices_j = alts[b]
+                for alt_j in choices_j:
+                    cand = list(base)
+                    cand[i] = alt_i
+                    cand[j] = alt_j
+                    tested += 1
+                    if tested > 6000:
+                        return None
+                    if _tron_checksum_ok("".join(cand)):
+                        return "".join(cand)
+    # sparse multi-edit: legacy full-product DFS only when the budget fits
+    spots = [(i, [base[i]] + choices) for i, choices in alts if choices]
     total = 1
-    for _, opts in spots:
-        total *= len(opts)
+    for _, o in spots:
+        total *= len(o)
         if total > combo_cap:
             return None
-    chars = list(token)
+    chars = list(base)
 
     def _dfs(k: int) -> Optional[str]:
         if k == len(spots):
             cand = "".join(chars)
-            return cand if _tron_checksum_ok(cand) else None
-        i, opts = spots[k]
+            return cand if cand != token and _tron_checksum_ok(cand) else None
+        i, o = spots[k]
         orig = chars[i]
-        for o in opts:
-            chars[i] = o
+        for c in o:
+            chars[i] = c
             hit = _dfs(k + 1)
             if hit:
                 return hit
@@ -335,6 +402,22 @@ def _recover_tron_ocr(token: str, combo_cap: int = 1500) -> Optional[str]:
         return None
 
     return _dfs(0)
+
+
+def _recover_tron_ocr_fallback(token: str, cap: int = 8000) -> Optional[str]:
+    """Legacy entry kept for compatibility; unified search lives above."""
+    return _recover_tron_ocr(token)
+
+
+def recover_tron_ocr(token: str, combo_cap: int = 1500) -> Optional[str]:
+    """Recover a checksum-valid TRON address from an OCR-degraded token.
+
+    Unified closest-first search (distance-1 → distance-2 → sparse
+    multi-edit). Returns None when no checksum-valid variant exists — the
+    caller must keep the token flagged (needs_gemini), never drop it and
+    never assert it.
+    """
+    return _recover_tron_ocr(token, combo_cap)
 
 
 def infer_rail_role(text: str, start: int, end: int) -> tuple[str, str]:
@@ -2339,7 +2422,7 @@ def _groq_extract(
                     last_err = f"{r.status_code}@{model}: {r.text[:160]}"
                     continue
                 j = r.json()
-                msg = ((j.get("choices") or [{}])[0].get("message") or {})
+                msg = (j.get("choices") or [{}])[0].get("message") or {}
                 txt = msg.get("content") or ""
                 parsed = _parse_model_json(txt)
                 if not parsed:
@@ -2362,7 +2445,9 @@ def _merge_vision(out: dict, g: dict, ocr_text: str = "") -> None:
     _merge_gemini(out, g)
     if tag == "groq":
         eng = out.get("engine") or ""
-        out["engine"] = eng.replace("gemini", "groq") if "gemini" in eng else "tesseract+groq"
+        out["engine"] = (
+            eng.replace("gemini", "groq") if "gemini" in eng else "tesseract+groq"
+        )
         out["_groq"] = {k: g[k] for k in g if not k.startswith("_")}
 
 
@@ -2755,9 +2840,7 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
         if eaten is not None:
             out["amount_tesseract_raw"] = out.get("amount_value")
             out["amount_value"] = eaten
-            out["amount_inr"] = (
-                eaten if out.get("amount_currency") == "INR" else None
-            )
+            out["amount_inr"] = eaten if out.get("amount_currency") == "INR" else None
             out["rupee_eaten"] = True
             twin = detect_twin_artifact(text, out.get("amount_tesseract_raw"))
             if twin:
@@ -2815,7 +2898,12 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
         else:
             # Downgrade confidence if we kept an ignored promo candidate — UI shows badge
             out["confidence"] = "medium" if not out.get("amount_ignored") else "low"
-            if out.get("engine") in ("tesseract+gemini", "tesseract+groq", "gemini", "groq"):
+            if out.get("engine") in (
+                "tesseract+gemini",
+                "tesseract+groq",
+                "gemini",
+                "groq",
+            ):
                 out["confidence"] = "high"
     except Exception as e:
         out["error"] = str(e)[:200]
@@ -2829,7 +2917,9 @@ def gemini_ocr_slip(data: bytes) -> dict:
         g = None
         if config.GEMINI_ENABLED:
             g = _gemini_extract(data, base.get("text_sample") or "", manual=True)
-        if (not g or g.get("_gemini_error") or g.get("amount_value") is None) and config.GROQ_ENABLED:
+        if (
+            not g or g.get("_gemini_error") or g.get("amount_value") is None
+        ) and config.GROQ_ENABLED:
             g2 = _groq_extract(data, base.get("text_sample") or "")
             if g2 and not g2.get("_groq_error"):
                 g = g2
