@@ -2397,7 +2397,11 @@ def apply_source_wallet_reads(corrections: list[dict], dry_run: bool = True) -> 
             frm, to = str(rep.get("from") or ""), str(rep.get("to") or "")
             if frm not in by_addr:
                 skipped.append(
-                    {"key": key, "reason": f"replace from-addr not in row: {frm}"}
+                    {
+                        "key": key,
+                        "reason": f"replace from-addr not in row: {frm}",
+                        "row_wallets": sorted(by_addr)[:25],
+                    }
                 )
                 ok = False
                 break
