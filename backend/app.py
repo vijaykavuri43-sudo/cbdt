@@ -2085,6 +2085,7 @@ def enrich_repair_grouping(
 def enrich_repair_wallets(
     dry_run: int = Query(1, ge=0, le=1),
     limit: int = Query(20000, ge=1, le=100000),
+    force: int = Query(0, ge=0, le=1),
     _=Depends(auth),
 ):
     """Remove stored transaction-id fragments kept as crypto wallets.
@@ -2093,9 +2094,13 @@ def enrich_repair_wallets(
     wallets with positive txid-fragment evidence (label gap, ellipsis
     truncation, long-hex run, failed TRON checksum) and flags the row
     repaired. Undecidable rows are counted as need_reocr.
+    force=1 reprocesses rows already stamped by an earlier repair run
+    (recovery-graph upgrades deserve a second pass on still-invalid rows).
     """
     try:
-        return db.repair_txid_wallets(dry_run=bool(dry_run), limit=limit)
+        return db.repair_txid_wallets(
+            dry_run=bool(dry_run), limit=limit, force=bool(force)
+        )
     except Exception as e:
         raise HTTPException(500, f"repair-wallets failed: {e}")
 

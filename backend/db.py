@@ -2145,8 +2145,15 @@ def repair_malformed_amounts(dry_run: bool = True, limit: int = 20000) -> dict:
     }
 
 
-def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
+def repair_txid_wallets(
+    dry_run: bool = True, limit: int = 20000, force: bool = False
+) -> dict:
     """Batch-remove stored transaction-id fragments kept as crypto wallets.
+
+    force=True reprocesses rows already stamped by an earlier repair run
+    (2026-09-21: the OCR-recovery graph was extended, so stamped rows with
+    still-invalid TRON strings deserve a second pass with the new code).
+    Stamp records the code path so repeats stay auditable.
 
     Verified 2026-09-11: a UPI 'Transaction ID …NEF54¢3985c…' fragment was
     stored as a BITCOIN wallet and a truncated-display '…111bcedb…' tail as
@@ -2176,12 +2183,17 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
     samples: list[dict] = []
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     c = connect()
+    stamp_filter = (
+        ""
+        if force
+        else " AND json_extract(o.extract_json,'$.txid_wallets_repaired') IS NULL"
+    )
     rows = c.execute(
         "SELECT o.key AS key, o.extract_json AS extract_json FROM objects o"
         " WHERE o.extract_json IS NOT NULL"
         " AND json_array_length(o.extract_json,'$.wallets') > 0"
-        " AND json_extract(o.extract_json,'$.txid_wallets_repaired') IS NULL"
-        " LIMIT ?",
+        + stamp_filter
+        + " LIMIT ?",
         (limit,),
     ).fetchall()
     fixes: list[tuple[str, dict]] = []
@@ -2268,7 +2280,7 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
             # Nothing to change, but mark scanned so rescan skips settled rows.
             p["txid_wallets_repaired"] = {
                 "repaired_utc": now,
-                "repaired_from": "batch",
+                "repaired_from": "batch-force" if force else "batch",
                 "dropped": [],
                 "kept": len(kept),
             }
@@ -2286,7 +2298,7 @@ def repair_txid_wallets(dry_run: bool = True, limit: int = 20000) -> dict:
         p["wallets"] = kept
         p["txid_wallets_repaired"] = {
             "repaired_utc": now,
-            "repaired_from": "batch",
+            "repaired_from": "batch-force" if force else "batch",
             "dropped": dropped,
             "recovered": recovered,
             "kept": len(kept),
