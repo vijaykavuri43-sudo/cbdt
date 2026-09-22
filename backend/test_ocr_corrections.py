@@ -157,9 +157,7 @@ class PaytmRefAsAmountTests(unittest.TestCase):
         self.assertEqual(extract_amount(text), 150.0)
         from .enrich import proven_amount_correction
 
-        new, reason = proven_amount_correction(
-            self.EXHIBIT, 3149658.0, "314965897745"
-        )
+        new, reason = proven_amount_correction(self.EXHIBIT, 3149658.0, "314965897745")
         self.assertEqual(new, 150.0)
         self.assertEqual(reason, "ref_as_amount")
 
@@ -200,6 +198,21 @@ class JunkVpaTests(unittest.TestCase):
             extract_vpas("Paid to 6239199904©okbizaxis Payment successful"),
             ["6239199904@okbizaxis"],
         )
+
+    def test_supermoney_cashback_boilerplate_rejected(self):
+        # 2026-09-22 live b3: super.money receipt footer "super.money @
+        # Where is my cashback?" glued into VPA 'super.money@where'.
+        self.assertEqual(
+            extract_vpas(
+                "500 Payment successful Krishna Sakriya super.money @ "
+                "Where is my cashback? Explore 3% CASHBACK"
+            ),
+            [],
+        )
+
+    def test_photos_on_glue_token_rejected(self):
+        # 2026-09-22 live b3: stray token glued as 'photos@on'.
+        self.assertEqual(extract_vpas("photos@on Payment successful"), [])
 
 
 class AdDecoyTests(unittest.TestCase):

@@ -273,6 +273,16 @@ class MoneyFlowTests(unittest.TestCase):
             key := "deposit/junk.png",
             {"kind": "deposit", "vpa": "store@completed", "amount_inr": 200},
         )
+        self._object("deposit/junk2.png")
+        db.mark_enriched(
+            "deposit/junk2.png",
+            {"kind": "deposit", "vpa": "super.money@where", "amount_inr": 500},
+        )
+        self._object("deposit/junk3.png")
+        db.mark_enriched(
+            "deposit/junk3.png",
+            {"kind": "deposit", "vpa": "photos@on", "amount_inr": 500},
+        )
         self._object("deposit/real.png")
         db.mark_enriched(
             "deposit/real.png",
@@ -285,9 +295,14 @@ class MoneyFlowTests(unittest.TestCase):
         ]
         self.assertIn("8429410249@okbizaxis", feed_vpas)
         self.assertNotIn("store@completed", feed_vpas)
+        # 2026-09-22 live b3: super.money boilerplate + photos glue token.
+        self.assertNotIn("super.money@where", feed_vpas)
+        self.assertNotIn("photos@on", feed_vpas)
         distinct_vpas = [r["vpa"] for r in db.upi_distinct(10**9)]
         self.assertIn("8429410249@okbizaxis", distinct_vpas)
         self.assertNotIn("store@completed", distinct_vpas)
+        self.assertNotIn("super.money@where", distinct_vpas)
+        self.assertNotIn("photos@on", distinct_vpas)
 
     def test_sender_only_vpas_hidden_by_default(self):
         # A gambler's own VPA under "Paid by" is an innocent counterparty,
@@ -408,6 +423,9 @@ class MoneyFlowTests(unittest.TestCase):
         for key, vpa in (
             ("deposit/junk1.png", "only@food"),
             ("deposit/junk2.png", "kumar@transfer"),
+            # 2026-09-22 live b3: super.money boilerplate + photos glue.
+            ("deposit/junk3.png", "super.money@where"),
+            ("deposit/junk4.png", "photos@on"),
             ("deposit/real.png", "realmule@okaxis"),
         ):
             self._object(key)
@@ -429,6 +447,8 @@ class MoneyFlowTests(unittest.TestCase):
         ids = [i["rail_id"] for i in db.mule_rails(limit=10000)["items"]]
         self.assertNotIn("only@food", ids)
         self.assertNotIn("kumar@transfer", ids)
+        self.assertNotIn("super.money@where", ids)
+        self.assertNotIn("photos@on", ids)
         self.assertIn("realmule@okaxis", ids)
 
 
@@ -640,14 +660,25 @@ class SourceFilterTests(unittest.TestCase):
         c.execute(
             "INSERT INTO payment_transactions(source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,last_modified)"
             " VALUES(?,?,?,?,?,?,?,?)",
-            ("deposit/wallet.png", "deposit", "", 12000, "", "crypto_wallet", wallet, "2026-09-03T11:00:00Z"),
+            (
+                "deposit/wallet.png",
+                "deposit",
+                "",
+                12000,
+                "",
+                "crypto_wallet",
+                wallet,
+                "2026-09-03T11:00:00Z",
+            ),
         )
         c.execute(
             "INSERT INTO payment_transactions(source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,last_modified)"
             " VALUES('deposit/acct.png','deposit','','300','','bank_account','01414700000684','2026-09-03T10:00:00Z')"
         )
         c.commit()
-        out = db.mule_rails(limit=10000, offset=0, source="object", active_since="2026-09-01")
+        out = db.mule_rails(
+            limit=10000, offset=0, source="object", active_since="2026-09-01"
+        )
         ids = [row["rail_id"] for row in out["items"]]
         self.assertEqual(ids[0], wallet)
         self.assertEqual(ids[1], "big@oksbi")

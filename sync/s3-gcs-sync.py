@@ -579,6 +579,61 @@ class SyncWorker(threading.Thread):
                     ref=f"{CASE_ID} deletion-proofing review 2026-09-02",
                 )
                 return
+            if r.status_code == 403:
+                # Listed but not readable at the source (upstream ACL change /
+                # revoked key). 2026-09-22 live b3: ~30 apk/site-image/template
+                # keys denied every cycle -> 182k cumulative "errors". A GET
+                # permission denial is a stable custody fact, not a transient
+                # failure — tombstone TERMINAL (capture exception) so the
+                # retry loop stops hammering it. If the ACL later opens, LIST
+                # rediscovers the key, it syncs, and the tombstone clears.
+                err = (
+                    f"GET {key} -> 403 (forbidden at source before capture; "
+                    f"listed size={size_hint} etag={etag_hint})"
+                )
+                log(f"FORBIDDEN-AT-SOURCE {key[:100]} — terminal tombstone")
+                self._record_failure(key, size_hint, err, etag=etag_hint, terminal=True)
+                try:
+                    fb = bucket_del.blob(
+                        SYNC_STATUS_PREFIX
+                        + "exceptions/"
+                        + utcnow().replace(":", "")
+                        + "-"
+                        + s3_escape(key)[-120:]
+                    )
+                    fb.metadata = {
+                        "source_key": key,
+                        "source_bucket": SOURCE_BUCKET_LABEL,
+                        "case_id": CASE_ID,
+                        "authorization_ref": AUTH_REF,
+                    }
+                    fb.upload_from_string(
+                        json.dumps(
+                            {
+                                "utc": utcnow(),
+                                "key": key,
+                                "size": size_hint,
+                                "etag": etag_hint,
+                                "event": "forbidden_at_source_before_capture",
+                                "case": CASE_ID,
+                                "authorization_ref": AUTH_REF,
+                            },
+                            indent=1,
+                        ),
+                        content_type="application/json",
+                    )
+                except Exception as gcs_err:
+                    log(
+                        f"exception-log upload failed {str(key)[:80]}: {str(gcs_err)[:120]}"
+                    )
+                _audit(
+                    f"SYNC-TOMBSTONE: {key} (size={size_hint}) is listed in "
+                    f"{SOURCE_BUCKET_LABEL} but GET is denied (403) — terminal "
+                    f"capture exception recorded in state DB + GCS exception log",
+                    fact_type="fact",
+                    ref=f"{CASE_ID} 403-terminal review 2026-09-22",
+                )
+                return
             if r.status_code != 200:
                 raise RuntimeError(f"GET {key} -> {r.status_code}")
             etag = (r.headers.get("etag") or "").strip('"')

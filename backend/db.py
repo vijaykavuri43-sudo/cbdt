@@ -3527,6 +3527,11 @@ _VPA_JUNK_PATTERNS = (
     "store@%",
     "%@transfer",
     "%@entertainment",
+    # 2026-09-22 live b3: super.money receipt boilerplate
+    # ("super.money @ Where is my cashback?") + 'photos@on' glue token.
+    # No PSP handle is 'where'/'photos' — exclude from every mule surface.
+    "%@where",
+    "photos@%",
 )
 
 

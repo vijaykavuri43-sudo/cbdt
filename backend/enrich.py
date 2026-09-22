@@ -95,6 +95,12 @@ _VPA_STATUS_WORDS = {
     "rewards",
     "offer",
     "offers",
+    # 2026-09-22 live b3 (tw-artifacts-center payment-proofs/): super.money
+    # receipt boilerplate "super.money @ Where is my cashback?" misread as
+    # VPA 'super.money@where'; stray token glued as 'photos@on'. No UPI
+    # handle is ever 'where' or 'on', so discard outright.
+    "where",
+    "on",
 }
 IFSC_RE = re.compile(r"\b([A-Z]{4})\s*0\s*([A-Z0-9]{6})\b", re.IGNORECASE)
 ACCOUNT_CONTEXT_RE = re.compile(
