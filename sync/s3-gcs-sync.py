@@ -100,8 +100,19 @@ MONITOR_TOKEN_FILE = Path(
         "/root/.local/share/s3-live-monitor/access-token.txt",
     )
 )
+# Fast-path tuning (b2 review 2026-09-25: 690K small slips stalled at ~0.5/s).
+# NOTIFY_TIMEOUT: dashboard handoff per attempt (was 30s x2 — a busy dashboard
+# held all 8 upload workers hostage; now async + short timeout, best-effort).
+NOTIFY_TIMEOUT = float(os.environ.get("S3SYNC_NOTIFY_TIMEOUT", "8"))
+# MEM_LIMIT: objects at/under this size sync fully in RAM (no tempfile+fsync).
+# b2 avg slip is ~300KB, so the default 8MB keeps 95%+ of objects off disk.
+MEM_LIMIT_BYTES = int(os.environ.get("S3SYNC_MEM_LIMIT", str(8 * 1024 * 1024)))
+# QUEUE_MAX: bound in-RAM backlog so a 300K-object catch-up can't balloon the
+# 600M container; listing back-pressures (blocks) while workers drain.
+QUEUE_MAX = int(os.environ.get("S3SYNC_QUEUE_MAX", "20000"))
 
 _log_lock = threading.Lock()
+_stats_lock = threading.Lock()
 
 XMLNS = "{http://s3.amazonaws.com/doc/2006-03-01/}"
 
@@ -110,6 +121,13 @@ def log(msg: str):
     line = f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} {msg}"
     with _log_lock:
         print(line, flush=True)
+
+
+def bump_stat(stats, key: str, delta: int = 1) -> int:
+    """Thread-safe stats increment. Returns the new value (for %N log gates)."""
+    with _stats_lock:
+        stats[key] = stats.get(key, 0) + delta
+        return stats[key]
 
 
 # Degraded write-blocked mode (review 2026-09-08): when GCS writes fail
@@ -360,6 +378,89 @@ class S3Lister:
         return sorted(p for p in out if p and p != "/")
 
 
+class NotifyWorker(threading.Thread):
+    """Async dashboard handoff (b2 review 2026-09-25).
+
+    Upload workers used to POST /api/sync/object inline (30s x2 attempts):
+    when the dashboard was busy (OCR persist + user polling), all 8 workers
+    blocked on notify timeouts (~13K timeouts in 2 days) and upload
+    throughput collapsed to ~0.5/s. Now workers enqueue (non-blocking) and
+    this single thread drains best-effort with a short timeout on its OWN
+    httpx client (no S3 pool contention). A cached bearer token avoids a
+    disk read per object; un-notified keys are still found by the cold
+    crawl, so drops are latency-only, never loss.
+    """
+
+    def __init__(self, notify_q: "queue.Queue", stats, stop_evt):
+        super().__init__(daemon=True, name="s3sync-notify")
+        self.notify_q = notify_q
+        self.stats = stats
+        self.stop = stop_evt
+        self._token = ""
+        self._token_mtime = 0.0
+        self._client: httpx.Client | None = None
+
+    def _token_cached(self) -> str:
+        try:
+            mt = MONITOR_TOKEN_FILE.stat().st_mtime
+            if mt != self._token_mtime:
+                self._token = MONITOR_TOKEN_FILE.read_text(encoding="utf-8").strip()
+                self._token_mtime = mt
+        except OSError:
+            pass
+        return self._token
+
+    def run(self):
+        self._client = httpx.Client(timeout=NOTIFY_TIMEOUT, follow_redirects=True)
+        try:
+            while not self.stop.is_set() or not self.notify_q.empty():
+                try:
+                    item = self.notify_q.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                if item is None:
+                    self.notify_q.task_done()
+                    return
+                if not MONITOR_URL:
+                    self.notify_q.task_done()
+                    continue
+                try:
+                    headers = {}
+                    tok = self._token_cached()
+                    if tok:
+                        headers = {"Authorization": f"Bearer {tok}"}
+                    r = self._client.post(
+                        MONITOR_URL + "/api/sync/object",
+                        headers=headers,
+                        json={
+                            "key": item[0],
+                            "size": item[1],
+                            "etag": item[2],
+                            "last_modified": item[3],
+                        },
+                        timeout=NOTIFY_TIMEOUT,
+                    )
+                    if r.status_code >= 300:
+                        raise RuntimeError(f"HTTP {r.status_code}")
+                    bump_stat(self.stats, "notified")
+                except Exception as e:
+                    n_err = bump_stat(self.stats, "notify_errors")
+                    if n_err <= 5 or n_err % 200 == 0:
+                        log(
+                            f"dashboard notify deferred for {item[0][:80]}: "
+                            f"{str(e)[:100]}"
+                            + (f" ({n_err} total)" if n_err > 5 else "")
+                        )
+                finally:
+                    self.notify_q.task_done()
+        finally:
+            try:
+                if self._client is not None:
+                    self._client.close()
+            except Exception:
+                pass
+
+
 class SyncWorker(threading.Thread):
     """GET from S3 (throttled) -> sha256 -> upload to GCS with custody metadata."""
 
@@ -372,6 +473,7 @@ class SyncWorker(threading.Thread):
         stats,
         stop_evt,
         get_throttle: Throttle,
+        notify_q: "queue.Queue | None" = None,
     ):
         super().__init__(daemon=True, name=f"s3sync-{wid}")
         self.s3 = s3_client
@@ -380,6 +482,7 @@ class SyncWorker(threading.Thread):
         self.stats = stats
         self.stop = stop_evt
         self.get_throttle = get_throttle
+        self.notify_q = notify_q
         self._db = None  # created inside run(): sqlite conns are thread-bound
 
     def run(self):
@@ -409,7 +512,7 @@ class SyncWorker(threading.Thread):
             try:
                 self.sync_one(item)
             except Exception as e:
-                self.stats["errors"] += 1
+                bump_stat(self.stats, "errors")
                 log(f"[w{self.name[-1]}] ERROR {str(key)[:100]}: {str(e)[:160]}")
                 self._record_failure(
                     key,
@@ -473,53 +576,27 @@ class SyncWorker(threading.Thread):
             )
 
     def _notify_dashboard(self, key: str, size: int, etag: str, last_modified: str):
-        """Push an uploaded object into the manifest immediately.
+        """Enqueue an async dashboard handoff (non-blocking).
 
         Object keys are user-prefixed rather than time-sorted, so a watermark
         poll cannot guarantee low-latency discovery. The version-aware cold
         crawl remains the fallback; this authenticated local notification is
         the fast path and contains metadata only (no evidence bytes).
+
+        b2 review 2026-09-25: the old inline POST (30s x2) blocked upload
+        workers past every dashboard hiccup (~13K timeouts in 2 days,
+        throughput ~0.5/s). Now fire-and-forget into NotifyWorker's queue;
+        drops are latency-only (cold crawl recovers), never loss.
         """
-        if not MONITOR_URL:
+        notify_q = getattr(self, "notify_q", None)
+        if not MONITOR_URL or notify_q is None:
             return
         try:
-            token = MONITOR_TOKEN_FILE.read_text(encoding="utf-8").strip()
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
-            payload = {
-                "key": key,
-                "size": size,
-                "etag": etag,
-                "last_modified": last_modified,
-            }
-            # Log review 2026-09-03: 10s timeout with no retry lost 68/87
-            # notifies when the dashboard was busy (full-table COUNT(*) per
-            # request). 30s + one retry; dashboard hot paths are fixed too.
-            last_err: Exception | None = None
-            for attempt in range(2):
-                try:
-                    r = self.s3.post(
-                        MONITOR_URL + "/api/sync/object",
-                        headers=headers,
-                        json=payload,
-                        timeout=30.0,
-                    )
-                    if r.status_code >= 300:
-                        raise RuntimeError(f"HTTP {r.status_code}")
-                    last_err = None
-                    break
-                except Exception as e:
-                    last_err = e
-            if last_err is not None:
-                raise last_err
-            self.stats["notified"] += 1
-        except Exception as e:
-            self.stats["notify_errors"] += 1
-            n_err = self.stats["notify_errors"]
-            if n_err <= 5 or n_err % 50 == 0:
-                log(
-                    f"dashboard notify deferred for {key[:80]}: {str(e)[:100]}"
-                    + (f" ({n_err} total)" if n_err > 5 else "")
-                )
+            notify_q.put_nowait((key, size, etag, last_modified))
+        except queue.Full:
+            n_err = bump_stat(self.stats, "notify_errors")
+            if n_err <= 5 or n_err % 200 == 0:
+                log(f"notify queue full, deferred {key[:80]} ({n_err} total)")
 
     def sync_one(self, item: tuple):
         key, size_hint, etag_hint = item
@@ -638,57 +715,83 @@ class SyncWorker(threading.Thread):
                 raise RuntimeError(f"GET {key} -> {r.status_code}")
             etag = (r.headers.get("etag") or "").strip('"')
             last_modified = r.headers.get("last-modified") or ""
+            try:
+                content_len = int(r.headers.get("content-length") or "0")
+            except ValueError:
+                content_len = 0
             blob = self.bucket.blob(GCS_PREFIX + key)
             h_sha = hashlib.sha256()
             n = 0
-            import tempfile
+            iso_ts = normalize_ts(last_modified) or utcnow()
+            # ext-first: the S3 source lies about content-type for some
+            # QR objects (text/plain for real JPEGs) — trust the key.
+            ctype = (
+                mimetypes.guess_type(key)[0]
+                or r.headers.get("content-type")
+                or "application/octet-stream"
+            )
+            meta = {  # set before upload; not a kwarg
+                "source_key": key,
+                "source_bucket": SOURCE_BUCKET_LABEL,
+                "s3_etag": etag,
+                "sha256": "",  # filled after hashing
+                "last_modified": iso_ts,  # ISO-8601 — Defect B fixed at source
+                "case_id": CASE_ID,
+                "authorization_ref": AUTH_REF,
+            }
+            use_mem = (
+                0 < content_len <= MEM_LIMIT_BYTES
+                or 0 < (size_hint or 0) <= MEM_LIMIT_BYTES
+            )
+            if use_mem:
+                # Fast path (b2 review 2026-09-25): ~300KB slips never touch
+                # disk — one RAM buffer, no tempfile/fsync round-trip.
+                import io
 
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".s3sync")
-            try:
-                for chunk in r.iter_bytes(1024 * 1024):
+                buf = io.BytesIO()
+                for chunk in r.iter_bytes(1024 * 256):
                     if self.stop.is_set():
                         raise RuntimeError("stop requested mid-transfer")
-                    tmp.write(chunk)
+                    buf.write(chunk)
                     h_sha.update(chunk)
                     n += len(chunk)
-                tmp.flush()
-                os.fsync(tmp.fileno())
-                iso_ts = normalize_ts(last_modified) or utcnow()
-                blob.metadata = {  # set before upload; not a kwarg
-                    "source_key": key,
-                    "source_bucket": SOURCE_BUCKET_LABEL,
-                    "s3_etag": etag,
-                    "sha256": h_sha.hexdigest(),
-                    "last_modified": iso_ts,  # ISO-8601 — Defect B fixed at source
-                    "case_id": CASE_ID,
-                    "authorization_ref": AUTH_REF,
-                }
-                with open(tmp.name, "rb") as f:
-                    # ext-first: the S3 source lies about content-type for some
-                    # QR objects (text/plain for real JPEGs) — trust the key.
-                    blob.upload_from_file(
-                        f,
-                        content_type=mimetypes.guess_type(key)[0]
-                        or r.headers.get("content-type")
-                        or "application/octet-stream",
-                    )
-                self._record(key, n, etag, h_sha.hexdigest(), blob.generation)
-                self._clear_failure(key)
-                self.stats["uploaded"] += 1
-                self.stats["bytes"] += n
-                self._notify_dashboard(key, n, etag, iso_ts)
-                if self.stats["uploaded"] % 200 == 0:
-                    log(
-                        f"  … {self.stats['uploaded']} uploaded "
-                        f"({self.stats['bytes'] / 1e6:.1f} MB) "
-                        f"errors={self.stats['errors']}"
-                    )
-            finally:
-                tmp.close()
+                meta["sha256"] = h_sha.hexdigest()
+                blob.metadata = meta
+                blob.upload_from_string(buf.getvalue(), content_type=ctype)
+            else:
+                import tempfile
+
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".s3sync")
                 try:
-                    os.unlink(tmp.name)
-                except OSError:
-                    pass
+                    for chunk in r.iter_bytes(1024 * 1024):
+                        if self.stop.is_set():
+                            raise RuntimeError("stop requested mid-transfer")
+                        tmp.write(chunk)
+                        h_sha.update(chunk)
+                        n += len(chunk)
+                    tmp.flush()
+                    os.fsync(tmp.fileno())
+                    meta["sha256"] = h_sha.hexdigest()
+                    blob.metadata = meta
+                    with open(tmp.name, "rb") as f:
+                        blob.upload_from_file(f, content_type=ctype)
+                finally:
+                    tmp.close()
+                    try:
+                        os.unlink(tmp.name)
+                    except OSError:
+                        pass
+            self._record(key, n, etag, h_sha.hexdigest(), blob.generation)
+            self._clear_failure(key)
+            bump_stat(self.stats, "bytes", n)
+            done = bump_stat(self.stats, "uploaded")
+            self._notify_dashboard(key, n, etag, iso_ts)
+            if done % 200 == 0:
+                log(
+                    f"  … {done} uploaded "
+                    f"({self.stats['bytes'] / 1e6:.1f} MB) "
+                    f"errors={self.stats['errors']}"
+                )
         finally:
             r.close()
 
@@ -834,7 +937,9 @@ def main():
         log(f"started (DEGRADED): S3 {S3_BUCKET_URL} -> gs://{GCS_BUCKET}/{GCS_PREFIX}")
     log(
         f"state={STATE_DB} get_rate={RATE_PER_SEC}/s list_rate={LIST_RATE_PER_SEC}/s "
-        f"workers={WORKERS} cycle={CYCLE_SEC}s"
+        f"workers={WORKERS} cycle={CYCLE_SEC}s "
+        f"notify_timeout={NOTIFY_TIMEOUT}s mem_limit={MEM_LIMIT_BYTES // 1048576}MB "
+        f"queue_max={QUEUE_MAX}"
     )
 
     # Publish an immediate STARTING status (review 2026-09-02): /api/mirror-sync
@@ -873,9 +978,12 @@ def main():
     else:
         log(f"state DB knows {mirror_known:,} mirror objects — skipping preload")
 
-    rate_q: KeyQueue = KeyQueue()
+    rate_q: KeyQueue = KeyQueue(maxsize=max(1000, QUEUE_MAX))
+    notify_q: queue.Queue = queue.Queue(maxsize=max(1000, QUEUE_MAX))
+    notifier = NotifyWorker(notify_q, stats, stop_evt)
+    notifier.start()
     workers = [
-        SyncWorker(i, s3_http, bucket, rate_q, stats, stop_evt, get_throttle)
+        SyncWorker(i, s3_http, bucket, rate_q, stats, stop_evt, get_throttle, notify_q)
         for i in range(WORKERS)
     ]
     for w in workers:
@@ -1126,9 +1234,17 @@ def main():
     finally:
         stop_evt.set()
         for _ in workers:
-            rate_q.put(None)
+            try:
+                rate_q.put(None, timeout=5)
+            except queue.Full:
+                pass
         for w in workers:
             w.join(timeout=30)
+        try:
+            notify_q.put(None, timeout=5)
+        except queue.Full:
+            pass
+        notifier.join(timeout=30)
         log(
             f"final: uploaded={stats['uploaded']} bytes={stats['bytes']:,} "
             f"errors={stats['errors']}"

@@ -212,8 +212,16 @@ services:
       - S3SYNC_SOURCE_LABEL=bxs3dev001
       - S3SYNC_HOT_PREFIXES=deposit/,withdrawal/
       - S3SYNC_STATE_DB=/root/.local/share/s3-sync/state.db
-      - S3SYNC_RATE_PER_SEC=${S3SYNC_RATE_PER_SEC:-4}
-      - S3SYNC_WORKERS=${S3SYNC_WORKERS:-8}
+      # b2 review 2026-09-25: 690K small slips (~300KB avg) stalled at ~0.5/s
+      # behind a 4/s throttle + sync notify blocking. Async notify + in-RAM
+      # fast path now allow 24/s x 16 workers (~4-6/s sustained real-world
+      # with GCS handshake overhead; ~5x the old ceiling).
+      - S3SYNC_RATE_PER_SEC=${S3SYNC_RATE_PER_SEC_B2:-24}
+      - S3SYNC_LIST_RATE_PER_SEC=${S3SYNC_LIST_RATE_PER_SEC_B2:-20}
+      - S3SYNC_WORKERS=${S3SYNC_WORKERS_B2:-16}
+      - S3SYNC_NOTIFY_TIMEOUT=${S3SYNC_NOTIFY_TIMEOUT:-8}
+      - S3SYNC_MEM_LIMIT=${S3SYNC_MEM_LIMIT:-8388608}
+      - S3SYNC_QUEUE_MAX=${S3SYNC_QUEUE_MAX:-20000}
       - S3SYNC_CYCLE_SEC=${S3SYNC_CYCLE_SEC:-60}
       - S3SYNC_CATCHUP_CYCLE_SEC=${S3SYNC_CATCHUP_CYCLE_SEC:-5}
       - S3SYNC_MAX_BYTES=${S3SYNC_MAX_BYTES:-536870912}
@@ -230,7 +238,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 600M
+          memory: 1G
     healthcheck:
       test: ["CMD-SHELL", "grep -qs 's3-gcs-sync' /proc/1/cmdline"]
       interval: 30s

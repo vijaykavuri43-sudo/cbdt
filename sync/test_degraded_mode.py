@@ -94,6 +94,25 @@ def _denied_worker(state_db):
     return w
 
 
+def test_notify_dashboard_is_async_enqueue():
+    """Review 2026-09-25 (b2 ~0.5/s stall): the dashboard handoff must never
+    block upload workers. _notify_dashboard enqueues; a missing queue (legacy
+    hand-built workers) is a silent no-op, never an exception."""
+    import queue as _q
+
+    w = sync.SyncWorker.__new__(sync.SyncWorker)
+    w.notify_q = _q.Queue()
+    w.stats = {"notified": 0, "notify_errors": 0}
+    w._notify_dashboard("deposit/x.jpg", 123, "etag1", "2026-09-25T00:00:00Z")
+    assert w.notify_q.qsize() == 1
+    item = w.notify_q.get_nowait()
+    assert item[0] == "deposit/x.jpg"
+
+    w2 = sync.SyncWorker.__new__(sync.SyncWorker)  # no notify_q attr at all
+    w2.stats = {"notified": 0, "notify_errors": 0}
+    w2._notify_dashboard("deposit/y.jpg", 1, "", "")  # must not raise
+
+
 def test_get_403_terminal_tombstone_no_error():
     """Review 2026-09-22 (live b3: 182k cumulative errors): an S3 GET 403
     (listed but unreadable — upstream ACL) is a stable custody fact, not a
