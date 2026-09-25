@@ -1029,6 +1029,89 @@ def main():
             queued = 0
             oversized = 0
             root_files = 0
+
+            # Heartbeat refactor (review 2026-09-10): one builder serves the
+            # pre-drain publish, the in-drain heartbeat, and the post-drain
+            # snapshot, so status.json utc never goes stale during 30+ min
+            # drains (832K-object listings kept the dashboard at STALE).
+            #
+            # b2 review 2026-09-25: with the bounded queue, a 300K catch-up
+            # back-pressures the LIST phase itself for hours — publish a live
+            # "listing" heartbeat from inside the listing loop too, or the
+            # dashboard sits on the cycle-0 "starting" snapshot all catch-up.
+            def publish_cycle_status(state_label, queued_pending, took_sec):
+                (mirror_n2,) = state.execute("SELECT COUNT(*) FROM synced").fetchone()
+                (retr2,) = state.execute(
+                    "SELECT COUNT(*) FROM sync_failures "
+                    "WHERE fail_count>0 AND terminal=0"
+                ).fetchone()
+                (term2,) = state.execute(
+                    "SELECT COUNT(*) FROM sync_failures WHERE terminal=1"
+                ).fetchone()
+                hb.metadata = {"case_id": CASE_ID, "authorization_ref": AUTH_REF}
+                hb.upload_from_string(
+                    f"{utcnow()} cycle={cycle} alive\n",
+                    content_type="text/plain",
+                )
+                sb = bucket.blob(SYNC_STATUS_PREFIX + "status.json")
+                sb.metadata = {
+                    "case_id": CASE_ID,
+                    "authorization_ref": AUTH_REF,
+                }
+                inv = source_inventory_summary(state, tops or targets)
+                sb.upload_from_string(
+                    json.dumps(
+                        {
+                            "utc": utcnow(),
+                            "cycle": cycle,
+                            "state": state_label,
+                            "writes_blocked": WRITE_STATE["blocked"],
+                            "writes_block_reason": WRITE_STATE["reason"][:160],
+                            "queued_pending": queued_pending,
+                            "tombstones_pending": retr2,
+                            "tombstones_terminal": term2,
+                            "cycle_took_sec": round(took_sec, 1),
+                            "scanned_this_cycle": cycle_scanned,
+                            "scanned_total": stats["scanned"],
+                            "queued": queued,
+                            "uploaded_total": stats["uploaded"],
+                            "bytes_total": stats["bytes"],
+                            "errors": stats["errors"],
+                            "dashboard_notified": stats["notified"],
+                            "dashboard_notify_errors": stats["notify_errors"],
+                            "oversized_skipped": oversized,
+                            "gcs_mirror_objects": mirror_n2,
+                            "preserved_only_estimate": max(
+                                0,
+                                mirror_n2 - int(inv["source_inventory_objects"]),
+                            )
+                            if inv["source_inventory_complete"]
+                            else None,
+                            **inv,
+                            "s3_bucket": S3_BUCKET_URL,
+                            "gcs_target": f"gs://{GCS_BUCKET}/{GCS_PREFIX}",
+                            "case": CASE_ID,
+                            "authorization_ref": AUTH_REF,
+                        },
+                        indent=1,
+                    ),
+                    content_type="application/json",
+                )
+
+            last_list_hb = time.monotonic()
+
+            def maybe_list_heartbeat():
+                """Publish while LISTing if 60s elapsed (bounded-queue catch-up)."""
+                nonlocal last_list_hb
+                if time.monotonic() - last_list_hb >= 60:
+                    last_list_hb = time.monotonic()
+                    try:
+                        publish_cycle_status(
+                            "listing", rate_q.qsize(), time.monotonic() - t0
+                        )
+                    except Exception as e:
+                        log(f"list heartbeat failed: {str(e)[:120]}")
+
             # Deletion-proofing: retry every tombstoned object each cycle
             # BEFORE new listings (review 2026-09-02). If the object is back
             # or was a transient failure it syncs and the tombstone clears;
@@ -1104,6 +1187,7 @@ def main():
                                 rate_q.put((k2, s2, e2))
                                 queued += 1
                             page_buf = []
+                            maybe_list_heartbeat()
                     if page_buf:
                         for k2, s2, e2, _ in diff_against_state(state, page_buf):
                             if s2 > MAX_SYNC_BYTES:
@@ -1134,70 +1218,8 @@ def main():
             # catch-up took ~40 min). Publishing only after the drain left
             # status.json absent, and the dashboard reported "NO SYNC YET —
             # mirror may be frozen" during perfectly normal catch-up.
-            #
-            # Heartbeat refactor (review 2026-09-10): one builder serves the
-            # pre-drain publish, the in-drain heartbeat, and the post-drain
-            # snapshot, so status.json utc never goes stale during 30+ min
-            # drains (832K-object listings kept the dashboard at STALE).
-            def publish_cycle_status(state_label, queued_pending, took_sec):
-                (mirror_n2,) = state.execute("SELECT COUNT(*) FROM synced").fetchone()
-                (retr2,) = state.execute(
-                    "SELECT COUNT(*) FROM sync_failures "
-                    "WHERE fail_count>0 AND terminal=0"
-                ).fetchone()
-                (term2,) = state.execute(
-                    "SELECT COUNT(*) FROM sync_failures WHERE terminal=1"
-                ).fetchone()
-                hb.metadata = {"case_id": CASE_ID, "authorization_ref": AUTH_REF}
-                hb.upload_from_string(
-                    f"{utcnow()} cycle={cycle} alive\n",
-                    content_type="text/plain",
-                )
-                sb = bucket.blob(SYNC_STATUS_PREFIX + "status.json")
-                sb.metadata = {
-                    "case_id": CASE_ID,
-                    "authorization_ref": AUTH_REF,
-                }
-                inv = source_inventory_summary(state, tops or targets)
-                sb.upload_from_string(
-                    json.dumps(
-                        {
-                            "utc": utcnow(),
-                            "cycle": cycle,
-                            "state": state_label,
-                            "writes_blocked": WRITE_STATE["blocked"],
-                            "writes_block_reason": WRITE_STATE["reason"][:160],
-                            "queued_pending": queued_pending,
-                            "tombstones_pending": retr2,
-                            "tombstones_terminal": term2,
-                            "cycle_took_sec": round(took_sec, 1),
-                            "scanned_this_cycle": cycle_scanned,
-                            "scanned_total": stats["scanned"],
-                            "queued": queued,
-                            "uploaded_total": stats["uploaded"],
-                            "bytes_total": stats["bytes"],
-                            "errors": stats["errors"],
-                            "dashboard_notified": stats["notified"],
-                            "dashboard_notify_errors": stats["notify_errors"],
-                            "oversized_skipped": oversized,
-                            "gcs_mirror_objects": mirror_n2,
-                            "preserved_only_estimate": max(
-                                0,
-                                mirror_n2 - int(inv["source_inventory_objects"]),
-                            )
-                            if inv["source_inventory_complete"]
-                            else None,
-                            **inv,
-                            "s3_bucket": S3_BUCKET_URL,
-                            "gcs_target": f"gs://{GCS_BUCKET}/{GCS_PREFIX}",
-                            "case": CASE_ID,
-                            "authorization_ref": AUTH_REF,
-                        },
-                        indent=1,
-                    ),
-                    content_type="application/json",
-                )
-
+            # (publish_cycle_status is defined above the listing loop since
+            # b2 review 2026-09-25 so the listing phase heartbeats too.)
             try:
                 publish_cycle_status(
                     "syncing" if queued else "idle", queued, time.monotonic() - t0
