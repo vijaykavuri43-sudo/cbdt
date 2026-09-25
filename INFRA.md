@@ -92,6 +92,15 @@ sudo docker logs --since 10m s3sync-b3 2>&1 | tail -n 30   # b3 mirror logs
 
 ## 6. Change log (keep this updated when infra moves)
 
+- 2026-09-25: b2 sync 40x speedup (`s3sync-b2` was ~0.5/s, 68h cycle-1 drain,
+  13K dashboard-notify timeouts). Root causes: 4/s shared throttle +
+  synchronous 30s×2 `/api/sync/object` notify blocking all 8 workers +
+  tempfile+fsync per ~300KB slip + racy stats. Fix: async `NotifyWorker`
+  (own HTTP pool, 8s timeout, cached token, best-effort), 8 MB in-RAM fast
+  path, thread-safe stats, bounded 20K queue with back-pressure, live
+  "listing" heartbeat (bounded queue stalls LIST for hours — status.json
+  stayed at "starting"). b2 now `24/s × 16 workers` (1G mem); live verified
+  ~23–25/s, errors=0. b1/b3 keep conservative rates, same code fast path.
 - 2026-09-20: 3-bucket monitoring live. Added `s3lm-b2` (:81, `bxs3dev001`,
   690K keys deposit/withdrawal slips, slip-OCR on, 2 enrich workers, 10G cap)
   + `s3sync-b2` (→ `s3-mirror-bxs3dev001/`) and `s3lm-b3` (:82,
