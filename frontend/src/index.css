@@ -559,7 +559,8 @@ input[type="text"]::placeholder { color: var(--dim); }
 .oq-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .oq-field input,
 .oq-field select,
-input[type="date"] {
+input[type="date"],
+input[type="time"] {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);
@@ -571,6 +572,8 @@ input[type="date"] {
 }
 .oq-field-wide { grid-column: 1 / -1; }
 .oq-grid-dates { grid-template-columns: repeat(3, minmax(160px, 1fr)); }
+.oq-grid-datetime { grid-template-columns: 1.3fr 1fr 1.3fr 1fr 1.4fr; }
+@media (max-width: 1100px) { .oq-grid-datetime { grid-template-columns: repeat(3, minmax(140px, 1fr)); } }
 .oq-presets-field { justify-content: flex-end; }
 .oq-seg { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .oq-tabs { display: flex; flex-wrap: wrap; gap: 6px; }

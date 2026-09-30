@@ -110,6 +110,46 @@ function defaultTo(): string {
   return isoDate(new Date())
 }
 
+const ALL_DAY_FROM = '00:00'
+const ALL_DAY_TO = '23:59'
+
+function combineDateTime(date: string, time: string, isEnd: boolean): string {
+  if (!date) return ''
+  const fallback = isEnd ? ALL_DAY_TO : ALL_DAY_FROM
+  const raw = (time || fallback).trim() || fallback
+  const parts = raw.split(':')
+  const hh = (parts[0] || (isEnd ? '23' : '00')).padStart(2, '0')
+  const mm = (parts[1] || '00').padStart(2, '0').slice(0, 2)
+  let ss = parts[2]?.slice(0, 2) ?? (isEnd ? '59' : '00')
+  if (!parts[2]) ss = isEnd ? '59' : '00'
+  return `${date}T${hh}:${mm}:${ss}Z`
+}
+
+function utcIsoToIstShort(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const ist = new Date(d.getTime() + 5.5 * 3600 * 1000)
+  const dd = String(ist.getUTCDate()).padStart(2, '0')
+  const mo = String(ist.getUTCMonth() + 1).padStart(2, '0')
+  const hh = String(ist.getUTCHours()).padStart(2, '0')
+  const mm = String(ist.getUTCMinutes()).padStart(2, '0')
+  return `${dd}-${mo} ${hh}:${mm} IST`
+}
+
+function shortUtc(iso: string): string {
+  // "2026-09-23T10:30:00Z" -> "23-09 10:30"
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/)
+  if (m) return `${m[3]}-${m[2]} ${m[4]}:${m[5]}`
+  return iso.length > 16 ? iso.slice(0, 16).replace('T', ' ') : iso
+}
+
+function describeRange(since: string, until: string): string {
+  const istA = utcIsoToIstShort(since)
+  const istB = utcIsoToIstShort(until)
+  const ist = istA && istB ? ` (${istA} → ${istB})` : ''
+  return `${shortUtc(since)} → ${shortUtc(until)} UTC${ist}`
+}
+
 function railColLabel(rail: RailType): string {
   if (rail === 'upi') return 'UPI / VPA'
   if (rail === 'bank_account') return 'Account number'
@@ -138,12 +178,15 @@ function clickOnControl(target: EventTarget | null): boolean {
 }
 
 function csvFilename(kind: View, next: { folder: Folder; rail_type: RailType; since: string; until: string }): string {
-  return `${kind === 'unique' ? 'unique-addresses' : 'all-slips'}-${next.folder}-${railFileTag(next.rail_type)}-${next.since}-to-${next.until}.csv`
+  const safe = (s: string) => s.replace(/:/g, '').replace(/T/g, '_')
+  return `${kind === 'unique' ? 'unique-addresses' : 'all-slips'}-${next.folder}-${railFileTag(next.rail_type)}-${safe(next.since)}-to-${safe(next.until)}.csv`
 }
 
 export function OfficerQuery() {
   const [fromDate, setFromDate] = useState(defaultFrom)
   const [toDate, setToDate] = useState(defaultTo)
+  const [fromTime, setFromTime] = useState(ALL_DAY_FROM)
+  const [toTime, setToTime] = useState(ALL_DAY_TO)
   const [folder, setFolder] = useState<Folder>('all')
   const [railType, setRailType] = useState<RailType>('upi')
   const [view, setView] = useState<View>('unique')
@@ -212,6 +255,13 @@ export function OfficerQuery() {
     }
   }
 
+  function currentSinceUntil(): { since: string; until: string } {
+    return {
+      since: combineDateTime(fromDate, fromTime, false),
+      until: combineDateTime(toDate, toTime, true),
+    }
+  }
+
   function apply() {
     if (!fromDate || !toDate) {
       setError('Select both From and To dates.')
@@ -221,9 +271,14 @@ export function OfficerQuery() {
       setError('From date must be on or before To date.')
       return
     }
+    const { since, until } = currentSinceUntil()
+    if (since > until) {
+      setError('From date+time must be on or before To date+time.')
+      return
+    }
     void run({
-      since: fromDate,
-      until: toDate,
+      since,
+      until,
       folder,
       rail_type: railType,
       view,
@@ -233,17 +288,17 @@ export function OfficerQuery() {
 
   function pickFolder(next: Folder) {
     setFolder(next)
-    if (applied) void run({ ...applied, folder: next, since: fromDate, until: toDate, q: queryInput.trim() })
+    if (applied) void run({ ...applied, folder: next, ...currentSinceUntil(), q: queryInput.trim() })
   }
 
   function pickRail(next: RailType) {
     setRailType(next)
-    if (applied) void run({ ...applied, rail_type: next, since: fromDate, until: toDate, q: queryInput.trim() })
+    if (applied) void run({ ...applied, rail_type: next, ...currentSinceUntil(), q: queryInput.trim() })
   }
 
   function pickView(next: View) {
     setView(next)
-    if (applied) void run({ ...applied, view: next, since: fromDate, until: toDate, q: queryInput.trim() })
+    if (applied) void run({ ...applied, view: next, ...currentSinceUntil(), q: queryInput.trim() })
   }
 
   async function downloadCsv(kind: View) {
@@ -268,6 +323,13 @@ export function OfficerQuery() {
     from.setUTCDate(from.getUTCDate() - (days - 1))
     setFromDate(isoDate(from))
     setToDate(to)
+    setFromTime(ALL_DAY_FROM)
+    setToTime(ALL_DAY_TO)
+  }
+
+  function setAllDay() {
+    setFromTime(ALL_DAY_FROM)
+    setToTime(ALL_DAY_TO)
   }
 
   async function loadHits(railId: string) {
@@ -357,14 +419,22 @@ export function OfficerQuery() {
       </div>
 
       <div className="st-panel oq-panel">
-        <div className="oq-grid oq-grid-dates">
+        <div className="oq-grid oq-grid-datetime">
           <label className="oq-field">
-            <span className="tiny dim">From (UTC)</span>
+            <span className="tiny dim">From date (UTC)</span>
             <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
           </label>
           <label className="oq-field">
-            <span className="tiny dim">To (UTC)</span>
+            <span className="tiny dim">From time (UTC)</span>
+            <input type="time" value={fromTime} onChange={(e) => setFromTime(e.target.value)} />
+          </label>
+          <label className="oq-field">
+            <span className="tiny dim">To date (UTC)</span>
             <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+          </label>
+          <label className="oq-field">
+            <span className="tiny dim">To time (UTC)</span>
+            <input type="time" value={toTime} onChange={(e) => setToTime(e.target.value)} />
           </label>
           <div className="oq-field oq-presets-field">
             <span className="tiny dim">Quick range</span>
@@ -372,8 +442,13 @@ export function OfficerQuery() {
               <button type="button" className="ex-chip" onClick={() => setPreset(1)}>Today</button>
               <button type="button" className="ex-chip" onClick={() => setPreset(7)}>7 days</button>
               <button type="button" className="ex-chip" onClick={() => setPreset(30)}>30 days</button>
+              <button type="button" className="ex-chip" onClick={setAllDay} title="Reset times to full days 00:00 → 23:59 UTC">All day</button>
             </div>
           </div>
+        </div>
+        <div className="tiny dim" style={{ marginTop: 8 }}>
+          Times are UTC — IST = UTC + 5:30 (e.g. 08:22 UTC = 13:52 IST). Leave {ALL_DAY_FROM} → {ALL_DAY_TO} for
+          full days. Current selection: {describeRange(currentSinceUntil().since, currentSinceUntil().until)}.
         </div>
 
         <div className="oq-seg">
@@ -444,7 +519,7 @@ export function OfficerQuery() {
       {!applied && !error && (
         <div className="dp-empty">
           <div className="dp-empty-icon">📅</div>
-          Set dates, pick All or a source folder, then UPI / bank / wallet, then Apply.
+          Set dates + times (UTC), pick All or a source folder, then UPI / bank / wallet, then Apply.
         </div>
       )}
 
@@ -454,7 +529,7 @@ export function OfficerQuery() {
             <div className="st-card st-card-accent">
               <div className="st-card-label">{view === 'unique' ? railColLabel(applied.rail_type) : 'Matching slips'}</div>
               <div className="st-card-value accent">{total.toLocaleString()}</div>
-              <div className="tiny dim">{applied.since} → {applied.until} UTC · {FOLDERS.find((f) => f.id === applied.folder)?.label}</div>
+              <div className="tiny dim">{describeRange(applied.since, applied.until)} · {FOLDERS.find((f) => f.id === applied.folder)?.label}</div>
             </div>
             {applied.rail_type === 'crypto_wallet' && view === 'unique' ? (
               <>
@@ -496,7 +571,7 @@ export function OfficerQuery() {
             <div>
               <strong>Download what you are viewing</strong>
               <div className="tiny dim">
-                {FOLDERS.find((f) => f.id === applied.folder)?.label} · {RAILS.find((r) => r.id === applied.rail_type)?.label} · {applied.since} → {applied.until} UTC
+                {FOLDERS.find((f) => f.id === applied.folder)?.label} · {RAILS.find((r) => r.id === applied.rail_type)?.label} · {describeRange(applied.since, applied.until)}
                 {' · '}CSV has all {total.toLocaleString()} {view === 'unique' ? 'addresses' : 'slips'}, not only this page of {limit}
               </div>
             </div>
