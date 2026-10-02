@@ -435,6 +435,30 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         self.assertEqual(by[hit_only]["slips"], 0)
         self.assertGreaterEqual(by[both]["slips"], 1)
 
+    def test_unique_crypto_direction_scopes_image_wallets(self):
+        # bankingqr/q.png decode must NOT appear on the withdrawal-pay side.
+        hit_only = "T" + "B" * 33
+        c = db.connect()
+        c.execute(
+            "INSERT OR REPLACE INTO wallet_hits(address,key,last_modified,network) VALUES (?,?,?,?)",
+            (hit_only, "bankingqr/q.png", "2026-09-12T12:00:00Z", "TRON"),
+        )
+        c.commit()
+        dep = db.money_flows_unique(
+            rail_type="crypto_wallet",
+            direction="deposit",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        wd = db.money_flows_unique(
+            rail_type="crypto_wallet",
+            direction="withdrawal",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertIn(hit_only, {r["rail_id"] for r in dep["items"]})
+        self.assertNotIn(hit_only, {r["rail_id"] for r in wd["items"]})
+
     def test_unique_hits_upi_and_bank(self):
         upi = db.money_flows_unique_hits(
             rail_type="upi",

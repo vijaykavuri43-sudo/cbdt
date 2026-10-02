@@ -3135,9 +3135,22 @@ def _money_flows_unique_crypto(
     """
     limit = max(1, min(int(limit), 1000))
     offset = max(0, int(offset))
+    # Image-decoded wallets carry no slip direction, so a bare UNION would
+    # show the same wallets on both money sides. Scope wallet_hits to the
+    # side's folders when a side is selected (folder param ANDs on top).
+    _SIDE_FOLDERS = {
+        "deposit": ("deposit/", "bankingqr/", "qrcode/"),
+        "withdrawal": ("withdrawal/", "payment-proof/", "payment-proofs/"),
+    }
     wh_where, wh_args = _wallet_hit_window_filters(
         q=q, since=since, until=until, folder=folder
     )
+    if (direction or "both").strip().lower() in _SIDE_FOLDERS:
+        prefixes = _SIDE_FOLDERS[(direction or "both").strip().lower()]
+        wh_where = (
+            f"{wh_where} AND (" + " OR ".join(["key LIKE ?"] * len(prefixes)) + ")"
+        )
+        wh_args = wh_args + [f"{p}%" for p in prefixes]
     pt_where, pt_args = _money_flow_filters(
         direction=direction,
         rail_type="crypto_wallet",
