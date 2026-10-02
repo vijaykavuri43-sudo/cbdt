@@ -20,9 +20,33 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         c.executemany(
             "INSERT INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext) VALUES (?,?,?,?,?,?,?)",
             [
-                ("deposit/a.jpg", "deposit/", 10, "2026-09-10T12:00:00Z", "e1", "2026-09-10T12:05:00Z", ".jpg"),
-                ("deposit/b.jpg", "deposit/", 10, "2026-09-15T12:00:00Z", "e2", "2026-09-15T12:05:00Z", ".jpg"),
-                ("withdrawal/c.jpg", "withdrawal/", 10, "2026-09-12T12:00:00Z", "e3", "2026-09-12T12:05:00Z", ".jpg"),
+                (
+                    "deposit/a.jpg",
+                    "deposit/",
+                    10,
+                    "2026-09-10T12:00:00Z",
+                    "e1",
+                    "2026-09-10T12:05:00Z",
+                    ".jpg",
+                ),
+                (
+                    "deposit/b.jpg",
+                    "deposit/",
+                    10,
+                    "2026-09-15T12:00:00Z",
+                    "e2",
+                    "2026-09-15T12:05:00Z",
+                    ".jpg",
+                ),
+                (
+                    "withdrawal/c.jpg",
+                    "withdrawal/",
+                    10,
+                    "2026-09-12T12:00:00Z",
+                    "e3",
+                    "2026-09-12T12:05:00Z",
+                    ".jpg",
+                ),
             ],
         )
         c.executemany(
@@ -31,9 +55,57 @@ class MoneyFlowBoundsTests(unittest.TestCase):
             "account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified,evidence_json"
             ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
-                ("deposit/a.jpg", "deposit", "g1", 100, "U1", "upi", "a@ybl", "", "", "", "high", "beneficiary", "high", "2026-09-10T12:00:00Z", "{}"),
-                ("deposit/b.jpg", "deposit", "g2", 200, "U2", "upi", "b@ybl", "", "", "", "high", "beneficiary", "high", "2026-09-15T12:00:00Z", "{}"),
-                ("withdrawal/c.jpg", "withdrawal", "g3", 50, "U3", "bank_account", "123456", "Holder", "SBIN0001", "", "medium", "sender", "medium", "2026-09-12T12:00:00Z", "{}"),
+                (
+                    "deposit/a.jpg",
+                    "deposit",
+                    "g1",
+                    100,
+                    "U1",
+                    "upi",
+                    "a@ybl",
+                    "",
+                    "",
+                    "",
+                    "high",
+                    "beneficiary",
+                    "high",
+                    "2026-09-10T12:00:00Z",
+                    "{}",
+                ),
+                (
+                    "deposit/b.jpg",
+                    "deposit",
+                    "g2",
+                    200,
+                    "U2",
+                    "upi",
+                    "b@ybl",
+                    "",
+                    "",
+                    "",
+                    "high",
+                    "beneficiary",
+                    "high",
+                    "2026-09-15T12:00:00Z",
+                    "{}",
+                ),
+                (
+                    "withdrawal/c.jpg",
+                    "withdrawal",
+                    "g3",
+                    50,
+                    "U3",
+                    "bank_account",
+                    "123456",
+                    "Holder",
+                    "SBIN0001",
+                    "",
+                    "medium",
+                    "sender",
+                    "medium",
+                    "2026-09-12T12:00:00Z",
+                    "{}",
+                ),
             ],
         )
         c.commit()
@@ -64,24 +136,114 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         keys = {r["source_key"] for r in rows}
         self.assertEqual(keys, {"deposit/a.jpg", "withdrawal/c.jpg"})
 
-
     def test_folder_deposit_not_withdrawal(self):
-        dep = db.money_flows(direction="both", folder="deposit", since="2026-09-01", until="2026-09-30", limit=50)
+        dep = db.money_flows(
+            direction="both",
+            folder="deposit",
+            since="2026-09-01",
+            until="2026-09-30",
+            limit=50,
+        )
         self.assertEqual(dep["rows_total"], 2)
-        self.assertTrue(all(i["source_key"].startswith("deposit/") for i in dep["items"]))
-        wd = db.money_flows(direction="both", folder="withdrawal", since="2026-09-01", until="2026-09-30", limit=50)
+        self.assertTrue(
+            all(i["source_key"].startswith("deposit/") for i in dep["items"])
+        )
+        wd = db.money_flows(
+            direction="both",
+            folder="withdrawal",
+            since="2026-09-01",
+            until="2026-09-30",
+            limit=50,
+        )
         self.assertEqual(wd["rows_total"], 1)
         self.assertEqual(wd["items"][0]["source_key"], "withdrawal/c.jpg")
 
     def test_folder_all_includes_deposit_and_withdrawal(self):
-        out = db.money_flows(direction="both", folder="", since="2026-09-01", until="2026-09-30", limit=50)
+        out = db.money_flows(
+            direction="both",
+            folder="",
+            since="2026-09-01",
+            until="2026-09-30",
+            limit=50,
+        )
         keys = {i["source_key"] for i in out["items"]}
         self.assertEqual(keys, {"deposit/a.jpg", "deposit/b.jpg", "withdrawal/c.jpg"})
-        also = db.money_flows(direction="both", folder="all", since="2026-09-01", until="2026-09-30", limit=50)
+        also = db.money_flows(
+            direction="both",
+            folder="all",
+            since="2026-09-01",
+            until="2026-09-30",
+            limit=50,
+        )
         self.assertEqual({i["source_key"] for i in also["items"]}, keys)
 
+    def test_unique_direction_split_deposit_vs_withdrawal(self):
+        # Deposit side: UPI/VPA + wallets used to COLLECT in range.
+        dep = db.money_flows_unique(
+            rail_type="upi",
+            direction="deposit",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual({r["rail_id"] for r in dep["items"]}, {"a@ybl", "b@ybl"})
+        # Withdrawal side: no UPI rails paid out in range.
+        wd_upi = db.money_flows_unique(
+            rail_type="upi",
+            direction="withdrawal",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual(wd_upi["rows_total"], 0)
+        # Withdrawal side bank accounts used to PAY gamblers.
+        wd_bank = db.money_flows_unique(
+            rail_type="bank_account",
+            direction="withdrawal",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual([r["rail_id"] for r in wd_bank["items"]], ["123456"])
+        self.assertEqual(wd_bank["items"][0]["account_holder"], "Holder")
+        # Narrow single-day window keeps only that day's rails.
+        one = db.money_flows_unique(
+            rail_type="upi",
+            direction="deposit",
+            since="2026-09-10T00:00:00Z",
+            until="2026-09-10T23:59:59Z",
+        )
+        self.assertEqual([r["rail_id"] for r in one["items"]], ["a@ybl"])
+
+    def test_unique_export_rows_direction_split(self):
+        dep = db.money_flows_unique_export_rows(
+            direction="deposit", since="2026-09-01", until="2026-09-30"
+        )
+        self.assertEqual({r["rail_id"] for r in dep}, {"a@ybl", "b@ybl"})
+        wd = db.money_flows_unique_export_rows(
+            direction="withdrawal", since="2026-09-01", until="2026-09-30"
+        )
+        self.assertEqual([r["rail_id"] for r in wd], ["123456"])
+
+    def test_unique_hits_direction_split(self):
+        dep = db.money_flows_unique_hits(
+            rail_type="upi",
+            rail_id="a@ybl",
+            direction="deposit",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual(dep["rows_total"], 1)
+        wd = db.money_flows_unique_hits(
+            rail_type="upi",
+            rail_id="a@ybl",
+            direction="withdrawal",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        self.assertEqual(wd["rows_total"], 0)
+
     def test_unique_upi(self):
-        out = db.money_flows_unique(folder="deposit", rail_type="upi", since="2026-09-01", until="2026-09-30")
+        out = db.money_flows_unique(
+            folder="deposit", rail_type="upi", since="2026-09-01", until="2026-09-30"
+        )
         self.assertEqual(out["rows_total"], 2)
         ids = {r["rail_id"] for r in out["items"]}
         self.assertEqual(ids, {"a@ybl", "b@ybl"})
@@ -93,10 +255,17 @@ class MoneyFlowBoundsTests(unittest.TestCase):
     def test_canonical_rail_type(self):
         self.assertEqual(db._canonical_rail_type("upi", "name@oksbi"), "upi")
         self.assertEqual(db._canonical_rail_type("upi", "123456789012"), "bank_account")
-        self.assertEqual(db._canonical_rail_type("bank_account", "T" + "A" * 33), "crypto_wallet")
+        self.assertEqual(
+            db._canonical_rail_type("bank_account", "T" + "A" * 33), "crypto_wallet"
+        )
 
     def test_bank_filter_excludes_vpa(self):
-        out = db.money_flows(direction="both", rail_type="bank_account", since="2026-09-01", until="2026-09-30")
+        out = db.money_flows(
+            direction="both",
+            rail_type="bank_account",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
         self.assertTrue(all("@" not in (i["rail_id"] or "") for i in out["items"]))
         self.assertEqual(out["rows_total"], 1)
         self.assertEqual(out["items"][0]["rail_id"], "123456")
@@ -107,18 +276,50 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         c = db.connect()
         c.execute(
             "INSERT INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext) VALUES (?,?,?,?,?,?,?)",
-            ("bankingqr/q.png", "bankingqr/", 10, "2026-09-12T12:00:00Z", "e4", "2026-09-12T12:05:00Z", ".png"),
+            (
+                "bankingqr/q.png",
+                "bankingqr/",
+                10,
+                "2026-09-12T12:00:00Z",
+                "e4",
+                "2026-09-12T12:05:00Z",
+                ".png",
+            ),
         )
         c.execute(
             "INSERT INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext) VALUES (?,?,?,?,?,?,?)",
-            ("deposit/d-crypto.jpg", "deposit/", 10, "2026-09-12T12:00:00Z", "e5", "2026-09-12T12:05:00Z", ".jpg"),
+            (
+                "deposit/d-crypto.jpg",
+                "deposit/",
+                10,
+                "2026-09-12T12:00:00Z",
+                "e5",
+                "2026-09-12T12:05:00Z",
+                ".jpg",
+            ),
         )
         c.execute(
             "INSERT INTO payment_transactions("
             "source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
             "account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified,evidence_json"
             ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("deposit/d-crypto.jpg", "deposit", "", 1, "", "crypto_wallet", both, "", "", "TRON", "high", "", "", "2026-09-12T12:00:00Z", "{}"),
+            (
+                "deposit/d-crypto.jpg",
+                "deposit",
+                "",
+                1,
+                "",
+                "crypto_wallet",
+                both,
+                "",
+                "",
+                "TRON",
+                "high",
+                "",
+                "",
+                "2026-09-12T12:00:00Z",
+                "{}",
+            ),
         )
         c.execute(
             "INSERT OR REPLACE INTO wallet_hits(address,key,last_modified,network) VALUES (?,?,?,?)",
@@ -129,7 +330,9 @@ class MoneyFlowBoundsTests(unittest.TestCase):
             (both, "deposit/d-crypto.jpg", "2026-09-12T12:00:00Z", "TRON"),
         )
         c.commit()
-        out = db.money_flows_unique(rail_type="crypto_wallet", folder="", since="2026-09-01", until="2026-09-30")
+        out = db.money_flows_unique(
+            rail_type="crypto_wallet", folder="", since="2026-09-01", until="2026-09-30"
+        )
         ids = {r["rail_id"] for r in out["items"]}
         self.assertIn(hit_only, ids)
         self.assertIn(both, ids)
@@ -175,10 +378,42 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         c.executemany(
             "INSERT INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext) VALUES (?,?,?,?,?,?,?)",
             [
-                ("bankingqr/q.png", "bankingqr/", 10, "2026-09-12T12:00:00Z", "e4", "2026-09-12T12:05:00Z", ".png"),
-                ("deposit/d-crypto.jpg", "deposit/", 10, "2026-09-12T12:00:00Z", "e5", "2026-09-12T12:05:00Z", ".jpg"),
-                ("chat_file/w.webp", "chat_file/", 10, "2026-09-13T12:00:00Z", "e6", "2026-09-13T12:05:00Z", ".webp"),
-                ("withdrawal/w-crypto.jpg", "withdrawal/", 10, "2026-09-14T12:00:00Z", "e7", "2026-09-14T12:05:00Z", ".jpg"),
+                (
+                    "bankingqr/q.png",
+                    "bankingqr/",
+                    10,
+                    "2026-09-12T12:00:00Z",
+                    "e4",
+                    "2026-09-12T12:05:00Z",
+                    ".png",
+                ),
+                (
+                    "deposit/d-crypto.jpg",
+                    "deposit/",
+                    10,
+                    "2026-09-12T12:00:00Z",
+                    "e5",
+                    "2026-09-12T12:05:00Z",
+                    ".jpg",
+                ),
+                (
+                    "chat_file/w.webp",
+                    "chat_file/",
+                    10,
+                    "2026-09-13T12:00:00Z",
+                    "e6",
+                    "2026-09-13T12:05:00Z",
+                    ".webp",
+                ),
+                (
+                    "withdrawal/w-crypto.jpg",
+                    "withdrawal/",
+                    10,
+                    "2026-09-14T12:00:00Z",
+                    "e7",
+                    "2026-09-14T12:05:00Z",
+                    ".jpg",
+                ),
             ],
         )
         c.execute(
@@ -186,15 +421,55 @@ class MoneyFlowBoundsTests(unittest.TestCase):
             "source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
             "account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified,evidence_json"
             ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("deposit/d-crypto.jpg", "deposit", "", 1, "", "crypto_wallet", both, "", "", "TRON", "high", "", "", "2026-09-12T12:00:00Z", "{}"),
+            (
+                "deposit/d-crypto.jpg",
+                "deposit",
+                "",
+                1,
+                "",
+                "crypto_wallet",
+                both,
+                "",
+                "",
+                "TRON",
+                "high",
+                "",
+                "",
+                "2026-09-12T12:00:00Z",
+                "{}",
+            ),
         )
         c.executemany(
             "INSERT OR REPLACE INTO wallet_hits(address,key,last_modified,seen_utc,network) VALUES (?,?,?,?,?)",
             [
-                (hit_only, "bankingqr/q.png", "2026-09-12T12:00:00Z", "2026-09-12T12:05:00Z", "TRON"),
-                (both, "deposit/d-crypto.jpg", "2026-09-12T12:00:00Z", "2026-09-12T12:05:00Z", "TRON"),
-                (extra, "chat_file/w.webp", "2026-09-13T12:00:00Z", "2026-09-13T12:05:00Z", "TRON"),
-                (extra, "withdrawal/w-crypto.jpg", "2026-09-14T12:00:00Z", "2026-09-14T12:05:00Z", "TRON"),
+                (
+                    hit_only,
+                    "bankingqr/q.png",
+                    "2026-09-12T12:00:00Z",
+                    "2026-09-12T12:05:00Z",
+                    "TRON",
+                ),
+                (
+                    both,
+                    "deposit/d-crypto.jpg",
+                    "2026-09-12T12:00:00Z",
+                    "2026-09-12T12:05:00Z",
+                    "TRON",
+                ),
+                (
+                    extra,
+                    "chat_file/w.webp",
+                    "2026-09-13T12:00:00Z",
+                    "2026-09-13T12:05:00Z",
+                    "TRON",
+                ),
+                (
+                    extra,
+                    "withdrawal/w-crypto.jpg",
+                    "2026-09-14T12:00:00Z",
+                    "2026-09-14T12:05:00Z",
+                    "TRON",
+                ),
             ],
         )
         c.commit()
@@ -204,7 +479,9 @@ class MoneyFlowBoundsTests(unittest.TestCase):
             since="2026-09-01",
             until="2026-09-30",
         )
-        self.assertEqual({i["source_key"] for i in image_only["items"]}, {"bankingqr/q.png"})
+        self.assertEqual(
+            {i["source_key"] for i in image_only["items"]}, {"bankingqr/q.png"}
+        )
         self.assertEqual(image_only["items"][0]["origins"], ["image_hit"])
         merged = db.money_flows_unique_hits(
             rail_type="crypto_wallet",

@@ -3018,6 +3018,7 @@ def money_flows_unique(
     since: str = "",
     until: str = "",
     folder: str = "",
+    direction: str = "both",
     limit: int = 200,
     offset: int = 0,
 ) -> dict:
@@ -3029,11 +3030,12 @@ def money_flows_unique(
             since=since,
             until=until,
             folder=folder,
+            direction=direction,
             limit=limit,
             offset=offset,
         )
     where, args = _money_flow_filters(
-        direction="both",
+        direction=direction,
         rail_type=rail_type,
         q=q,
         source=source,
@@ -3093,6 +3095,7 @@ def _money_flows_unique_crypto(
     since: str = "",
     until: str = "",
     folder: str = "",
+    direction: str = "both",
     limit: int = 200,
     offset: int = 0,
 ) -> dict:
@@ -3108,7 +3111,7 @@ def _money_flows_unique_crypto(
         q=q, since=since, until=until, folder=folder
     )
     pt_where, pt_args = _money_flow_filters(
-        direction="both",
+        direction=direction,
         rail_type="crypto_wallet",
         q=q,
         source=source,
@@ -3197,6 +3200,7 @@ def money_flows_unique_export_rows(
     since: str = "",
     until: str = "",
     folder: str = "",
+    direction: str = "both",
     max_rows: int = 200000,
 ) -> list[dict]:
     out = money_flows_unique(
@@ -3206,6 +3210,7 @@ def money_flows_unique_export_rows(
         since=since,
         until=until,
         folder=folder,
+        direction=direction,
         limit=max_rows,
         offset=0,
     )
@@ -3233,6 +3238,7 @@ def money_flows_unique_hits(
     since: str = "",
     until: str = "",
     folder: str = "",
+    direction: str = "both",
     limit: int = 500,
     offset: int = 0,
 ) -> dict:
@@ -3261,7 +3267,7 @@ def money_flows_unique_hits(
     by_key: dict[str, dict] = {}
     c = connect()
     where, args = _money_flow_filters(
-        direction="both",
+        direction=direction,
         rail_type=rail_type,
         q="",
         source=source,

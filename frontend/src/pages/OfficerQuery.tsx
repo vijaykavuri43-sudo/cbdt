@@ -6,6 +6,7 @@ import { fmtINR, fmtIST, fmtTime, previewJoined, shortKey } from '../lib/format'
 type Folder = 'all' | 'deposit' | 'withdrawal' | 'bankingqr' | 'other'
 type RailType = 'upi' | 'bank_account' | 'crypto_wallet'
 type View = 'slips' | 'unique'
+type Side = 'both' | 'deposit' | 'withdrawal'
 
 interface SlipRow {
   source_key: string
@@ -96,6 +97,12 @@ const RAILS: { id: RailType; label: string }[] = [
   { id: 'crypto_wallet', label: 'Crypto wallets' },
 ]
 
+const SIDES: { id: Side; label: string; hint: string }[] = [
+  { id: 'both', label: 'Both sides', hint: 'Deposit-collect + withdrawal-pay rails together' },
+  { id: 'deposit', label: 'Deposits — collect', hint: 'UPI/VPA + wallets criminals used to COLLECT deposits in range' },
+  { id: 'withdrawal', label: 'Withdrawals — pay', hint: 'Bank accounts + wallets used to PAY gamblers in range' },
+]
+
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
@@ -177,9 +184,10 @@ function clickOnControl(target: EventTarget | null): boolean {
   return false
 }
 
-function csvFilename(kind: View, next: { folder: Folder; rail_type: RailType; since: string; until: string }): string {
+function csvFilename(kind: View, next: { folder: Folder; rail_type: RailType; since: string; until: string; direction?: Side }): string {
   const safe = (s: string) => s.replace(/:/g, '').replace(/T/g, '_')
-  return `${kind === 'unique' ? 'unique-addresses' : 'all-slips'}-${next.folder}-${railFileTag(next.rail_type)}-${safe(next.since)}-to-${safe(next.until)}.csv`
+  const side = next.direction && next.direction !== 'both' ? `-${next.direction}` : ''
+  return `${kind === 'unique' ? 'unique-addresses' : 'all-slips'}-${next.folder}-${railFileTag(next.rail_type)}${side}-${safe(next.since)}-to-${safe(next.until)}.csv`
 }
 
 export function OfficerQuery() {
@@ -189,6 +197,7 @@ export function OfficerQuery() {
   const [toTime, setToTime] = useState(ALL_DAY_TO)
   const [folder, setFolder] = useState<Folder>('all')
   const [railType, setRailType] = useState<RailType>('upi')
+  const [direction, setDirection] = useState<Side>('both')
   const [view, setView] = useState<View>('unique')
   const [queryInput, setQueryInput] = useState('')
   const [applied, setApplied] = useState<{
@@ -196,6 +205,7 @@ export function OfficerQuery() {
     until: string
     folder: Folder
     rail_type: RailType
+    direction: Side
     view: View
     q: string
   } | null>(null)
@@ -218,6 +228,7 @@ export function OfficerQuery() {
     until: next.until,
     folder: next.folder === 'all' ? '' : next.folder,
     source: 'object',
+    direction: next.direction,
   })
 
   async function run(next: NonNullable<typeof applied>, nextPage = 0) {
@@ -236,7 +247,7 @@ export function OfficerQuery() {
       } else {
         const resp = await api<SlipResp>(
           '/api/money-flows',
-          { ...paramsOf(next), direction: 'both', limit, offset: nextPage * limit },
+          { ...paramsOf(next), limit, offset: nextPage * limit },
           60000,
         )
         setSlips(resp)
@@ -281,9 +292,15 @@ export function OfficerQuery() {
       until,
       folder,
       rail_type: railType,
+      direction,
       view,
       q: queryInput.trim(),
     })
+  }
+
+  function pickDirection(next: Side) {
+    setDirection(next)
+    if (applied) void run({ ...applied, direction: next, ...currentSinceUntil(), q: queryInput.trim() })
   }
 
   function pickFolder(next: Folder) {
@@ -301,15 +318,16 @@ export function OfficerQuery() {
     if (applied) void run({ ...applied, view: next, ...currentSinceUntil(), q: queryInput.trim() })
   }
 
-  async function downloadCsv(kind: View) {
+  async function downloadCsv(kind: View, side?: Side) {
     if (!applied) return
     setError('')
     setDlBusy(kind)
     try {
+      const useSide = side ?? applied.direction
       const url = kind === 'unique'
-        ? exportMoneyFlowsUniqueUrl(paramsOf(applied))
-        : exportMoneyFlowsUrl({ ...paramsOf(applied), direction: 'both' })
-      await saveCsvFromUrl(url, csvFilename(kind, applied))
+        ? exportMoneyFlowsUniqueUrl({ ...paramsOf(applied), direction: useSide })
+        : exportMoneyFlowsUrl({ ...paramsOf(applied), direction: useSide })
+      await saveCsvFromUrl(url, csvFilename(kind, { ...applied, direction: useSide }))
     } catch (e) {
       setError(`CSV download failed: ${String(e)}`)
     } finally {
@@ -394,7 +412,8 @@ export function OfficerQuery() {
           <div>
             <h1 className="pg-header-title">Date range</h1>
             <div className="pg-header-sub">
-              Folder where the file lives → UPI / bank / wallet → unique addresses for notices, all slips for evidence
+              Folder where the file lives → UPI / bank / wallet → unique addresses for notices, all slips for evidence.
+              Money side splits deposit-collect rails from withdrawal-pay rails; ⬇ Deposit CSV / ⬇ Withdrawal CSV download one row per address for the selected day &amp; time range.
             </div>
           </div>
         </div>
@@ -402,10 +421,18 @@ export function OfficerQuery() {
           <button
             className="btn"
             disabled={!applied || !!dlBusy}
-            onClick={() => void downloadCsv('unique')}
-            title="Excel CSV: one row per UPI/account/wallet for the dates, folder and rail you applied"
+            onClick={() => void downloadCsv('unique', 'deposit')}
+            title="Excel CSV: UPI/VPA + wallets criminals used to COLLECT deposits in this date range (one row per address)"
           >
-            {dlBusy === 'unique' ? 'Preparing CSV…' : '⬇ Unique CSV'}
+            {dlBusy === 'unique' ? 'Preparing CSV…' : '⬇ Deposit CSV'}
+          </button>
+          <button
+            className="btn"
+            disabled={!applied || !!dlBusy}
+            onClick={() => void downloadCsv('unique', 'withdrawal')}
+            title="Excel CSV: bank accounts + wallets used to PAY gamblers in this date range (one row per address)"
+          >
+            {dlBusy === 'unique' ? 'Preparing CSV…' : '⬇ Withdrawal CSV'}
           </button>
           <button
             className="btn"
@@ -464,6 +491,24 @@ export function OfficerQuery() {
                 onClick={() => pickFolder(f.id)}
               >
                 {f.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="oq-seg">
+          <span className="tiny dim">Money side</span>
+          <div className="oq-tabs" role="tablist">
+            {SIDES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                role="tab"
+                className={'oq-tab' + (direction === s.id ? ' oq-tab-on' : '')}
+                title={s.hint}
+                onClick={() => pickDirection(s.id)}
+              >
+                {s.label}
               </button>
             ))}
           </div>

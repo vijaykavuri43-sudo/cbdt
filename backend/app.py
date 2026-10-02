@@ -2575,12 +2575,11 @@ def money_flows_unique_api(
     since: str = Query("", max_length=32),
     until: str = Query("", max_length=32),
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
+    direction: str = Query("both", pattern="^(deposit|withdrawal|both)$"),
     _=Depends(auth),
 ):
     """One row per UPI/VPA, bank account, or crypto wallet for officer unique lists."""
-    cache_key = (
-        f"flows-u:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}"
-    )
+    cache_key = f"flows-u:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}:{direction}"
     return cached(
         cache_key,
         60.0,
@@ -2593,6 +2592,7 @@ def money_flows_unique_api(
             since=since,
             until=until,
             folder=folder,
+            direction=direction,
         ),
     )
 
@@ -2605,12 +2605,13 @@ def money_flows_unique_hits_api(
     since: str = Query("", max_length=32),
     until: str = Query("", max_length=32),
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
+    direction: str = Query("both", pattern="^(deposit|withdrawal|both)$"),
     limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     _=Depends(auth),
 ):
     """Every origin object for one unique Date-range address (closable expander)."""
-    cache_key = f"flows-u-hits:{rail_type}:{rail_id}:{source}:{since}:{until}:{folder}:{limit}:{offset}"
+    cache_key = f"flows-u-hits:{rail_type}:{rail_id}:{source}:{since}:{until}:{folder}:{direction}:{limit}:{offset}"
     return cached(
         cache_key,
         30.0,
@@ -2621,6 +2622,7 @@ def money_flows_unique_hits_api(
             since=since,
             until=until,
             folder=folder,
+            direction=direction,
             limit=limit,
             offset=offset,
         ),
@@ -2635,6 +2637,7 @@ def export_money_flows_unique(
     since: str = Query("", max_length=32),
     until: str = Query("", max_length=32),
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
+    direction: str = Query("both", pattern="^(deposit|withdrawal|both)$"),
     _=Depends(auth),
 ):
     """Unique address CSV — one VPA / account / wallet per row (not every slip)."""
@@ -2647,6 +2650,7 @@ def export_money_flows_unique(
             since=since,
             until=until,
             folder=folder,
+            direction=direction,
         )
         out = []
         for r in rows:
