@@ -694,6 +694,69 @@ def _url_host(url: str) -> str:
         return ""
 
 
+def _load_json_data(name: str):
+    """Load a checked-in verification data file (never raises)."""
+    try:
+        from pathlib import Path
+
+        p = Path(__file__).resolve().parent / "data" / name
+        import json as _json
+
+        return _json.loads(p.read_text())
+    except Exception:
+        return [] if name != "brand_server_ips.json" else {}
+
+
+def _intel_inventory_rows(covered: set) -> list[dict]:
+    """Rows for verified intel frontends absent from settlement brands.
+
+    Source files: DOMAINS-MASTER.csv, cbtf-white-label-all-domains.txt,
+    myreddy369-white-label-analysis.txt, key-frontends-2026-09-30.json.
+    Each domain DNS+HTTP verified 2026-10-02 (browser spot-checked).
+    Historical entries are kept with their death evidence — never dropped.
+    """
+    rows = []
+    data = _load_json_data("white_label_frontends.json")
+    if not isinstance(data, list):
+        return rows
+    for e in data:
+        dom = (e.get("domain") or "").lower()
+        if not dom or dom in covered:
+            continue
+        status = e.get("status", "")
+        live = status in ("live", "live-redirect", "fenced")
+        rows.append(
+            {
+                "host": dom,
+                "url": f"https://{dom}/" if live else "",
+                "source": "intel-inventory",
+                "hits": 0,
+                "txns": 0,
+                "amount_inr": 0,
+                "customers": 0,
+                "utrs": 0,
+                "first_seen": "",
+                "last_seen": "",
+                "sample_key": "",
+                "brand_raw": "",
+                "is_valid_domain": live,
+                "resolution": f"intel-{status}",
+                "confidence": "high"
+                if status in ("live", "live-redirect", "historical")
+                else "medium",
+                "resolved_domain": dom if live else "",
+                "resolved_url": f"https://{dom}/" if live else "",
+                "server_ip": ",".join(e.get("ips", [])),
+                "note": e.get("note")
+                or (
+                    f"{e.get('fingerprint', '')} {e.get('title', '')}".strip()
+                    or f"Intel frontend ({status} 2026-10-02)"
+                ),
+            }
+        )
+    return rows
+
+
 def network_urls(qr_scan_limit: int = 50000) -> dict:
     """Officer network inventory: every frontend/backend/other URL in the network.
 
@@ -706,6 +769,9 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
     """
     c = db.connect()
     rows: list[dict] = []
+    brand_ips = _load_json_data("brand_server_ips.json")
+    if not isinstance(brand_ips, dict):
+        brand_ips = {}
     for b in c.execute(
         "SELECT website,COUNT(*) txns,COALESCE(SUM(amount),0) amount,"
         " COUNT(DISTINCT NULLIF(customer,'')) customers,"
@@ -716,6 +782,7 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
     ).fetchall():
         site = (b["website"] or "").strip()
         res = resolve_brand(site)
+        ip_key = res["resolved_domain"] or res["host"]
         rows.append(
             {
                 "host": res["host"],
@@ -742,6 +809,7 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
                 "confidence": res["confidence"],
                 "resolved_domain": res["resolved_domain"],
                 "resolved_url": res["url"],
+                "server_ip": brand_ips.get(ip_key, ""),
                 "note": res["note"],
             }
         )
@@ -797,18 +865,27 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
                     if not a["last_seen"] or r["last_modified"] > a["last_seen"]:
                         a["last_seen"] = r["last_modified"]
     rows.extend(sorted(agg.values(), key=lambda d: -d["hits"]))
+    covered = {d["host"] for d in rows}
+    covered |= {d["resolved_domain"] for d in rows if d.get("resolved_domain")}
+    inv_rows = _intel_inventory_rows(covered)
+    rows.extend(inv_rows)
+    inv_live = sum(1 for d in inv_rows if d.get("is_valid_domain"))
     return {
         "fact_type": "fact",
-        "note": "Hosts observed in gateway settlement brands + decoded collection-QR URLs. Test rows excluded. gateway-brand rows carry normalized host + validity verdict (is_valid_domain/resolution/resolved_domain/resolved_url); QR hosts are validity-filtered (bank-fragment glue dropped) — source column distinguishes.",
+        "note": "Hosts observed in gateway settlement brands + decoded collection-QR URLs + verified intel-inventory frontends (DOMAINS-MASTER, white-label tenant lists; each DNS+HTTP verified 2026-10-02, historical kept). Test rows excluded. gateway-brand rows carry normalized host + validity verdict (is_valid_domain/resolution/resolved_domain/resolved_url/server_ip); QR hosts are validity-filtered (bank-fragment glue dropped) — source column distinguishes.",
         "rows": rows,
         "counts": {
             "total": len(rows),
             "brands": sum(1 for d in rows if d["source"] == "gateway-brand"),
-            "qr_hosts": sum(1 for d in rows if d["source"] != "gateway-brand"),
+            "qr_hosts": sum(
+                1 for d in rows if d["source"] in ("qr-payload", "qr-expanded")
+            ),
+            "inventory": len(inv_rows),
+            "inventory_live": inv_live,
             "valid_frontends": sum(
                 1
                 for d in rows
-                if d["source"] == "gateway-brand"
+                if d["source"] in ("gateway-brand", "intel-inventory")
                 and (d.get("is_valid_domain") or d.get("resolved_domain"))
             ),
             "alias_rows": sum(

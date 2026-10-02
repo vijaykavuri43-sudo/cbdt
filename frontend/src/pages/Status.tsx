@@ -66,7 +66,7 @@ interface NetUrlRow {
   amount_inr: number; customers: number; utrs: number;
   first_seen: string; last_seen: string; sample_key: string;
   brand_raw?: string; is_valid_domain?: boolean; resolution?: string;
-  confidence?: string; resolved_domain?: string; resolved_url?: string; note?: string;
+  confidence?: string; resolved_domain?: string; resolved_url?: string; server_ip?: string; note?: string;
 }
 
 export function StatusPage() {
@@ -159,9 +159,9 @@ export function StatusPage() {
   function exportNetCsv() {
     // Officer download: every network URL row (brands + QR hosts) with volume info.
     const q = (v: any) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
-    const header = 'Host,Source,Hits,Txns,Amount_INR,Customers,UTRs,First_seen,Last_seen,Sample_URL,Evidence_key,Brand_raw,Is_valid_domain,Resolution,Confidence,Resolved_domain,Resolved_URL,Note\n'
+    const header = 'Host,Source,Hits,Txns,Amount_INR,Customers,UTRs,First_seen,Last_seen,Sample_URL,Evidence_key,Brand_raw,Is_valid_domain,Resolution,Confidence,Resolved_domain,Resolved_URL,Server_IP,Note\n'
     const rows = (netUrls?.rows ?? [])
-      .map((r) => [q(r.host), q(r.source), r.hits, r.txns, r.amount_inr, r.customers, r.utrs, q(r.first_seen), q(r.last_seen), q(r.url), q(r.sample_key), q((r as any).brand_raw ?? ''), (r as any).is_valid_domain ? 'TRUE' : 'FALSE', q((r as any).resolution ?? ''), q((r as any).confidence ?? ''), q((r as any).resolved_domain ?? ''), q((r as any).resolved_url ?? ''), q((r as any).note ?? '')].join(','))
+      .map((r) => [q(r.host), q(r.source), r.hits, r.txns, r.amount_inr, r.customers, r.utrs, q(r.first_seen), q(r.last_seen), q(r.url), q(r.sample_key), q((r as any).brand_raw ?? ''), (r as any).is_valid_domain ? 'TRUE' : 'FALSE', q((r as any).resolution ?? ''), q((r as any).confidence ?? ''), q((r as any).resolved_domain ?? ''), q((r as any).resolved_url ?? ''), q((r as any).server_ip ?? ''), q((r as any).note ?? '')].join(','))
       .join('\n')
     const blob = new Blob([header + rows], { type: 'text/csv' })
     const a = document.createElement('a')
@@ -431,11 +431,11 @@ export function StatusPage() {
           </button>
         </div>
         <div className="small dim" style={{ marginBottom: 8 }}>
-          gateway-brand = white-label frontends from settlement exports · qr-payload / qr-expanded = URLs inside collection QR codes ·
+          gateway-brand = white-label frontends from settlement exports · qr-payload / qr-expanded = URLs inside collection QR codes · intel-inventory = verified intel frontends absent from settlements (historical kept) ·
           showing {(netUrls?.rows ?? []).slice(0, 100).length} of {(netUrls?.rows ?? []).length}{netUrls?.counts?.valid_frontends != null ? ' · ' + netUrls.counts.valid_frontends + ' valid/resolved frontends' : ''} · CSV carries every row
         </div>
         <div className="dp-table-wrap"><table className="dp-table"><thead><tr>
-          <th>Host</th><th>Source</th><th className="num">Hits</th><th className="num">Amount</th><th>Valid URL</th><th>Status</th><th>Evidence key</th>
+          <th>Host</th><th>Source</th><th className="num">Hits</th><th className="num">Amount</th><th>Valid URL</th><th>Status</th><th>Server IP</th><th>Evidence key</th>
         </tr></thead>
           <tbody>{(netUrls?.rows ?? []).slice(0, 100).map((r) => <tr key={r.source + ':' + r.host}>
             <td className="mono" style={{ fontWeight: 700 }}>{r.host}</td>
@@ -443,9 +443,10 @@ export function StatusPage() {
             <td className="num">{r.hits.toLocaleString()}</td>
             <td className="num money">{r.source === 'gateway-brand' ? fmtINR(r.amount_inr) : '—'}</td>
             <td className="mono small" style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={(r.resolved_url || r.url) + ((r.resolved_domain && r.resolved_domain !== r.host) ? ` (alias of ${r.resolved_domain})` : '')}>{r.resolved_url || r.url || '—'}</td>
-            <td className="small" title={r.note ?? ''}>{r.source === 'gateway-brand' ? ((r as any).is_valid_domain ? 'valid' : ((r as any).resolution ?? 'alias')) : 'qr-host'}</td>
+            <td className="small" title={r.note ?? ''}>{r.source === 'gateway-brand' ? ((r as any).is_valid_domain ? 'valid' : ((r as any).resolution ?? 'alias')) : ((r as any).resolution ?? r.source)}</td>
+            <td className="mono small" title={r.server_ip ?? ''}>{r.server_ip || '—'}</td>
             <td className="mono small" title={r.sample_key}>{r.sample_key ? r.sample_key.split('/').pop() : '—'}</td>
-          </tr>)}{!netUrls && <tr><td colSpan={7} className="dim">Loading network inventory…</td></tr>}</tbody></table></div>
+          </tr>)}{!netUrls && <tr><td colSpan={8} className="dim">Loading network inventory…</td></tr>}</tbody></table></div>
       </div>
 
       {/* Runtime */}

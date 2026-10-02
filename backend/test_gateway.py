@@ -290,6 +290,39 @@ class GatewayParseTests(unittest.TestCase):
         self.assertEqual(p["resolution"], "placeholder")
         self.assertEqual(p["resolved_domain"], "")
 
+    def test_network_urls_intel_inventory_merge(self):
+        db.connect()
+        c = db.connect()
+        c.execute("DELETE FROM gateway_rows")
+        c.execute("DELETE FROM objects")
+        c.commit()
+        out = gateway.network_urls()
+        inv = [r for r in out["rows"] if r["source"] == "intel-inventory"]
+        # 123 verified intel frontends ship in backend/data (98 live, 8 fenced,
+        # 2 live-redirect, 1 parked-suspicious, 14 historical) — none overlap
+        # the empty gateway table here, so all must appear exactly once.
+        self.assertEqual(len(inv), 123)
+        self.assertEqual(out["counts"]["inventory"], 123)
+        live = [r for r in inv if r.get("is_valid_domain")]
+        self.assertEqual(out["counts"]["inventory_live"], len(live))
+        by_host = {r["host"]: r for r in inv}
+        # Live intel frontend carries URL + server IP (fact, verified 2026-10-02).
+        m = by_host["myreddy369.co"]
+        self.assertEqual(m["resolution"], "intel-live")
+        self.assertEqual(m["resolved_url"], "https://myreddy369.co/")
+        self.assertIn("13.215.243.220", m["server_ip"])
+        # Historical entries are kept, never dropped, with no live URL.
+        h = by_host["lotusbhai777.com"]
+        self.assertEqual(h["resolution"], "intel-historical")
+        self.assertFalse(h["is_valid_domain"])
+        self.assertEqual(h["url"], "")
+        # Fenced entries keep validity + medium confidence.
+        f = by_host["kedarbook.com"]
+        self.assertEqual(f["resolution"], "intel-fenced")
+        self.assertTrue(f["is_valid_domain"])
+        hosts = [r["host"] for r in inv]
+        self.assertEqual(len(hosts), len(set(hosts)))
+
     def test_resolve_brand_liveness_overrides(self):
         dead = gateway.resolve_brand("https://11xgame.win")
         self.assertEqual(dead["host"], "11xgame.win")
