@@ -560,6 +560,28 @@ def _qr_host_ok(host: str) -> bool:
     return True
 
 
+# QR hosts that are NOT part of the criminal network's URL surface and are
+# excluded from the dashboard (verified 2026-10-02):
+# - legitimate bank/payment rails abused via UPI (covered by money-flow
+#   exhibits, not the network table): airtelbank, suryoday, npci, jkbank,
+#   fincarebank, janabank, ucobank, paytm merchant QR
+# - government / big-tech / generic slip-image noise + test QRs
+# Kept: betting-linked affiliates (wa.link/sky247fair) and generic
+# redirectors with unknown destinations (triage value).
+_QR_DROP_HOSTS = frozenset(
+    "www.airtelbank.in suryoday.com npci.org jkbank.com fincarebank.com "
+    "www.janabank.com ucobank.com business.paytm.me "
+    "qr.kfc.co.in idemia-mobile-id.com chat.whatsapp.com whatsapp.com "
+    "udyamregistration.gov.in bn.m.wikipedia.org google.com "
+    "www.odishaecoretreats.com tinyurl.com".split()
+)
+
+
+def _qr_relevant(host: str) -> bool:
+    """True if a QR host belongs on the network surface (not bank/generic)."""
+    return (host or "").lower() not in _QR_DROP_HOSTS
+
+
 # Per-host liveness overrides verified 2026-10-02 (DNS via local resolver +
 # Cloudflare DoH; HTTPS title/fingerprint probe from non-IN egress).
 # Syntax-valid hosts proven dead/parked/non-frontend, or DNS-live but
@@ -724,7 +746,7 @@ def _intel_inventory_rows(covered: set) -> list[dict]:
         if not dom or dom in covered:
             continue
         status = e.get("status", "")
-        live = status in ("live", "live-redirect", "fenced")
+        live = status in ("live", "live-redirect", "fenced", "live-separate-platform")
         rows.append(
             {
                 "host": dom,
@@ -827,11 +849,11 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
         found: list[tuple[str, tuple[str, str]]] = []
         for u in _URL_RE.findall(r["raw"] or ""):
             h = _url_host(u)
-            if h and _qr_host_ok(h):
+            if h and _qr_host_ok(h) and _qr_relevant(h):
                 found.append((h, ("qr-payload", u)))
         if r["exp"]:
             h = _url_host(r["exp"])
-            if h and _qr_host_ok(h):
+            if h and _qr_host_ok(h) and _qr_relevant(h):
                 found.append((h, ("qr-expanded", r["exp"])))
         for host, (source, url) in found:
             key = (host, source)

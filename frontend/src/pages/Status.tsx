@@ -157,11 +157,13 @@ export function StatusPage() {
   const maxPrefixCount = Math.max(...(stats?.per_prefix ?? []).map((r) => r.n), 1)
 
   function exportNetCsv() {
-    // Officer download: every network URL row (brands + QR hosts) with volume info.
+    // Officer download: lean exhibit — domain, IP, status first; no duplicate
+    // or custody-redundant columns (full detail remains in GET /api/network-urls).
     const q = (v: any) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
-    const header = 'Host,Source,Hits,Txns,Amount_INR,Customers,UTRs,First_seen,Last_seen,Sample_URL,Evidence_key,Brand_raw,Is_valid_domain,Resolution,Confidence,Resolved_domain,Resolved_URL,Server_IP,Note\n'
+    const header = 'Host,Valid_URL,Server_IP,Status,Source,Hits,Amount_INR,Resolved_Domain,Note\n'
     const rows = (netUrls?.rows ?? [])
-      .map((r) => [q(r.host), q(r.source), r.hits, r.txns, r.amount_inr, r.customers, r.utrs, q(r.first_seen), q(r.last_seen), q(r.url), q(r.sample_key), q((r as any).brand_raw ?? ''), (r as any).is_valid_domain ? 'TRUE' : 'FALSE', q((r as any).resolution ?? ''), q((r as any).confidence ?? ''), q((r as any).resolved_domain ?? ''), q((r as any).resolved_url ?? ''), q((r as any).server_ip ?? ''), q((r as any).note ?? '')].join(','))
+      .map((r) => [q(r.host), q((r as any).resolved_url || r.url || ''), q((r as any).server_ip ?? ''), q((r as any).resolution ?? r.source), q(r.source), r.hits, r.amount_inr, q((r as any).resolved_domain ?? ''), q((r as any).note ?? '')].join(','))
+      .join('\n')
       .join('\n')
     const blob = new Blob([header + rows], { type: 'text/csv' })
     const a = document.createElement('a')
@@ -431,7 +433,7 @@ export function StatusPage() {
           </button>
         </div>
         <div className="small dim" style={{ marginBottom: 8 }}>
-          gateway-brand = white-label frontends from settlement exports · qr-payload / qr-expanded = URLs inside collection QR codes · intel-inventory = verified intel frontends absent from settlements (historical kept) ·
+          gateway-brand = white-label frontends from settlement exports · qr-payload / qr-expanded = network-relevant URLs inside collection QR codes (bank rails + generic junk excluded) · intel-inventory = verified intel frontends absent from settlements (historical kept) ·
           showing {(netUrls?.rows ?? []).slice(0, 100).length} of {(netUrls?.rows ?? []).length}{netUrls?.counts?.valid_frontends != null ? ' · ' + netUrls.counts.valid_frontends + ' valid/resolved frontends' : ''} · CSV carries every row
         </div>
         <div className="dp-table-wrap"><table className="dp-table"><thead><tr>

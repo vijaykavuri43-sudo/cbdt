@@ -45,7 +45,8 @@
   "size_bytes": 1281,
   "fingerprint": "titled-frontend",
   "title": "<title>Loading...</title>",
-  "verified_at": "2026-10-02"
+  "verified_at": "2026-10-02",
+  "note": "Working matka frontend on Cluster-A IP 13.215.243.220 (same server as myreddy369.co) \u2014 network member"
  },
  {
   "domain": "99exch.gallery",
@@ -109,7 +110,7 @@
  },
  {
   "domain": "apbook365.com",
-  "status": "live",
+  "status": "live-separate-platform",
   "ips": [
    "13.248.220.178"
   ],
@@ -117,7 +118,8 @@
   "size_bytes": 44120,
   "fingerprint": "titled-frontend",
   "title": "<title class=\"notranslate\">AP Book 365</title>",
-  "verified_at": "2026-10-02"
+  "verified_at": "2026-10-02",
+  "note": "Working AP Book 365 frontend BUT separate platform/IP (13.248.220.178) \u2014 NOT CBTF Turbo network; kept for victim linkage, do not merge"
  },
  {
   "domain": "ateldiamond99.com",
@@ -556,7 +558,8 @@
   "size_bytes": 47638,
   "fingerprint": "titled-frontend",
   "title": "<title>Exchange</title>",
-  "verified_at": "2026-10-02"
+  "verified_at": "2026-10-02",
+  "note": "Working Exchange-skin frontend on AWS (43.204.175.61); king247.co on shared hosting excluded \u2014 do not merge without API fingerprint"
  },
  {
   "domain": "layinmatch99.club",

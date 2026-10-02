@@ -333,6 +333,24 @@ class GatewayParseTests(unittest.TestCase):
         self.assertTrue(fenced["is_valid_domain"])
         self.assertEqual(fenced["url"], "https://1explay.com/")
 
+    def test_qr_relevance_gate(self):
+        # Bank rails / gov / generic junk are not the criminal network.
+        for h in (
+            "npci.org",
+            "jkbank.com",
+            "www.airtelbank.in",
+            "business.paytm.me",
+            "google.com",
+            "chat.whatsapp.com",
+            "udyamregistration.gov.in",
+            "tinyurl.com",
+            "bn.m.wikipedia.org",
+        ):
+            self.assertFalse(gateway._qr_relevant(h), h)
+        # Betting affiliates + unknown-destination redirectors stay.
+        for h in ("wa.link", "goo.gl", "pay.example.com", "go.short"):
+            self.assertTrue(gateway._qr_relevant(h), h)
+
     def test_network_urls_qr_glue_filtered(self):
         import json
 
