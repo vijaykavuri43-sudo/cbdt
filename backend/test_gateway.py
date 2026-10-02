@@ -290,6 +290,16 @@ class GatewayParseTests(unittest.TestCase):
         self.assertEqual(p["resolution"], "placeholder")
         self.assertEqual(p["resolved_domain"], "")
 
+    def test_resolve_brand_liveness_overrides(self):
+        dead = gateway.resolve_brand("https://11xgame.win")
+        self.assertEqual(dead["host"], "11xgame.win")
+        self.assertEqual(dead["resolution"], "dns-dead")
+        self.assertFalse(dead["is_valid_domain"])
+        fenced = gateway.resolve_brand("1explay.com")
+        self.assertEqual(fenced["resolution"], "fenced-likely-live")
+        self.assertTrue(fenced["is_valid_domain"])
+        self.assertEqual(fenced["url"], "https://1explay.com/")
+
     def test_network_urls_qr_glue_filtered(self):
         import json
 

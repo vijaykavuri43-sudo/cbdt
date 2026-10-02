@@ -560,6 +560,51 @@ def _qr_host_ok(host: str) -> bool:
     return True
 
 
+# Per-host liveness overrides verified 2026-10-02 (DNS via local resolver +
+# Cloudflare DoH; HTTPS title/fingerprint probe from non-IN egress).
+# Syntax-valid hosts proven dead/parked/non-frontend, or DNS-live but
+# HTTP-blocked from outside India (geo-fenced), get accurate verdicts here
+# instead of the default `live-verified`.
+HOST_LIVENESS_OVERRIDE: dict[str, tuple[str, str, str]] = {
+    "11xgame.win": (
+        "dns-dead",
+        "high",
+        "SERVFAIL lame delegation (DoH fact); live siblings 11xgame.vip + 11xgame.club",
+    ),
+    "jetcric.vip": ("dns-dead", "high", "SERVFAIL lame delegation (DoH fact)"),
+    "dafacric247.com": ("dns-dead", "high", "SERVFAIL lame delegation (DoH fact)"),
+    "dafacric365.com": ("dns-dead", "high", "SERVFAIL lame delegation (DoH fact)"),
+    "dafacric99.com": ("dns-dead", "high", "SERVFAIL lame delegation (DoH fact)"),
+    "dream365.com": ("dns-dead", "high", "NXDOMAIN (DoH fact)"),
+    "cn.com": ("non-frontend", "high", ".CN.COM registrar parking landing (fact)"),
+    "i100pay.com": (
+        "non-frontend",
+        "medium",
+        "Payment-gateway infra domain, not a bettor frontend (ai_lead)",
+    ),
+    "1explay.com": (
+        "fenced-likely-live",
+        "medium",
+        "DNS live 13.127.247.216; HTTP blocked from non-IN egress — likely live for IN bettors",
+    ),
+    "myfairplay.vip": (
+        "fenced-likely-live",
+        "medium",
+        "DNS live; HTTP blocked from non-IN egress — likely live for IN bettors",
+    ),
+    "lotus365ind.com": (
+        "fenced-likely-live",
+        "medium",
+        "DNS live; HTTP blocked from non-IN egress — likely live for IN bettors",
+    ),
+    "reddybook365.com": (
+        "fenced-likely-live",
+        "medium",
+        "DNS live; HTTP blocked from non-IN egress; live alternate reddybook365.live",
+    ),
+}
+
+
 def resolve_brand(site: str) -> dict:
     """Resolve a settlement `Website` value to bettor-facing domain info.
 
@@ -581,6 +626,20 @@ def resolve_brand(site: str) -> dict:
             "note": "Empty Website value",
         }
     if is_valid_domain_host(host):
+        override = HOST_LIVENESS_OVERRIDE.get(host)
+        if override:
+            resolution, confidence, note = override
+            dead = resolution in ("dns-dead", "non-frontend")
+            return {
+                "host": host,
+                "url": "" if dead else f"https://{host}/",
+                "brand_raw": raw,
+                "is_valid_domain": not dead,
+                "resolution": resolution,
+                "confidence": confidence,
+                "resolved_domain": "" if dead else host,
+                "note": note,
+            }
         return {
             "host": host,
             "url": f"https://{host}/",
