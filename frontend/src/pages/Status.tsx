@@ -432,7 +432,7 @@ export function StatusPage() {
         </div>
         <div className="small dim" style={{ marginBottom: 8 }}>
           gateway-brand = white-label frontends from settlement exports · qr-payload / qr-expanded = URLs inside collection QR codes ·
-          showing {(netUrls?.rows ?? []).slice(0, 100).length} of {(netUrls?.rows ?? []).length}{(netUrls?.counts?.valid_frontends != null ? ` · ${netUrls.counts.valid_frontends} valid/resolved frontends` : ''} · CSV carries every row
+          showing {(netUrls?.rows ?? []).slice(0, 100).length} of {(netUrls?.rows ?? []).length}{netUrls?.counts?.valid_frontends != null ? ' · ' + netUrls.counts.valid_frontends + ' valid/resolved frontends' : ''} · CSV carries every row
         </div>
         <div className="dp-table-wrap"><table className="dp-table"><thead><tr>
           <th>Host</th><th>Source</th><th className="num">Hits</th><th className="num">Amount</th><th>Valid URL</th><th>Status</th><th>Evidence key</th>
