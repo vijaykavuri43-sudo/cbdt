@@ -3048,12 +3048,29 @@ def money_flows_unique(
     # misread as a VPA) must not top officer unique lists/CSVs either.
     # Plus amount artifacts like '000.00@tess' (digits-dot-digits handle —
     # never a real VPA) observed live on b2/b3 2026-10-02.
+    # _UNIQUE_EXTRA_JUNK: template-word handles seen live 2026-10-02
+    # ('receipt@contact', 'paidto@curvieunani', 'groceries@others',
+    # 'imps@operator', 'share@need', 'vasu@prenge', 'safs@code').
+    # Kept local to the unique path (not the shared mule tuple): these are
+    # display-hygiene exclusions, while mule_rails scores them down instead.
+    _UNIQUE_EXTRA_JUNK = (
+        "paidto@%",
+        "receipt@%",
+        "groceries@%",
+        "%@contact",
+        "%@operator",
+        "%@others",
+        "%@need",
+        "%@prenge",
+        "%@code",
+    )
+    _all_junk = [p.lower() for p in _VPA_JUNK_PATTERNS] + list(_UNIQUE_EXTRA_JUNK)
     where = (
         f"{where} AND NOT ("
-        + " OR ".join(["lower(rail_id) LIKE ?"] * len(_VPA_JUNK_PATTERNS))
+        + " OR ".join(["lower(rail_id) LIKE ?"] * len(_all_junk))
         + ") AND rail_id NOT GLOB '[0-9]*.[0-9]*@*'"
     )
-    args = args + [p.lower() for p in _VPA_JUNK_PATTERNS]
+    args = args + _all_junk
     c = connect()
     total = c.execute(
         f"SELECT COUNT(*) n FROM ("

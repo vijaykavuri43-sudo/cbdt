@@ -283,6 +283,40 @@ class MoneyFlowBoundsTests(unittest.TestCase):
                     "2026-09-11T12:00:00Z",
                     "{}",
                 ),
+                (
+                    "deposit/j3.jpg",
+                    "deposit",
+                    "g9",
+                    10,
+                    "UJ3",
+                    "upi",
+                    "receipt@contact",
+                    "",
+                    "",
+                    "",
+                    "low",
+                    "beneficiary",
+                    "low",
+                    "2026-09-11T12:00:00Z",
+                    "{}",
+                ),
+                (
+                    "deposit/j4.jpg",
+                    "deposit",
+                    "g9",
+                    10,
+                    "UJ4",
+                    "upi",
+                    "share@need",
+                    "",
+                    "",
+                    "",
+                    "low",
+                    "beneficiary",
+                    "low",
+                    "2026-09-11T12:00:00Z",
+                    "{}",
+                ),
             ],
         )
         c.commit()
@@ -295,6 +329,8 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         ids = {r["rail_id"] for r in out["items"]}
         self.assertNotIn("000.00@tess", ids)
         self.assertNotIn("only@foodstall", ids)
+        self.assertNotIn("receipt@contact", ids)
+        self.assertNotIn("share@need", ids)
         self.assertEqual(ids, {"a@ybl", "b@ybl"})
 
     def test_unique_upi(self):
