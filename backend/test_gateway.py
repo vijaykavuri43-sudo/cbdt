@@ -298,11 +298,12 @@ class GatewayParseTests(unittest.TestCase):
         c.commit()
         out = gateway.network_urls()
         inv = [r for r in out["rows"] if r["source"] == "intel-inventory"]
-        # 123 verified intel frontends ship in backend/data (98 live, 8 fenced,
-        # 2 live-redirect, 1 parked-suspicious, 14 historical) — none overlap
+        # 446 verified intel entries ship in backend/data (123 apex + 323
+        # verified subdomains: agent portals, www mirrors, deploy shards;
+        # 98+286 live, fenced, redirects, historical) — none overlap
         # the empty gateway table here, so all must appear exactly once.
-        self.assertEqual(len(inv), 123)
-        self.assertEqual(out["counts"]["inventory"], 123)
+        self.assertEqual(len(inv), 446)
+        self.assertEqual(out["counts"]["inventory"], 446)
         live = [r for r in inv if r.get("is_valid_domain")]
         self.assertEqual(out["counts"]["inventory_live"], len(live))
         by_host = {r["host"]: r for r in inv}

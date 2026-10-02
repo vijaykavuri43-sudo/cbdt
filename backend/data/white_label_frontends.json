@@ -61,6 +61,1858 @@
   "verified_at": "2026-10-02"
  },
  {
+  "domain": "ag.11xpay.gallery",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of 11xpay.gallery; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of 11xworld.com; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "ag.4xexch.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.7x99.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of 7x99.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.91matka.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of 91matka.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.99exch.gallery",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of 99exch.gallery; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.akash247.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of akash247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.ambani77.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of ambani77.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.annawin247.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of annawin247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.balajibookpro247.com",
+  "ips": [
+   "3.1.47.33"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of balajibookpro247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.balajionline247.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of balajionline247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.batbhai99.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of batbhai99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.betbhai2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of betbhai2022.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.betgram99.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of betgram99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.bhavanibook.com",
+  "ips": [
+   "18.136.79.51",
+   "3.1.10.24"
+  ],
+  "http_code": "200",
+  "size_bytes": 499,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of bhavanibook.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.bhavaniexch.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of bhavaniexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.cbtfbangla.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of cbtfbangla.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.cbtffreehit.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of cbtffreehit.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.cbtfturbo.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of cbtfturbo.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.cbtfturbo247.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "301",
+  "size_bytes": 134,
+  "title": "<title>301 Moved Permanently</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of cbtfturbo247.com; HTTP 301 WAF/fence from non-IN egress",
+  "status": "fenced"
+ },
+ {
+  "domain": "ag.cbtfvip.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of cbtfvip.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.diamond247.world",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of diamond247.world; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.diamondexch777.live",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of diamondexch777.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.dreamexch365.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of dreamexch365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.fairplay-365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of fairplay-365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.fairplay2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of fairplay2022.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.g2020cricket.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of g2020cricket.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.gajanand2727.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of gajanand2727.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.gamblerbook365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of gamblerbook365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.goreddy247.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of goreddy247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.goreddybook.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of goreddybook.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.govindasouth247.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of govindasouth247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.iob7.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of iob7.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.jvbetbhai.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of jvbetbhai.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.jvbetbhai9.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of jvbetbhai9.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.jvbook247.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of jvbook247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.jvexch.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of jvexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.jvexch365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of jvexch365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.jvskyexch.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of jvskyexch.com; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "ag.jvworld777.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of jvworld777.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.kartikey365.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of kartikey365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.kedarbook.ai",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of kedarbook.ai; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.kedarbook.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of kedarbook.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.kheloyaar777.net",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of kheloyaar777.net; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.kheloyaar9.club",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of kheloyaar9.club; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.king247.com",
+  "ips": [
+   "43.204.175.61",
+   "13.201.159.31"
+  ],
+  "http_code": "200",
+  "size_bytes": 16099,
+  "title": "<title>Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of king247.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotus2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotus2022.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotus365.fan",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotus365.fan; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotus365.global",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotus365.global; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotus365.ltd",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotus365.ltd; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotus365.store",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotus365.store; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotus365.tours",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotus365.tours; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotus365.xyz",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotus365.xyz; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotus365odds.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotus365odds.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotus365s.vip",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotus365s.vip; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotusbets365.blue",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotusbets365.blue; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotusbets365.live",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotusbets365.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotusgame.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotusgame.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.lotusonline247.live",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of lotusonline247.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.mahadev247.club",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of mahadev247.club; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.mahadev77.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of mahadev77.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.mahadevid777.co",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of mahadevid777.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.mahadevid777.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of mahadevid777.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.mylaser2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of mylaser2022.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.mypatel365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of mypatel365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.myreddy365anna.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of myreddy365anna.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.myreddy369.co",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of myreddy369.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.myreddyanna101.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of myreddyanna101.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.myreddyanna367.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of myreddyanna367.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.mywin369.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of mywin369.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.nawabsatta.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of nawabsatta.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.newlotus.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of newlotus.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.octabet555.com",
+  "ips": [
+   "3.1.47.33"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of octabet555.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.pateldiamond99.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of pateldiamond99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.patelid777.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of patelid777.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.pateltiger365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of pateltiger365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.rana247.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of rana247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.rapid11.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of rapid11.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.rcb247book.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of rcb247book.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddy365.vip",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddy365.vip; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddy369.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddy369.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddy369.vip",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddy369.vip; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddy777anna.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddy777anna.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddy8888.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddy8888.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddyaanna365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddyaanna365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddyanaa.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddyanaa.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddyanna.global",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddyanna.global; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "ag.reddyanna101.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddyanna101.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddyanna11.co",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddyanna11.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddybook.gallery",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddybook.gallery; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddybook2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddybook2022.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddybook365.live",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddybook365.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddybook777.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddybook777.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddybookclub.one",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddybookclub.one; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddybooks.co",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddybooks.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddyclub99.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddyclub99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddyonline365.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddyonline365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.reddyx247.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of reddyx247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.run999.online",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of run999.online; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.shivshakti333.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of shivshakti333.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.skyexchange365.vip",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of skyexchange365.vip; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "ag.tigerexch77.live",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of tigerexch77.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.tradebet365.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of tradebet365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.vardaan247.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of vardaan247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.veerbook.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of veerbook.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.vkdanna.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of vkdanna.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.winbbuzz.live",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of winbbuzz.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.winbuzz24x7.online",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of winbuzz24x7.online; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.winbuzz99.co",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of winbuzz99.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.wolfexch247.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of wolfexch247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.wonexbet.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of wonexbet.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.world777.luxury",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of world777.luxury; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "ag.zebraexch247.co",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 564,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "agent portal of zebraexch247.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
   "domain": "akash247.com",
   "status": "live",
   "ips": [
@@ -120,6 +1972,86 @@
   "title": "<title class=\"notranslate\">AP Book 365</title>",
   "verified_at": "2026-10-02",
   "note": "Working AP Book 365 frontend BUT separate platform/IP (13.248.220.178) \u2014 NOT CBTF Turbo network; kept for victim linkage, do not merge"
+ },
+ {
+  "domain": "app.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "302",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "app mirror of 11xworld.com; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "app.4xexch.com",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "app mirror of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "app.khelobuzz.com",
+  "ips": [
+   "64.227.180.77"
+  ],
+  "http_code": "200",
+  "size_bytes": 896,
+  "title": "<title>MahadevBook777</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "app mirror of khelobuzz.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "app.mahadevbook777.com",
+  "ips": [
+   "172.67.191.54",
+   "104.21.41.142"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "app mirror of mahadevbook777.com; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "app.wa.link",
+  "ips": [
+   "104.20.36.92",
+   "172.66.151.230"
+  ],
+  "http_code": "307",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "app mirror of wa.link; HTTP 307 reachable redirect",
+  "status": "live-redirect"
  },
  {
   "domain": "ateldiamond99.com",
@@ -238,6 +2170,718 @@
   "title": "",
   "verified_at": "2026-10-02",
   "note": "DNS lame SERVFAIL 2026-10-02; APK-only cbtfwager"
+ },
+ {
+  "domain": "d1.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "302",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of 11xworld.com; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "d1.4xexch.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d1.bajrangi365.com",
+  "ips": [
+   "18.67.161.8",
+   "18.67.161.7",
+   "18.67.161.69",
+   "18.67.161.13"
+  ],
+  "http_code": "200",
+  "size_bytes": 5487,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of bajrangi365.com; reachable shell, same platform IP",
+  "fingerprint": "spa-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d1.batbhai99.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of batbhai99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d1.gamblerbook365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of gamblerbook365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d1.lotusgame.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of lotusgame.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d1.mahadev77.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of mahadev77.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d1.mypatel365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of mypatel365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d1.rana247.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of rana247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d1.reddyanna.global",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of reddyanna.global; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "d1.reddybookclub.one",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of reddybookclub.one; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d2.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "302",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of 11xworld.com; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "d2.4xexch.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d2.bajrangi365.com",
+  "ips": [
+   "108.158.251.11",
+   "108.158.251.85",
+   "108.158.251.61",
+   "108.158.251.75"
+  ],
+  "http_code": "200",
+  "size_bytes": 5487,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of bajrangi365.com; reachable shell, same platform IP",
+  "fingerprint": "spa-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d2.batbhai99.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of batbhai99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d2.gamblerbook365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of gamblerbook365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d2.lotusgame.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of lotusgame.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d2.mahadev77.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of mahadev77.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d2.mypatel365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of mypatel365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d2.rana247.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of rana247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d2.reddyanna.global",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of reddyanna.global; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "d2.reddybookclub.one",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of reddybookclub.one; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d3.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "302",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of 11xworld.com; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "d3.4xexch.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d3.bajrangi365.com",
+  "ips": [
+   "108.159.15.68",
+   "108.159.15.45",
+   "108.159.15.66",
+   "108.159.15.78"
+  ],
+  "http_code": "200",
+  "size_bytes": 5487,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of bajrangi365.com; reachable shell, same platform IP",
+  "fingerprint": "spa-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d3.batbhai99.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of batbhai99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d3.gamblerbook365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of gamblerbook365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d3.lotusgame.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of lotusgame.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d3.mahadev77.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of mahadev77.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d3.mypatel365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of mypatel365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d3.rana247.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of rana247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d3.reddyanna.global",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of reddyanna.global; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "d3.reddybookclub.one",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of reddybookclub.one; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d4.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "302",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of 11xworld.com; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "d4.4xexch.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1075,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d4.bajrangi365.com",
+  "ips": [
+   "18.67.161.15",
+   "18.67.161.24",
+   "18.67.161.5",
+   "18.67.161.69"
+  ],
+  "http_code": "200",
+  "size_bytes": 5487,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of bajrangi365.com; reachable shell, same platform IP",
+  "fingerprint": "spa-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d4.batbhai99.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1075,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of batbhai99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d4.gamblerbook365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1075,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of gamblerbook365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d4.lotusgame.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1075,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of lotusgame.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d4.mahadev77.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1075,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of mahadev77.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d4.mypatel365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1075,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of mypatel365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d4.rana247.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1075,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of rana247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "d4.reddyanna.global",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of reddyanna.global; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "d4.reddybookclub.one",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1075,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "deploy shard of reddybookclub.one; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
  },
  {
   "domain": "diamond247.world",
@@ -761,6 +3405,38 @@
   "note": "301 -> ambani247.com (live betting op)"
  },
  {
+  "domain": "m.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "302",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "mobile mirror of 11xworld.com; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "m.4xexch.com",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "mobile mirror of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
   "domain": "mahadev247.club",
   "status": "live",
   "ips": [
@@ -807,6 +3483,38 @@
   "fingerprint": "empty",
   "title": "",
   "verified_at": "2026-10-02"
+ },
+ {
+  "domain": "mobile.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "mobile mirror of 11xworld.com; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "mobile.4xexch.com",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "mobile mirror of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
  },
  {
   "domain": "mylaser2022.com",
@@ -1378,6 +4086,38 @@
   "verified_at": "2026-10-02"
  },
  {
+  "domain": "wap.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "302",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "mobile mirror of 11xworld.com; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "wap.4xexch.com",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "mobile mirror of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
   "domain": "winbbuzz.live",
   "status": "live",
   "ips": [
@@ -1448,6 +4188,2603 @@
   "fingerprint": "cbtf-turbo-shell",
   "title": "<title>World's Biggest Prediction Exchange</title>",
   "verified_at": "2026-10-02"
+ },
+ {
+  "domain": "www.11xgame.club",
+  "ips": [
+   "18.239.111.24",
+   "18.239.111.23",
+   "18.239.111.129",
+   "18.239.111.89"
+  ],
+  "http_code": "200",
+  "size_bytes": 1579,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of 11xgame.club; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.11xgame.vip",
+  "ips": [
+   "108.159.15.11",
+   "108.159.15.69",
+   "108.159.15.50",
+   "108.159.15.43"
+  ],
+  "http_code": "200",
+  "size_bytes": 849,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of 11xgame.vip; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.11xpay.gallery",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of 11xpay.gallery; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.11xworld.com",
+  "ips": [
+   "13.223.25.84",
+   "54.243.117.197"
+  ],
+  "http_code": "302",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of 11xworld.com; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "www.1explay.com",
+  "ips": [
+   "45.60.66.205"
+  ],
+  "http_code": "301",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of 1explay.com; HTTP 301 WAF/fence from non-IN egress",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.4xexch.com",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of 4xexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.7x99.in",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of 7x99.in; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.91matka.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 1281,
+  "title": "<title>Loading...</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of 91matka.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.99exch.gallery",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of 99exch.gallery; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.akash247.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of akash247.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.ambani77.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of ambani77.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.anna247.live",
+  "ips": [
+   "108.159.15.22",
+   "108.159.15.12",
+   "108.159.15.34",
+   "108.159.15.8"
+  ],
+  "http_code": "200",
+  "size_bytes": 378,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of anna247.live; reachable shell, same platform IP",
+  "fingerprint": "spa-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.annawin247.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of annawin247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.apbook365.com",
+  "ips": [
+   "35.71.175.107",
+   "13.248.220.178"
+  ],
+  "http_code": "301",
+  "size_bytes": 270,
+  "title": "<title>301 Moved Permanently</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of apbook365.com; AP Book platform redirect",
+  "status": "live-separate-platform"
+ },
+ {
+  "domain": "www.bajrangi247.com",
+  "ips": [
+   "45.60.66.143"
+  ],
+  "http_code": "200",
+  "size_bytes": 134895,
+  "title": "<title>Bajrangi247 - Best Online Gaming Platform</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of bajrangi247.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.bajrangi365.com",
+  "ips": [
+   "108.158.251.13",
+   "108.158.251.84",
+   "108.158.251.51",
+   "108.158.251.38"
+  ],
+  "http_code": "200",
+  "size_bytes": 18901,
+  "title": "<title>Bajrangi365</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of bajrangi365.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.balajibookpro247.com",
+  "ips": [
+   "3.1.47.33"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of balajibookpro247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.balajionline247.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of balajionline247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.batbhai99.com",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of batbhai99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.betbhai2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of betbhai2022.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.betbhai9.care",
+  "ips": [
+   "108.159.61.91",
+   "108.159.61.68",
+   "108.159.61.61",
+   "108.159.61.116"
+  ],
+  "http_code": "200",
+  "size_bytes": 1579,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of betbhai9.care; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.betgram99.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of betgram99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.bhavanibook.com",
+  "ips": [
+   "3.1.10.24",
+   "18.136.79.51"
+  ],
+  "http_code": "200",
+  "size_bytes": 763,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of bhavanibook.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.bhavaniexch.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of bhavaniexch.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.cbtfbangla.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of cbtfbangla.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.cbtffreehit.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of cbtffreehit.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.cbtfturbo.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of cbtfturbo.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.cbtfturbo247.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "301",
+  "size_bytes": 134,
+  "title": "<title>301 Moved Permanently</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of cbtfturbo247.com; HTTP 301 WAF/fence from non-IN egress",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.cbtfvip.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 500,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of cbtfvip.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.cricbet2020.com",
+  "ips": [
+   "18.67.161.106",
+   "18.67.161.66",
+   "18.67.161.80",
+   "18.67.161.35"
+  ],
+  "http_code": "200",
+  "size_bytes": 849,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of cricbet2020.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.diamond247.world",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of diamond247.world; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.diamondexch777.live",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of diamondexch777.live; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.dreamexch365.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of dreamexch365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.fairlotus365.com",
+  "ips": [
+   "18.161.246.91",
+   "18.161.246.50",
+   "18.161.246.81",
+   "18.161.246.96"
+  ],
+  "http_code": "200",
+  "size_bytes": 619,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of fairlotus365.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.fairplay-365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of fairplay-365.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.fairplay2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of fairplay2022.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.fairplaybro.com",
+  "ips": [
+   "18.239.111.49",
+   "18.239.111.42",
+   "18.239.111.121",
+   "18.239.111.100"
+  ],
+  "http_code": "200",
+  "size_bytes": 5487,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of fairplaybro.com; reachable shell, same platform IP",
+  "fingerprint": "spa-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.g2020cricket.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of g2020cricket.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.gajanand2727.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of gajanand2727.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.gamblerbook365.com",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of gamblerbook365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.goreddy247.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of goreddy247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.goreddybook.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of goreddybook.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.govindasouth247.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of govindasouth247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.iob7.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1072,
+  "title": "<title>India's Most Trusted Online Cricket Betting Id Provider</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of iob7.com; verified betting frontend",
+  "fingerprint": "betting-id-provider",
+  "status": "live"
+ },
+ {
+  "domain": "www.jvbetbhai.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of jvbetbhai.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.jvbetbhai9.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of jvbetbhai9.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.jvbook247.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1072,
+  "title": "<title>India's Most Trusted Online Cricket Betting Id Provider</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of jvbook247.com; verified betting frontend",
+  "fingerprint": "betting-id-provider",
+  "status": "live"
+ },
+ {
+  "domain": "www.jvexch.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of jvexch.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.jvexch365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of jvexch365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.jvskyexch.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of jvskyexch.com; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.jvworld777.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of jvworld777.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.kabook365s.com",
+  "ips": [
+   "108.159.15.102",
+   "108.159.15.34",
+   "108.159.15.56",
+   "108.159.15.85"
+  ],
+  "http_code": "200",
+  "size_bytes": 1579,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of kabook365s.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.kabook365w.com",
+  "ips": [
+   "18.67.161.26",
+   "18.67.161.3",
+   "18.67.161.74",
+   "18.67.161.119"
+  ],
+  "http_code": "200",
+  "size_bytes": 867,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of kabook365w.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.kartikey365.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of kartikey365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.kedarbook.ai",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of kedarbook.ai; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.kedarbook.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 20831,
+  "title": "<title>kedarbook - India's #1 Betting Platform</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of kedarbook.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.khelobuzz.com",
+  "ips": [
+   "64.227.180.77"
+  ],
+  "http_code": "200",
+  "size_bytes": 896,
+  "title": "<title>MahadevBook777</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of khelobuzz.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.kheloyaar777.net",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of kheloyaar777.net; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.kheloyaar9.club",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 500,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of kheloyaar9.club; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.king247.com",
+  "ips": [
+   "43.204.175.61",
+   "13.201.159.31"
+  ],
+  "http_code": "200",
+  "size_bytes": 47638,
+  "title": "<title>Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of king247.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus2022.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365.fan",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365.fan; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365.global",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365.global; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365.ltd",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365.ltd; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365.store",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365.store; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365.tours",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365.tours; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365.xyz",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365.xyz; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.lotus365.zip",
+  "ips": [
+   "18.161.246.41",
+   "18.161.246.57",
+   "18.161.246.82",
+   "18.161.246.122"
+  ],
+  "http_code": "200",
+  "size_bytes": 867,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365.zip; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365bhai.com",
+  "ips": [
+   "108.159.15.110",
+   "108.159.15.47",
+   "108.159.15.61",
+   "108.159.15.64"
+  ],
+  "http_code": "200",
+  "size_bytes": 849,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365bhai.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365bro.com",
+  "ips": [
+   "108.158.251.47",
+   "108.158.251.96",
+   "108.158.251.72",
+   "108.158.251.23"
+  ],
+  "http_code": "200",
+  "size_bytes": 867,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365bro.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365d.com",
+  "ips": [
+   "108.159.61.57",
+   "108.159.61.67",
+   "108.159.61.97",
+   "108.159.61.64"
+  ],
+  "http_code": "200",
+  "size_bytes": 1579,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365d.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365ind.com",
+  "ips": [
+   "13.225.5.51",
+   "13.225.5.16",
+   "13.225.5.113",
+   "13.225.5.84"
+  ],
+  "http_code": "200",
+  "size_bytes": 794,
+  "title": "<title>Online Casino &amp; Sports Betting</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365ind.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365odds.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365odds.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365s.vip",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365s.vip; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365w.co",
+  "ips": [
+   "13.227.249.95",
+   "13.227.249.99",
+   "13.227.249.106",
+   "13.227.249.121"
+  ],
+  "http_code": "200",
+  "size_bytes": 849,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365w.co; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotus365w.com",
+  "ips": [
+   "108.159.15.118",
+   "108.159.15.83",
+   "108.159.15.38",
+   "108.159.15.108"
+  ],
+  "http_code": "200",
+  "size_bytes": 867,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotus365w.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusbets365.blue",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusbets365.blue; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusbets365.live",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusbets365.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusgame.in",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusgame.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusid365.vip",
+  "ips": [
+   "18.161.246.105",
+   "18.161.246.80",
+   "18.161.246.82",
+   "18.161.246.29"
+  ],
+  "http_code": "200",
+  "size_bytes": 619,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusid365.vip; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusid99.vip",
+  "ips": [
+   "18.172.78.74",
+   "18.172.78.9",
+   "18.172.78.20",
+   "18.172.78.99"
+  ],
+  "http_code": "200",
+  "size_bytes": 1515,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusid99.vip; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusind365.com",
+  "ips": [
+   "54.230.27.86",
+   "54.230.27.81",
+   "54.230.27.17",
+   "54.230.27.35"
+  ],
+  "http_code": "200",
+  "size_bytes": 619,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusind365.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusonline247.live",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusonline247.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusplus365.com",
+  "ips": [
+   "13.201.237.12",
+   "15.207.207.178"
+  ],
+  "http_code": "200",
+  "size_bytes": 180204,
+  "title": "<title>LotusPlus365 | Official Lotus 365 Betting &amp; Online Casino Platform</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusplus365.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusx365.com",
+  "ips": [
+   "108.159.15.51",
+   "108.159.15.44",
+   "108.159.15.93",
+   "108.159.15.122"
+  ],
+  "http_code": "200",
+  "size_bytes": 867,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusx365.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.lotusx99.com",
+  "ips": [
+   "18.67.195.42",
+   "18.67.195.87",
+   "18.67.195.113",
+   "18.67.195.82"
+  ],
+  "http_code": "200",
+  "size_bytes": 1579,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of lotusx99.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.luckybuzz.in",
+  "ips": [
+   "15.197.225.128",
+   "3.33.251.168"
+  ],
+  "http_code": "301",
+  "size_bytes": 55,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of luckybuzz.in; HTTP 301 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "www.mahadev247.club",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of mahadev247.club; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.mahadev77.in",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of mahadev77.in; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.mahadevbook777.com",
+  "ips": [
+   "104.21.41.142",
+   "172.67.191.54"
+  ],
+  "http_code": "200",
+  "size_bytes": 896,
+  "title": "<title>MahadevBook777</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of mahadevbook777.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.mahadevid777.co",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of mahadevid777.co; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.mahadevid777.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of mahadevid777.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.myfairplay.vip",
+  "ips": [
+   "108.159.15.29",
+   "108.159.15.22",
+   "108.159.15.67",
+   "108.159.15.45"
+  ],
+  "http_code": "200",
+  "size_bytes": 5487,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of myfairplay.vip; reachable shell, same platform IP",
+  "fingerprint": "spa-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.mylaser2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of mylaser2022.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.mypatel365.com",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of mypatel365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.myreddy.com",
+  "ips": [
+   "13.225.5.47",
+   "13.225.5.30",
+   "13.225.5.86",
+   "13.225.5.42"
+  ],
+  "http_code": "200",
+  "size_bytes": 366,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of myreddy.com; reachable shell, same platform IP",
+  "fingerprint": "spa-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.myreddy365anna.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of myreddy365anna.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.myreddy369.co",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of myreddy369.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.myreddy369.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 20106,
+  "title": "<title>MyReddy369 - India's #1 Betting Platform</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of myreddy369.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.myreddyanna101.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of myreddyanna101.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.myreddyanna367.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of myreddyanna367.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.myreddybook.com",
+  "ips": [
+   "13.225.5.86",
+   "13.225.5.47",
+   "13.225.5.30",
+   "13.225.5.42"
+  ],
+  "http_code": "200",
+  "size_bytes": 366,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of myreddybook.com; reachable shell, same platform IP",
+  "fingerprint": "spa-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.mywin369.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of mywin369.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.nawabsatta.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of nawabsatta.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.newlotus.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of newlotus.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.octabet555.com",
+  "ips": [
+   "3.1.47.33"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of octabet555.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.pateldiamond99.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of pateldiamond99.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.patelid777.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of patelid777.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.pateltiger365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of pateltiger365.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.qrstud.io",
+  "ips": [
+   "116.203.50.115"
+  ],
+  "http_code": "302",
+  "size_bytes": 328,
+  "title": "<title>Redirecting to https://qrcode.studio</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of qrstud.io; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "www.rana247.com",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of rana247.com; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.rapid11.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of rapid11.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.rcb247book.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of rcb247book.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddy247.co",
+  "ips": [
+   "3.33.130.190",
+   "15.197.148.33"
+  ],
+  "http_code": "200",
+  "size_bytes": 114,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddy247.co; parked /lander (matches apex)",
+  "status": "parked"
+ },
+ {
+  "domain": "www.reddy247.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 20993,
+  "title": "<title>Reddyx247</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddy247.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddy365.vip",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddy365.vip; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddy369.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddy369.com; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.reddy369.vip",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 500,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddy369.vip; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddy777anna.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddy777anna.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddy8888.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddy8888.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddyaanna365.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1072,
+  "title": "<title>India's Most Trusted Online Cricket Betting Id Provider</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddyaanna365.com; verified betting frontend",
+  "fingerprint": "betting-id-provider",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddyanaa.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddyanaa.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddyanna.global",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddyanna.global; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.reddyanna101.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddyanna101.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddyanna11.co",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddyanna11.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddybhai365.com",
+  "ips": [
+   "13.225.5.22",
+   "13.225.5.29",
+   "13.225.5.84",
+   "13.225.5.76"
+  ],
+  "http_code": "200",
+  "size_bytes": 867,
+  "title": "<title></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybhai365.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddybook.gallery",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1072,
+  "title": "<title>India's Most Trusted Online Cricket Betting Id Provider</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybook.gallery; verified betting frontend",
+  "fingerprint": "betting-id-provider",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddybook2022.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1072,
+  "title": "<title>India's Most Trusted Online Cricket Betting Id Provider</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybook2022.com; verified betting frontend",
+  "fingerprint": "betting-id-provider",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddybook24x7.club",
+  "ips": [
+   "76.223.67.189",
+   "13.248.213.45"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybook24x7.club; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.reddybook365.com",
+  "ips": [
+   "45.60.66.143"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybook365.com; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.reddybook365.in",
+  "ips": [
+   "118.139.179.232"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybook365.in; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.reddybook365.live",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybook365.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddybook777.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybook777.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddybookclub.one",
+  "ips": [
+   "52.77.92.16"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybookclub.one; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddybooks.co",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddybooks.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddyclub99.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddyclub99.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddyid247.com",
+  "ips": [
+   "45.60.66.205"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddyid247.com; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.reddyonline365.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddyonline365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.reddyx247.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of reddyx247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.run999.online",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of run999.online; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.shivshakti333.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of shivshakti333.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.skyexchange365.vip",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "000",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of skyexchange365.vip; DNS live, HTTP blocked from non-IN egress (geo-fenced)",
+  "status": "fenced"
+ },
+ {
+  "domain": "www.tigerexch77.live",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 865,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of tigerexch77.live; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.tradebet365.com",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of tradebet365.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.vardaan247.com",
+  "ips": [
+   "13.228.128.176",
+   "54.255.105.164"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of vardaan247.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.veerbook.com",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 871,
+  "title": "<title id=\"dynamic-title\"></title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of veerbook.com; verified betting frontend",
+  "fingerprint": "clusterC-dynamic-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.vkdanna.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of vkdanna.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.wa.link",
+  "ips": [
+   "172.66.151.230",
+   "104.20.36.92"
+  ],
+  "http_code": "302",
+  "size_bytes": 0,
+  "title": "",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of wa.link; HTTP 302 reachable redirect",
+  "status": "live-redirect"
+ },
+ {
+  "domain": "www.winbbuzz.live",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of winbbuzz.live; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.winbuzz24x7.online",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of winbuzz24x7.online; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.winbuzz99.co",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of winbuzz99.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.wolfexch247.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 8474,
+  "title": "<title>Exchange | Wolf</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of wolfexch247.com; verified betting frontend",
+  "fingerprint": "titled-frontend",
+  "status": "live"
+ },
+ {
+  "domain": "www.wonexbet.com",
+  "ips": [
+   "54.255.105.164",
+   "13.228.128.176"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of wonexbet.com; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.world777.luxury",
+  "ips": [
+   "3.1.108.127"
+  ],
+  "http_code": "200",
+  "size_bytes": 1372,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of world777.luxury; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
+ },
+ {
+  "domain": "www.zebraexch247.co",
+  "ips": [
+   "13.215.243.220"
+  ],
+  "http_code": "200",
+  "size_bytes": 719,
+  "title": "<title>World's Biggest Prediction Exchange</title>",
+  "verified_at": "2026-10-02",
+  "sources": [
+   "subdomain-enum-2026-10-02"
+  ],
+  "note": "www mirror of zebraexch247.co; verified betting frontend",
+  "fingerprint": "cbtf-turbo-shell",
+  "status": "live"
  },
  {
   "domain": "zebraexch247.co",
