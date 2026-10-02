@@ -164,7 +164,6 @@ export function StatusPage() {
     const rows = (netUrls?.rows ?? [])
       .map((r) => [q(r.host), q((r as any).resolved_url || r.url || ''), q((r as any).server_ip ?? ''), q((r as any).resolution ?? r.source), q(r.source), r.hits, r.amount_inr, q((r as any).resolved_domain ?? ''), q((r as any).note ?? '')].join(','))
       .join('\n')
-      .join('\n')
     const blob = new Blob([header + rows], { type: 'text/csv' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
