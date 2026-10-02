@@ -3057,6 +3057,7 @@ def money_flows_unique(
         "paidto@%",
         "receipt@%",
         "groceries@%",
+        "successfully@%",
         "%@contact",
         "%@operator",
         "%@others",
