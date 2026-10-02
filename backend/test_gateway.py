@@ -345,6 +345,7 @@ class GatewayParseTests(unittest.TestCase):
             "udyamregistration.gov.in",
             "tinyurl.com",
             "bn.m.wikipedia.org",
+            "www.safepal.com",
         ):
             self.assertFalse(gateway._qr_relevant(h), h)
         # Betting affiliates + unknown-destination redirectors stay.

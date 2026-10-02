@@ -573,7 +573,7 @@ _QR_DROP_HOSTS = frozenset(
     "www.janabank.com ucobank.com business.paytm.me "
     "qr.kfc.co.in idemia-mobile-id.com chat.whatsapp.com whatsapp.com "
     "udyamregistration.gov.in bn.m.wikipedia.org google.com "
-    "www.odishaecoretreats.com tinyurl.com".split()
+    "www.odishaecoretreats.com tinyurl.com www.safepal.com".split()
 )
 
 
