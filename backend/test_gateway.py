@@ -246,6 +246,83 @@ class GatewayParseTests(unittest.TestCase):
         self.assertEqual(rows[0]["first_seen"], "2026-03-01")
         self.assertEqual(rows[0]["last_seen"], "2026-03-05")
 
+    def test_normalize_brand_host(self):
+        self.assertEqual(gateway.normalize_brand_host("reddy369"), "reddy369")
+        self.assertEqual(
+            gateway.normalize_brand_host("https://lotus365w.com"), "lotus365w.com"
+        )
+        self.assertEqual(
+            gateway.normalize_brand_host("https://www.ambani247.com/home"),
+            "www.ambani247.com",
+        )
+        self.assertEqual(
+            gateway.normalize_brand_host("Mahadevbook777"), "mahadevbook777"
+        )
+        self.assertEqual(
+            gateway.normalize_brand_host("https://Reddy247.co"), "reddy247.co"
+        )
+        self.assertEqual(gateway.normalize_brand_host(""), "")
+
+    def test_is_valid_domain_host(self):
+        self.assertTrue(gateway.is_valid_domain_host("bajrangi247.com"))
+        self.assertTrue(gateway.is_valid_domain_host("lotus365w.co"))
+        self.assertTrue(gateway.is_valid_domain_host("go.short"))
+        self.assertFalse(gateway.is_valid_domain_host("reddy369"))
+        self.assertFalse(gateway.is_valid_domain_host("click"))
+        self.assertFalse(gateway.is_valid_domain_host("boi&pn=top"))
+        self.assertFalse(
+            gateway.is_valid_domain_host(
+                "centralbankofindia.co.in28220010a00000052401047885520454995303356550201"
+            )
+        )
+
+    def test_resolve_brand_alias_and_valid(self):
+        r = gateway.resolve_brand("reddy369")
+        self.assertFalse(r["is_valid_domain"])
+        self.assertEqual(r["resolved_domain"], "reddy369.com")
+        self.assertEqual(r["url"], "https://reddy369.com/")
+        self.assertEqual(r["resolution"], "alias-resolved-live")
+        v = gateway.resolve_brand("https://lotus365w.com")
+        self.assertTrue(v["is_valid_domain"])
+        self.assertEqual(v["host"], "lotus365w.com")
+        self.assertEqual(v["url"], "https://lotus365w.com/")
+        p = gateway.resolve_brand("click")
+        self.assertEqual(p["resolution"], "placeholder")
+        self.assertEqual(p["resolved_domain"], "")
+
+    def test_network_urls_qr_glue_filtered(self):
+        import json
+
+        db.connect()
+        c = db.connect()
+        c.execute("DELETE FROM gateway_rows")
+        c.execute("DELETE FROM objects")
+        c.execute(
+            "INSERT INTO objects(key,size,etag,last_modified,top_prefix,extract_json) VALUES(?,?,?,?,?,?)",
+            (
+                "bankingqr/glue.png",
+                10,
+                "e9",
+                "2026-04-01",
+                "bankingqr/",
+                json.dumps(
+                    {
+                        "kind": "qr",
+                        "raw_text": "upi://pay https://www.bankofindia.co.in&pa=boim-1@boi&pn=X "
+                        "https://centralbankofindia.co.in28220010A00000052401047885520454995303356550201",
+                    }
+                ),
+            ),
+        )
+        c.commit()
+        out = gateway.network_urls()
+        hosts = {r["host"] for r in out["rows"]}
+        self.assertNotIn("boi&pn=x", hosts)
+        self.assertFalse(any("centralbankofindia.co.in2822" in h for h in hosts))
+        self.assertIn("counts", out)
+        self.assertIn("valid_frontends", out["counts"])
+        self.assertIn("alias_rows", out["counts"])
+
 
 if __name__ == "__main__":
     unittest.main()

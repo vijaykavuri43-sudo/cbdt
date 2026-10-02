@@ -335,6 +335,298 @@ def summary() -> dict:
 
 _URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 
+# --- Brand/domain normalization (2026-10-02: NETWORK URLS showed raw
+# settlement `Website` values as hosts — bare aliases like `reddy369`,
+# full URLs with paths like `https://www.ambani247.com/home`, and mixed
+# case. Bettors only use resolvable frontend domains, so every
+# gateway-brand row is normalized to a host + validity verdict below.) ---
+_HOST_RE = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)+$", re.IGNORECASE)
+
+# Real public suffixes are pure-alpha (2-10 chars). This rejects QR-parser
+# glue like `centralbankofindia.co.in28220010a…` (digit-fused garbage TLD)
+# while keeping genuine short-link/bank/rail hosts (go.short, goo.gl, …).
+_TLD_RE = re.compile(r"^[a-z]{2,10}$")
+
+
+def normalize_brand_host(site: str) -> str:
+    """Normalize a settlement `Website` value to a lowercase host.
+
+    Handles: bare aliases (`reddy369`), FQDNs (`bajrangi247.com`),
+    full URLs (`https://lotus365w.com`, `http://ice-xch.com`),
+    URLs with paths (`https://www.ambani247.com/home`), and mixed
+    case (`Mahadevbook777`, `https://Reddy247.co`). Never raises.
+    """
+    s = (site or "").strip()
+    if not s:
+        return ""
+    try:
+        if "://" in s:
+            host = urlparse(s).hostname or ""
+        elif "/" in s or ":" in s:
+            host = urlparse("https://" + s).hostname or s.split("/")[0]
+        else:
+            host = s
+    except Exception:
+        host = s.split("/")[0]
+    return host.lower().strip().strip(".")
+
+
+def is_valid_domain_host(host: str) -> bool:
+    """Syntax validity for a bettor-facing domain (no DNS implied)."""
+    h = (host or "").lower().strip().strip(".")
+    if not h or len(h) > 253 or "." not in h:
+        return False
+    if any(c in h for c in ("&", "?", "/", " ", "_", "@", "#", "%", "+")):
+        return False
+    if not _HOST_RE.match(h):
+        return False
+    labels = h.split(".")
+    if any(
+        not lab or len(lab) > 63 or lab.startswith("-") or lab.endswith("-")
+        for lab in labels
+    ):
+        return False
+    tld = labels[-1]
+    if not _TLD_RE.match(tld):
+        return False
+    # Reject UPI-QR glue: long digit runs fused into a label
+    # (e.g. `co.in28220010a000…` fragments).
+    if re.search(r"\d{8,}", h):
+        return False
+    return True
+
+
+# Alias (no-dot settlement tag) -> verified frontend domain mapping.
+# Verified 2026-10-02 (DNS via local resolver + Cloudflare DoH, HTTP(S)
+# title/fingerprint probe from non-IN egress; IN-only hosts report as
+# `fenced`). `status` mirrors resolve_brand() verdicts.
+BRAND_ALIAS_MAP: dict[str, dict] = {
+    "reddy369": {
+        "primary": "reddy369.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["reddy369.com", "reddy369.vip"],
+        "note": "719B 'World's Biggest Prediction Exchange' shell (CBTF Turbo)",
+    },
+    "newlotus": {
+        "primary": "newlotus.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["newlotus.com"],
+        "note": "Prediction-Exchange shell + 51 victims in DOMAINS-MASTER",
+    },
+    "reddyid247": {
+        "primary": "reddyid247.com",
+        "status": "alias-resolved-fenced",
+        "confidence": "medium",
+        "candidates": ["reddyid247.com"],
+        "note": "DNS live; HTTP blocked from non-IN egress (geo-fenced)",
+    },
+    "cbtfturbo": {
+        "primary": "cbtfturbo.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["cbtfturbo.com"],
+        "note": "Prediction-Exchange shell + 229 victims in DOMAINS-MASTER",
+    },
+    "11xworld": {
+        "primary": "11xworld.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["11xworld.com"],
+        "note": "DNS live, HTTP reachable (302); S3 APK brand 11xworld",
+    },
+    "lotus365": {
+        "primary": "lotus365.xyz",
+        "status": "alias-resolved-live",
+        "confidence": "medium",
+        "candidates": ["lotus365.xyz", "lotus365s.vip", "lotus365.global"],
+        "note": "Stem-ambiguous lotus family; primary verified live, others live too",
+    },
+    "reddyanaa": {
+        "primary": "reddyanaa.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["reddyanaa.com"],
+        "note": "Prediction-Exchange shell + 57 victims in DOMAINS-MASTER",
+    },
+    "betgram99": {
+        "primary": "betgram99.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["betgram99.com"],
+        "note": "Prediction-Exchange shell; Tier-1B white-label tenant",
+    },
+    "lotusplus365": {
+        "primary": "lotusplus365.com",
+        "status": "alias-resolved-fenced",
+        "confidence": "medium",
+        "candidates": ["lotusplus365.com"],
+        "note": "DNS live; HTTP blocked from non-IN egress (geo-fenced)",
+    },
+    "reddybook365": {
+        "primary": "reddybook365.live",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["reddybook365.live", "reddybook365.com", "reddybook365.in"],
+        "note": "Primary on platform IP 13.215.243.220; 62 victims (.live)",
+    },
+    "reddybook777": {
+        "primary": "reddybook777.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["reddybook777.com"],
+        "note": "Prediction-Exchange shell + 43 victims in DOMAINS-MASTER",
+    },
+    "cbtfturbo247": {
+        "primary": "cbtfturbo247.com",
+        "status": "alias-resolved-fenced",
+        "confidence": "medium",
+        "candidates": ["cbtfturbo247.com"],
+        "note": "DNS live; HTTP 403 WAF/geo-fence from non-IN egress",
+    },
+    "reddy247": {
+        "primary": "reddy247.com",
+        "status": "alias-resolved-fenced",
+        "confidence": "medium",
+        "candidates": ["reddy247.com", "reddy247.co"],
+        "note": "reddy247.com DNS live but fenced; reddy247.co is parked lander",
+    },
+    "reddybook24x7": {
+        "primary": "reddybook24x7.club",
+        "status": "alias-resolved-parked",
+        "confidence": "medium",
+        "candidates": ["reddybook24x7.club"],
+        "note": "Domain resolves but serves parked /lander redirect",
+    },
+    "lotus365s": {
+        "primary": "lotus365s.vip",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["lotus365s.vip"],
+        "note": "Prediction-Exchange shell + 153 victims in DOMAINS-MASTER",
+    },
+    "apbook777": {
+        "primary": None,
+        "status": "alias-unresolved",
+        "confidence": "low",
+        "candidates": [],
+        "note": "No DNS evidence; apbook365.com is a different platform — do not merge",
+    },
+    "myreddybook": {
+        "primary": "myreddybook.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["myreddybook.com"],
+        "note": "Live betting SPA shell (/assets/index-*.js)",
+    },
+    "goreddybook": {
+        "primary": "goreddybook.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["goreddybook.com"],
+        "note": "Prediction-Exchange shell + 6 victims in DOMAINS-MASTER",
+    },
+    "mahadevbook777": {
+        "primary": "mahadevbook777.com",
+        "status": "alias-resolved-fenced",
+        "confidence": "medium",
+        "candidates": ["mahadevbook777.com"],
+        "note": "DNS live; HTTP blocked from non-IN egress (geo-fenced)",
+    },
+    "bhavaniexch": {
+        "primary": "bhavaniexch.com",
+        "status": "alias-resolved-live",
+        "confidence": "high",
+        "candidates": ["bhavaniexch.com"],
+        "note": "Prediction-Exchange shell; Tier-1B white-label tenant",
+    },
+    "khelobuzz": {
+        "primary": "khelobuzz.com",
+        "status": "alias-resolved-live",
+        "confidence": "low",
+        "candidates": ["khelobuzz.com"],
+        "note": "khelobuzz.com serves live 'MahadevBook777' betting app; 2-row link only",
+    },
+}
+
+
+def _qr_host_ok(host: str) -> bool:
+    """Validity gate for QR-derived hosts (drops bank-fragment glue)."""
+    if not is_valid_domain_host(host):
+        return False
+    if len(host) > 64:
+        return False
+    return True
+
+
+def resolve_brand(site: str) -> dict:
+    """Resolve a settlement `Website` value to bettor-facing domain info.
+
+    Returns host (normalized), url (valid https URL or ""), brand_raw
+    (original value), is_valid_domain, resolution verdict, confidence,
+    resolved_domain, and a short evidence note. Never raises.
+    """
+    raw = (site or "").strip()
+    host = normalize_brand_host(raw)
+    if not host:
+        return {
+            "host": "",
+            "url": "",
+            "brand_raw": raw,
+            "is_valid_domain": False,
+            "resolution": "empty",
+            "confidence": "high",
+            "resolved_domain": "",
+            "note": "Empty Website value",
+        }
+    if is_valid_domain_host(host):
+        return {
+            "host": host,
+            "url": f"https://{host}/",
+            "brand_raw": raw,
+            "is_valid_domain": True,
+            "resolution": "live-verified",
+            "confidence": "high",
+            "resolved_domain": host,
+            "note": "Resolvable frontend domain (see verification report for per-host liveness)",
+        }
+    alias = BRAND_ALIAS_MAP.get(host)
+    if alias and alias.get("primary"):
+        primary = alias["primary"]
+        live = alias["status"] == "alias-resolved-live"
+        return {
+            "host": host,
+            "url": f"https://{primary}/",
+            "brand_raw": raw,
+            "is_valid_domain": False,
+            "resolution": alias["status"],
+            "confidence": alias.get("confidence", "medium"),
+            "resolved_domain": primary,
+            "note": alias.get("note", ""),
+        }
+    if alias:  # unresolved (e.g. apbook777)
+        return {
+            "host": host,
+            "url": "",
+            "brand_raw": raw,
+            "is_valid_domain": False,
+            "resolution": alias["status"],
+            "confidence": alias.get("confidence", "low"),
+            "resolved_domain": "",
+            "note": alias.get("note", ""),
+        }
+    return {
+        "host": host,
+        "url": "",
+        "brand_raw": raw,
+        "is_valid_domain": False,
+        "resolution": "placeholder",
+        "confidence": "high",
+        "resolved_domain": "",
+        "note": "Non-domain settlement tag (test/placeholder), not a bettor frontend",
+    }
+
 
 def _url_host(url: str) -> str:
     try:
@@ -364,15 +656,16 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
         " GROUP BY website ORDER BY txns DESC"
     ).fetchall():
         site = (b["website"] or "").strip()
-        url = (
-            site
-            if site.lower().startswith("http")
-            else (f"https://{site}" if "." in site else site)
-        )
+        res = resolve_brand(site)
         rows.append(
             {
-                "host": site.lower(),
-                "url": url,
+                "host": res["host"],
+                "url": res["url"]
+                or (
+                    site
+                    if site.lower().startswith("http")
+                    else (f"https://{site}" if "." in site else site)
+                ),
                 "source": "gateway-brand",
                 "hits": b["txns"],
                 "txns": b["txns"],
@@ -382,9 +675,18 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
                 "first_seen": b["first_seen"] or "",
                 "last_seen": b["last_seen"] or "",
                 "sample_key": b["sample_key"] or "",
+                # Domain-validity enrichment (2026-10-02): bettors only
+                # use resolvable frontend domains.
+                "brand_raw": res["brand_raw"],
+                "is_valid_domain": res["is_valid_domain"],
+                "resolution": res["resolution"],
+                "confidence": res["confidence"],
+                "resolved_domain": res["resolved_domain"],
+                "resolved_url": res["url"],
+                "note": res["note"],
             }
         )
-    agg: dict[str, dict] = {}
+    agg: dict[tuple[str, str], dict] = {}
     for r in c.execute(
         "SELECT key,last_modified,"
         " json_extract(extract_json,'$.raw_text') raw,"
@@ -395,14 +697,14 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
         " LIMIT ?",
         (qr_scan_limit,),
     ).fetchall():
-        found: list[tuple[str, str]] = []
+        found: list[tuple[str, tuple[str, str]]] = []
         for u in _URL_RE.findall(r["raw"] or ""):
             h = _url_host(u)
-            if h:
+            if h and _qr_host_ok(h):
                 found.append((h, ("qr-payload", u)))
         if r["exp"]:
             h = _url_host(r["exp"])
-            if h:
+            if h and _qr_host_ok(h):
                 found.append((h, ("qr-expanded", r["exp"])))
         for host, (source, url) in found:
             key = (host, source)
@@ -420,6 +722,13 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
                     "first_seen": r["last_modified"] or "",
                     "last_seen": r["last_modified"] or "",
                     "sample_key": r["key"],
+                    "brand_raw": "",
+                    "is_valid_domain": True,
+                    "resolution": "qr-host",
+                    "confidence": "high",
+                    "resolved_domain": host,
+                    "resolved_url": f"https://{host}/",
+                    "note": "Resolvable host from collection QR payload/expansion",
                 }
             else:
                 a["hits"] += 1
@@ -431,11 +740,22 @@ def network_urls(qr_scan_limit: int = 50000) -> dict:
     rows.extend(sorted(agg.values(), key=lambda d: -d["hits"]))
     return {
         "fact_type": "fact",
-        "note": "Hosts observed in gateway settlement brands + decoded collection-QR URLs. Test rows excluded. QR hosts include payment rails (upi:) neighbours — source column distinguishes.",
+        "note": "Hosts observed in gateway settlement brands + decoded collection-QR URLs. Test rows excluded. gateway-brand rows carry normalized host + validity verdict (is_valid_domain/resolution/resolved_domain/resolved_url); QR hosts are validity-filtered (bank-fragment glue dropped) — source column distinguishes.",
         "rows": rows,
         "counts": {
             "total": len(rows),
             "brands": sum(1 for d in rows if d["source"] == "gateway-brand"),
             "qr_hosts": sum(1 for d in rows if d["source"] != "gateway-brand"),
+            "valid_frontends": sum(
+                1
+                for d in rows
+                if d["source"] == "gateway-brand"
+                and (d.get("is_valid_domain") or d.get("resolved_domain"))
+            ),
+            "alias_rows": sum(
+                1
+                for d in rows
+                if d["source"] == "gateway-brand" and not d.get("is_valid_domain")
+            ),
         },
     }
