@@ -3044,6 +3044,16 @@ def money_flows_unique(
         folder=folder,
     )
     where = f"{where} AND rail_id!=''"
+    # Parity with mule_rails(): OCR template junk (receipt boilerplate
+    # misread as a VPA) must not top officer unique lists/CSVs either.
+    # Plus amount artifacts like '000.00@tess' (digits-dot-digits handle —
+    # never a real VPA) observed live on b2/b3 2026-10-02.
+    where = (
+        f"{where} AND NOT ("
+        + " OR ".join(["lower(rail_id) LIKE ?"] * len(_VPA_JUNK_PATTERNS))
+        + ") AND rail_id NOT GLOB '[0-9]*.[0-9]*@*'"
+    )
+    args = args + [p.lower() for p in _VPA_JUNK_PATTERNS]
     c = connect()
     total = c.execute(
         f"SELECT COUNT(*) n FROM ("

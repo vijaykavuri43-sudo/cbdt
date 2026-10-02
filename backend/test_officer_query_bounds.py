@@ -240,6 +240,63 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         )
         self.assertEqual(wd["rows_total"], 0)
 
+    def test_unique_excludes_ocr_junk_vpas(self):
+        # Live b2/b3 2026-10-02: amount artifacts + template junk topped lists.
+        c = db.connect()
+        c.executemany(
+            "INSERT INTO payment_transactions("
+            "source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
+            "account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified,evidence_json"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    "deposit/j1.jpg",
+                    "deposit",
+                    "g9",
+                    10,
+                    "UJ1",
+                    "upi",
+                    "000.00@tess",
+                    "",
+                    "",
+                    "",
+                    "low",
+                    "beneficiary",
+                    "low",
+                    "2026-09-11T12:00:00Z",
+                    "{}",
+                ),
+                (
+                    "deposit/j2.jpg",
+                    "deposit",
+                    "g9",
+                    10,
+                    "UJ2",
+                    "upi",
+                    "only@foodstall",
+                    "",
+                    "",
+                    "",
+                    "low",
+                    "beneficiary",
+                    "low",
+                    "2026-09-11T12:00:00Z",
+                    "{}",
+                ),
+            ],
+        )
+        c.commit()
+        out = db.money_flows_unique(
+            rail_type="upi",
+            direction="deposit",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        ids = {r["rail_id"] for r in out["items"]}
+        self.assertNotIn("000.00@tess", ids)
+        self.assertNotIn("only@foodstall", ids)
+        self.assertEqual(ids, {"a@ybl", "b@ybl"})
+
     def test_unique_upi(self):
         out = db.money_flows_unique(
             folder="deposit", rail_type="upi", since="2026-09-01", until="2026-09-30"
