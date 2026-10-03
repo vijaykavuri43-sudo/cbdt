@@ -3089,12 +3089,20 @@ def money_flows_unique(
         "%@need",
         "%@prenge",
         "%@code",
+        "%@state",
+        "%@ref",
+        "%@bank",
     )
     _all_junk = [p.lower() for p in _VPA_JUNK_PATTERNS] + list(_UNIQUE_EXTRA_JUNK)
+    # Time fragments ('04pm@kotak', '06am@state'): receipt timestamps misread
+    # as VPAs. A real VPA local never starts with digits and ends in am/pm.
+    # (@kotak/@sbi alone stay: real bank handles.)
     where = (
         f"{where} AND NOT ("
         + " OR ".join(["lower(rail_id) LIKE ?"] * len(_all_junk))
         + ") AND rail_id NOT GLOB '[0-9]*.[0-9]*@*'"
+        + " AND lower(rail_id) NOT GLOB '[0-9]*am@*'"
+        + " AND lower(rail_id) NOT GLOB '[0-9]*pm@*'"
     )
     args = args + _all_junk
     c = connect()

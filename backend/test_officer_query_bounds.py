@@ -333,6 +333,97 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         self.assertNotIn("share@need", ids)
         self.assertEqual(ids, {"a@ybl", "b@ybl"})
 
+    def test_unique_excludes_time_fragments_and_bank_words(self):
+        c = db.connect()
+        c.executemany(
+            "INSERT INTO payment_transactions("
+            "source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
+            "account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified,evidence_json"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    "deposit/t1.jpg",
+                    "deposit",
+                    "g9",
+                    10,
+                    "UT1",
+                    "upi",
+                    "04pm@kotak",
+                    "",
+                    "",
+                    "",
+                    "low",
+                    "beneficiary",
+                    "low",
+                    "2026-09-11T12:00:00Z",
+                    "{}",
+                ),
+                (
+                    "deposit/t2.jpg",
+                    "deposit",
+                    "g9",
+                    10,
+                    "UT2",
+                    "upi",
+                    "06am@state",
+                    "",
+                    "",
+                    "",
+                    "low",
+                    "beneficiary",
+                    "low",
+                    "2026-09-11T12:00:00Z",
+                    "{}",
+                ),
+                (
+                    "deposit/t3.jpg",
+                    "deposit",
+                    "g9",
+                    10,
+                    "UT3",
+                    "upi",
+                    "gupta@bank",
+                    "",
+                    "",
+                    "",
+                    "low",
+                    "beneficiary",
+                    "low",
+                    "2026-09-11T12:00:00Z",
+                    "{}",
+                ),
+                (
+                    "deposit/t4.jpg",
+                    "deposit",
+                    "g9",
+                    10,
+                    "UT4",
+                    "upi",
+                    "9876543210@kotak",
+                    "",
+                    "",
+                    "",
+                    "high",
+                    "beneficiary",
+                    "high",
+                    "2026-09-11T12:00:00Z",
+                    "{}",
+                ),
+            ],
+        )
+        c.commit()
+        out = db.money_flows_unique(
+            rail_type="upi",
+            direction="deposit",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        ids = {r["rail_id"] for r in out["items"]}
+        self.assertNotIn("04pm@kotak", ids)
+        self.assertNotIn("06am@state", ids)
+        self.assertNotIn("gupta@bank", ids)
+        self.assertIn("9876543210@kotak", ids)
+
     def test_unique_upi(self):
         out = db.money_flows_unique(
             folder="deposit", rail_type="upi", since="2026-09-01", until="2026-09-30"
