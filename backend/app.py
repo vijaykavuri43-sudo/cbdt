@@ -2682,9 +2682,11 @@ def export_money_flows_unique(
             )
         return out
 
-    cache_key = f"export-flows-u:{rail_type}:{q}:{source}:{since}:{until}:{folder}"
+    cache_key = (
+        f"export-flows-u:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{direction}"
+    )
     rows = cached(cache_key, 30.0, build)
-    tag = f"{folder or 'all'}-{(rail_type or 'all')}-{since or 'start'}-to-{until or 'now'}"
+    tag = f"{folder or 'all'}-{(rail_type or 'all')}-{direction}-{since or 'start'}-to-{until or 'now'}"
     tag = re.sub(r"[^A-Za-z0-9._-]+", "_", tag)[:80]
     return _export_response(rows, _UNIQUE_EXPORT_COLUMNS, f"officer-unique-rails-{tag}")
 
