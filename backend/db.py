@@ -2742,6 +2742,11 @@ def rail_quality(rail_type: str, rail_id: str) -> str:
         # OCR also reads mask blocks as 'e'/'c' ('eeecee7922', 'ecceee7145'):
         # a 3+ run of mask-confusable chars can never open a real VPA.
         return "masked"
+    if re.match(r"[0soxXeEC]{3,}[0-9]", local):
+        # Mask blocks misread with 's'/'o' prefixes ('seeeee4944',
+        # 'oeeeee3202', 'ooeeee2686', 'see9e9987'): s/o + e-run + digits.
+        # Short names ('sonu123', 'se7en') never match: run must be 3+.
+        return "masked"
     if re.search(r"-[a-z]+[a-z0-9]*$", local, re.IGNORECASE) and not re.fullmatch(
         r"\d{10}-\d{1,2}", local
     ):
@@ -3143,6 +3148,7 @@ def money_flows_unique(
     _UNIQUE_EXTRA_JUNK = (
         "paidto@%",
         "%@paidto",
+        "balance@%",
         "help@quicktransfer%",
         "mode@transfert",
         "receipt@%",
