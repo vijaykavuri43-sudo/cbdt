@@ -2742,6 +2742,19 @@ def rail_quality(rail_type: str, rail_id: str) -> str:
         # OCR also reads mask blocks as 'e'/'c' ('eeecee7922', 'ecceee7145'):
         # a 3+ run of mask-confusable chars can never open a real VPA.
         return "masked"
+    if re.match(r"[0soxXeEC]{3,}[\d\-]", local):
+        # s/o-prefixed mask reads ('seeeee4944', 'oeeeee3202', 'sss-1172').
+        return "masked"
+    if re.match(r"^[a-z]{1,2}[ex0][ex0\d\-]*\d$", local, re.IGNORECASE):
+        # Alpha-open mask garble ('se9e01910', 'se0ee9989', 'eetb12' is
+        # borderline-kept). Real names never look like this.
+        return "masked"
+    if re.match(r"^[oq]-?\d", local, re.IGNORECASE) or re.match(
+        r"^(stk|spay|epay|qpay|qypay|goay|qgpay)-", local, re.IGNORECASE
+    ):
+        # Truncated/misread prefixes ('o120-1', 'stk-7778854270-1' for
+        # '7778854270'; 'epay-' for 'gpay-'). Digit-run linkage proved these.
+        return "masked"
     if re.match(r"[0soxXeEC]{3,}[0-9]", local):
         # Mask blocks misread with 's'/'o' prefixes ('seeeee4944',
         # 'oeeeee3202', 'ooeeee2686', 'see9e9987'): s/o + e-run + digits.
