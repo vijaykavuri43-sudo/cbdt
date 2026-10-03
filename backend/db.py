@@ -2681,13 +2681,13 @@ def _canonical_rail_type(declared: str, rail_id: str) -> str:
     return declared or "unknown"
 
 
-# Known-good UPI handle suffixes (PSP/bank handles observed live; advisory
-# only — see rail_quality()). Anything else on a readable local is partial.
+# Known-good UPI handle suffixes: PSP/bank handles with live evidence behind
+# them. 'pty'/'ubl'-style truncations are deliberately absent — anything
+# else on a readable local is partial, never countable as new.
 _KNOWN_UPI_HANDLES = frozenset(
     "okbizaxis okaxis oksbi okhdfcbank okhdfc okicici ybl paytm phonepe upi "
-    "ptyes pty navi naviaxis uboi ubl kotakbank kotak hdfcbank icici sbi "
-    "airtel jio mbk axisbank ibl idbi barodampay okbob okpnb allbank fbl "
-    "ibl idsbi kvbkmbl".split()
+    "ptyes navi naviaxis uboi kotakbank kotak hdfcbank icici sbi "
+    "airtel jio mbk axisbank".split()
 )
 
 _MASK_RE = re.compile(r"[xX]{2,}")
@@ -2737,6 +2737,10 @@ def rail_quality(rail_type: str, rail_id: str) -> str:
         # Mask-char runs incl. OCR 'e'-for-'x' reads ('x8211', '0e3679',
         # '00e1925', '000e6139') and masked tail codes ('021-xf2b').
         # Short tails like '0767' stay partial (plain truncation, no mask).
+        return "masked"
+    if re.match(r"[0xXecEC]{3,}", local):
+        # OCR also reads mask blocks as 'e'/'c' ('eeecee7922', 'ecceee7145'):
+        # a 3+ run of mask-confusable chars can never open a real VPA.
         return "masked"
     if re.search(r"-[a-z]+[a-z0-9]*$", local, re.IGNORECASE) and not re.fullmatch(
         r"\d{10}-\d{1,2}", local
