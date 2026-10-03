@@ -1,11 +1,31 @@
 const TOKEN_KEY = 's3lm_token'
 
+// The three dashboards (:80/:81/:82) are separate origins, so localStorage
+// tokens do not carry across ports — unlocking one bucket left the others
+// asking for the key (2026-10-03). Cookies ignore ports on the same host,
+// so the key is mirrored to a plain (JS-readable) cookie; any port picks up
+// a session started on another.
+function readCookie(): string {
+  try {
+    const m = document.cookie.match(/(?:^|;\s*)s3lm_token=([^;]*)/)
+    return m ? decodeURIComponent(m[1]) : ''
+  } catch {
+    return ''
+  }
+}
+
 export function getToken(): string {
-  return localStorage.getItem(TOKEN_KEY) || ''
+  return localStorage.getItem(TOKEN_KEY) || readCookie()
 }
 
 export function setToken(t: string) {
-  localStorage.setItem(TOKEN_KEY, t.trim())
+  const v = t.trim()
+  localStorage.setItem(TOKEN_KEY, v)
+  try {
+    document.cookie = `${TOKEN_KEY}=${encodeURIComponent(v)}; path=/; max-age=31536000; SameSite=Lax`
+  } catch {
+    /* private-mode: localStorage copy suffices */
+  }
 }
 
 export function hasToken(): boolean {

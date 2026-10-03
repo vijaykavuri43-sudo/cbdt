@@ -117,6 +117,34 @@ class VerifyHelperTests(unittest.TestCase):
         self.assertEqual(app._ext_of_key("noext"), "")
 
 
+class SourceLinkTokenTests(unittest.TestCase):
+    def test_source_link_carries_token(self):
+        # 2026-10-03: pasted tokenless CSV links 401'd in fresh tabs (no
+        # Authorization header cross-tab). Exhibit links must open directly.
+        link = app._source_link("deposit/a b.jpg")
+        self.assertIn("key=deposit%2Fa%20b.jpg", link)
+        self.assertIn("token=", link)
+        self.assertNotIn("token=&", link)
+
+    def test_auth_accepts_query_token(self):
+        from . import config  # noqa: E402
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "headers": [],
+            "query_string": f"token={config.API_TOKEN}".encode(),
+        }
+        self.assertIsNone(app.auth(Request(scope)))
+
+    def test_auth_rejects_missing_token(self):
+        from fastapi import HTTPException  # noqa: E402
+
+        scope = {"type": "http", "method": "GET", "headers": [], "query_string": b""}
+        with self.assertRaises(HTTPException):
+            app.auth(Request(scope))
+
+
 class RepairRouteTests(unittest.TestCase):
     def setUp(self):
         self._old = (

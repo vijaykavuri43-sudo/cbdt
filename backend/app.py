@@ -2696,10 +2696,17 @@ def _source_link(key: str) -> str:
 
     Opens the sha256-verified object on the live dashboard so an officer can
     manually confirm any CSV row against the source screenshot/QR/file.
+    Carries ?token= so the link opens in a fresh tab without re-unlocking
+    (2026-10-03: pasted tokenless links 401'd despite an active session —
+    new tabs send no Authorization header and each port is a separate
+    origin). Treat exhibit CSVs as key-bearing material accordingly.
     """
     from urllib.parse import quote
 
-    return f"{config.PUBLIC_URL}/api/object?key={quote(key, safe='')}&download=1"
+    return (
+        f"{config.PUBLIC_URL}/api/object?key={quote(key, safe='')}&download=1"
+        f"&token={quote(config.API_TOKEN, safe='')}"
+    )
 
 
 _BUCKET_KEY_RE = re.compile(
