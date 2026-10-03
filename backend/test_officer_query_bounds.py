@@ -424,6 +424,29 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         self.assertNotIn("gupta@bank", ids)
         self.assertIn("9876543210@kotak", ids)
 
+    def test_rail_quality_labels(self):
+        q = db.rail_quality
+        self.assertEqual(q("upi", "9876543210@okbizaxis"), "full")
+        self.assertEqual(q("upi", "vinod.mungekar3258@uboi"), "full")
+        self.assertEqual(q("upi", "xxxxxx7922@ptyes"), "masked")
+        self.assertEqual(q("upi", "0000008301-q251@ybl"), "masked")
+        self.assertEqual(q("upi", "0767@okbizaxis"), "partial")
+        self.assertEqual(q("upi", "borichatridevhajabhai@okax"), "partial")
+        self.assertEqual(q("upi", "sahil@jio"), "partial")
+        self.assertEqual(q("upi", "-1220841560649@okbizaxis"), "garble")
+        self.assertEqual(q("upi", "000.@powered"), "garble")
+        self.assertEqual(q("bank_account", "123456"), "full")
+        out = db.money_flows_unique(
+            rail_type="upi",
+            direction="deposit",
+            since="2026-09-01",
+            until="2026-09-30",
+        )
+        quals = {r["rail_quality"] for r in out["items"]}
+        self.assertTrue(quals <= {"full", "masked", "partial", "garble"})
+        by = {r["rail_id"]: r for r in out["items"]}
+        self.assertEqual(by["a@ybl"]["rail_quality"], "partial")
+
     def test_unique_upi(self):
         out = db.money_flows_unique(
             folder="deposit", rail_type="upi", since="2026-09-01", until="2026-09-30"

@@ -2681,6 +2681,59 @@ def _canonical_rail_type(declared: str, rail_id: str) -> str:
     return declared or "unknown"
 
 
+# Known-good UPI handle suffixes (PSP/bank handles observed live; advisory
+# only — see rail_quality()). Anything else on a readable local is partial.
+_KNOWN_UPI_HANDLES = frozenset(
+    "okbizaxis okaxis oksbi okhdfcbank okhdfc okicici ybl paytm phonepe upi "
+    "ptyes pty navi naviaxis uboi ubl kotakbank kotak hdfcbank icici sbi "
+    "airtel jio mbk axisbank ibl idbi barodampay okbob okpnb allbank fbl "
+    "ibl idsbi kvbkmbl".split()
+)
+
+_MASK_RE = re.compile(r"[xX]{2,}")
+
+
+def rail_quality(rail_type: str, rail_id: str) -> str:
+    """Classify an observed rail string: full / masked / partial / garble.
+
+    2026-10-03: distinct-string counts were presented as distinct VPAs, but
+    only ~6% are complete handles — the rest are masked phones, truncated
+    fragments, or OCR garble. Novelty/identity claims must use full only.
+    """
+    if (rail_type or "") != "upi":
+        return "full" if (rail_id or "").strip() else "garble"
+    rid = (rail_id or "").strip()
+    if "@" not in rid:
+        return "garble"
+    local, _, handle = rid.partition("@")
+    hl = handle.lower()
+    if (
+        not local
+        or not hl
+        or local.startswith(("-", "."))
+        or local.endswith(".")
+        or ".." in rid
+        or "..." in rid
+        or len(rid) > 64
+    ):
+        return "garble"
+    if _MASK_RE.search(local):
+        return "masked"
+    if re.match(r"[0x]{4,}", local, re.IGNORECASE):
+        # Leading zero/x runs ('0000008301-q251', 'xxxxxx7922'): the slip
+        # itself masks the number — partial identity, never countable as new.
+        return "masked"
+    if re.fullmatch(r"[0x]+", local, re.IGNORECASE) and len(local) > 6:
+        return "masked"
+    if hl not in _KNOWN_UPI_HANDLES:
+        return "partial"
+    if re.fullmatch(r"\d{10}", local):
+        return "full"
+    if re.fullmatch(r"[a-z0-9._\-]{6,}", local, re.IGNORECASE):
+        return "full"
+    return "partial"
+
+
 def _rail_id_shape_sql(rail_type: str) -> str:
     """Extra WHERE so Bank accounts never returns @upi rows (and vice versa)."""
     if rail_type == "upi":
@@ -3137,6 +3190,9 @@ def money_flows_unique(
         it["utrs"] = _pipe_join_csv(it.get("utrs") or "")
         it["utr_count"] = int(it.get("utr_count") or 0)
         it["has_object"] = not str(it.get("sample_key") or "").startswith("reference:")
+        it["rail_quality"] = rail_quality(
+            it.get("rail_type") or "", it.get("rail_id") or ""
+        )
     return {
         "folder": folder,
         "rail_type": rail_type,
@@ -3251,6 +3307,9 @@ def _money_flows_unique_crypto(
         it["image_hits"] = int(it.get("image_hits") or 0)
         it["slips"] = int(it.get("slips") or 0)
         it["has_object"] = not str(it.get("sample_key") or "").startswith("reference:")
+        it["rail_quality"] = rail_quality(
+            it.get("rail_type") or "", it.get("rail_id") or ""
+        )
         items.append(it)
     return {
         "folder": folder,

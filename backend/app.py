@@ -2547,6 +2547,7 @@ def export_money_flows(
 _UNIQUE_EXPORT_COLUMNS = (
     "rail_type",
     "rail_id",
+    "rail_quality",
     "utrs",
     "utr_count",
     "account_holder",
@@ -2659,6 +2660,7 @@ def export_money_flows_unique(
                 {
                     "rail_type": r.get("rail_type") or "",
                     "rail_id": r.get("rail_id") or "",
+                    "rail_quality": r.get("rail_quality") or "",
                     "utrs": r.get("utrs") or "",
                     "utr_count": r.get("utr_count") or 0,
                     "account_holder": r.get("account_holder") or "",

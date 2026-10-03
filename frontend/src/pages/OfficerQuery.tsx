@@ -27,6 +27,7 @@ interface SlipRow {
 interface UniqueRow {
   rail_type: string
   rail_id: string
+  rail_quality?: string
   account_holder: string
   ifsc: string
   network: string
@@ -686,6 +687,21 @@ export function OfficerQuery() {
                         <td className="mono money-rail">
                           <span className="oq-chevron">{open ? '▼' : '▶'}</span>
                           {r.rail_id}
+                          {(r as any).rail_quality && (r as any).rail_quality !== 'full' && (
+                            <span
+                              className="tiny dim"
+                              style={{ marginLeft: 6, border: '1px solid currentColor', borderRadius: 4, padding: '0 4px' }}
+                              title={
+                                (r as any).rail_quality === 'masked'
+                                  ? 'Masked phone: full number hidden on slip — resolve via shared UTRs'
+                                  : (r as any).rail_quality === 'partial'
+                                    ? 'Truncated read: incomplete handle — volume indicator, not a proven identity'
+                                    : 'OCR garble: not a usable identifier'
+                              }
+                            >
+                              {(r as any).rail_quality}
+                            </span>
+                          )}
                           {applied.rail_type === 'crypto_wallet' && r.rail_id && (
                             <div className="tiny">
                               <a href={arkhamAddressUrl(r.rail_id)} target="_blank" rel="noreferrer">Arkham ↗</a>
