@@ -2723,6 +2723,11 @@ def rail_quality(rail_type: str, rail_id: str) -> str:
         # Leading zero/x runs ('0000008301-q251', 'xxxxxx7922'): the slip
         # itself masks the number — partial identity, never countable as new.
         return "masked"
+    if re.match(r"0[0-9.\-]{5,}$", local):
+        # Zero-leading numeric fragment ('0001559', '0097-1', '0048272'):
+        # truncated phone, never a complete VPA. (Short tails like '0767'
+        # stay partial — plain truncation, no mask run.)
+        return "masked"
     if re.fullmatch(r"[0x]+", local, re.IGNORECASE) and len(local) > 6:
         return "masked"
     if hl not in _KNOWN_UPI_HANDLES:
