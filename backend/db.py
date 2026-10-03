@@ -2745,6 +2745,13 @@ def rail_quality(rail_type: str, rail_id: str) -> str:
     if re.match(r"[0soxXeEC]{3,}[\d\-]", local):
         # s/o-prefixed mask reads ('seeeee4944', 'oeeeee3202', 'sss-1172').
         return "masked"
+    if re.match(r"[a-z0-9]{1,2}e{2,}\d", local, re.IGNORECASE):
+        # Mask runs after a short open ('2ee1559', 'eea280', 'een091',
+        # 'eett74', 'eg6940', 'es2888'): e-runs never sit inside real names.
+        return "masked"
+    if re.match(r"^[a-z]-\d", local, re.IGNORECASE):
+        # Single-letter mask prefix ('e-2068', 's-9526355975' pattern).
+        return "masked"
     if re.match(r"^[a-z]{1,2}[ex0][ex0\d\-]*\d$", local, re.IGNORECASE):
         # Alpha-open mask garble ('se9e01910', 'se0ee9989', 'eetb12' is
         # borderline-kept). Real names never look like this.
@@ -3162,6 +3169,11 @@ def money_flows_unique(
         "paidto@%",
         "%@paidto",
         "balance@%",
+        "account@%",
+        "alerts@%",
+        "beauty@%",
+        "electronics@%",
+        "bhatree@upi",
         "help@quicktransfer%",
         "mode@transfert",
         "receipt@%",
