@@ -569,7 +569,7 @@ export function OfficerQuery() {
       )}
 
       {applied && data && (
-        <>
+        <div style={busy ? { opacity: 0.55, pointerEvents: 'none' } : undefined}>
           <div className="st-cards money-cards" style={{ gridTemplateColumns: 'repeat(3, minmax(140px, 1fr))' }}>
             <div className="st-card st-card-accent">
               <div className="st-card-label">{view === 'unique' ? railColLabel(applied.rail_type) : 'Matching slips'}</div>
@@ -842,11 +842,11 @@ export function OfficerQuery() {
           </section>
 
           <div className="ex-pagination">
-            <button className="ex-page-btn" disabled={page === 0 || busy || !!dlBusy} onClick={() => applied && run(applied, page - 1)}>← Prev</button>
-            <span className="ex-page-info">page {page + 1} · {total.toLocaleString()} {view === 'unique' ? 'addresses' : 'slips'} · CSV downloads every matching row</span>
-            <button className="ex-page-btn" disabled={busy || !!dlBusy || (page + 1) * limit >= total} onClick={() => applied && run(applied, page + 1)}>Next →</button>
+            <button className="ex-page-btn" disabled={page === 0 || busy || !!dlBusy} onClick={() => applied && run(applied, page - 1)}>{busy ? 'Loading…' : '← Prev'}</button>
+            <span className="ex-page-info">page {page + 1} · {total.toLocaleString()} {view === 'unique' ? 'addresses' : 'slips'}{busy ? ' · loading…' : ''} · CSV downloads every matching row</span>
+            <button className="ex-page-btn" disabled={busy || !!dlBusy || (page + 1) * limit >= total} onClick={() => applied && run(applied, page + 1)}>{busy ? 'Loading…' : 'Next →'}</button>
           </div>
-        </>
+        </div>
       )}
     </>
   )
