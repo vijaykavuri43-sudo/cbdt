@@ -2728,6 +2728,31 @@ def rail_quality(rail_type: str, rail_id: str) -> str:
         # truncated phone, never a complete VPA. (Short tails like '0767'
         # stay partial — plain truncation, no mask run.)
         return "masked"
+    _mask_lead = re.match(r"[0xXeE]+", local)
+    if (
+        _mask_lead
+        and (len(_mask_lead.group(0)) >= 3 or len(local) >= 5)
+        and re.match(r"[0xXeE]+\d", local)
+    ):
+        # Mask-char runs incl. OCR 'e'-for-'x' reads ('x8211', '0e3679',
+        # '00e1925', '000e6139') and masked tail codes ('021-xf2b').
+        # Short tails like '0767' stay partial (plain truncation, no mask).
+        return "masked"
+    if re.search(r"-[a-z]+[a-z0-9]*$", local, re.IGNORECASE) and not re.fullmatch(
+        r"\d{10}-\d{1,2}", local
+    ):
+        # Lettered tail codes ('1021-xf2b', '8301-q251') are masked slots;
+        # 10-digit +-1/-2 dual-SIM tags stay (real VPAs).
+        return "masked"
+    if (
+        re.fullmatch(r"\d+", local)
+        and len(local) > 10
+        and not (len(local) == 12 and local.startswith("91"))
+    ):
+        # Long digit blobs (11+ digits, not 91+10-digit mobiles) are OCR
+        # artifacts, not valid mobiles. Short numeric tails ('0767') stay
+        # partial — plain truncation, kept as leads.
+        return "masked"
     if re.fullmatch(r"[0x]+", local, re.IGNORECASE) and len(local) > 6:
         return "masked"
     if hl not in _KNOWN_UPI_HANDLES:

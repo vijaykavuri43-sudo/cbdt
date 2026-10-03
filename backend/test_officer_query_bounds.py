@@ -437,6 +437,13 @@ class MoneyFlowBoundsTests(unittest.TestCase):
         self.assertEqual(q("upi", "0001559@okbizaxis"), "masked")
         self.assertEqual(q("upi", "0097-1@okbizaxis"), "masked")
         self.assertEqual(q("upi", "0048272@okbizaxis"), "masked")
+        self.assertEqual(q("upi", "00e1925@okbizaxis"), "masked")
+        self.assertEqual(q("upi", "0e3679@okbizaxis"), "masked")
+        self.assertEqual(q("upi", "x8211@uboi"), "masked")
+        self.assertEqual(q("upi", "1021-xf2b@ibl"), "masked")
+        self.assertEqual(q("upi", "11240718451@okbizaxis"), "masked")
+        self.assertEqual(q("upi", "6204435919-1@okbizaxis"), "full")
+        self.assertEqual(q("upi", "919876543210@okaxis"), "full")
         self.assertEqual(q("upi", "000.@powered"), "garble")
         self.assertEqual(q("bank_account", "123456"), "full")
         out = db.money_flows_unique(
