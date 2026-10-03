@@ -3055,6 +3055,9 @@ def money_flows_unique(
     # display-hygiene exclusions, while mule_rails scores them down instead.
     _UNIQUE_EXTRA_JUNK = (
         "paidto@%",
+        "%@paidto",
+        "help@quicktransfer%",
+        "mode@transfert",
         "receipt@%",
         "groceries@%",
         "successfully@%",
