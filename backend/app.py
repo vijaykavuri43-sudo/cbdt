@@ -116,7 +116,13 @@ try:
             t = (event or {}).get("type") or ""
             if t in ("new_object", "enriched", "wallet_found", "new_folders"):
                 _invalidate_prefix("flows:")
-                _invalidate_prefix("mule-rails:")
+                # NOTE (2026-10-13): mule-rails: used to be busted here too.
+                # The full-table GROUP BY takes tens of seconds at ~1M rows,
+                # so per-event busting meant every Mule-rails-tab poll rebuilt
+                # it inline and timed out — same pathology as the 2026-09-03
+                # status/stats incident noted below. 15s TTL is the freshness
+                # mechanism now; the Overview cards use /api/mule-rails-window
+                # (sub-second, own prefix, 120s TTL) and are unaffected.
                 # NOTE (log review 2026-09-03): status/stats/types used to be
                 # popped here too. During live intake that busted the caches
                 # on EVERY event, so each dashboard poll rebuilt them with
@@ -2420,6 +2426,30 @@ def mule_rails_api(
         return raw
 
     return cached(cache_key, 15.0, build)
+
+
+@app.get("/api/mule-rails-window")
+def mule_rails_window_api(
+    active_since: str = Query("", max_length=32),
+    source: str = Query("", pattern="^(|object|reference)$"),
+    _=Depends(auth),
+):
+    """Sub-second 24h receiving-rail summary for the Overview briefing cards.
+
+    /api/mule-rails runs a full-table GROUP BY (tens of seconds at current
+    scale) which can never serve a 60s live poll; this endpoint bounds the
+    scan to the window in WHERE. Cache key is rounded to the minute so
+    consecutive polls reuse it, and the key prefix (rails-window:) is NOT
+    busted on every enriched event — 120s TTL is the freshness mechanism
+    (a 24h window does not need per-second accuracy).
+    """
+    minute_bucket = db._bound_ts(active_since, end=False)[:16]
+    cache_key = f"rails-window:{source}:{minute_bucket}"
+
+    def build():
+        return db.mule_rails_window(active_since=active_since, source=source)
+
+    return cached(cache_key, 120.0, build)
 
 
 @app.get("/api/export/rails")

@@ -692,6 +692,52 @@ class SourceFilterTests(unittest.TestCase):
         self.assertEqual(out["summary"]["by_rail_type"]["crypto_wallet"], 1)
         self.assertEqual(out["summary"]["by_rail_type"]["bank_account"], 1)
 
+    def test_mule_rails_window_matches_active_since_totals(self):
+        """2026-10-13: Overview cards (Receiving rails + 24h mix) read the
+        sub-second /api/mule-rails-window. Its counts must equal the full
+        mule_rails(active_since=...) aggregate they replace."""
+        for kwargs in (
+            {"active_since": "2026-09-01"},
+            {"active_since": "2026-09-01", "source": "object"},
+            {"active_since": "2026-08-01"},
+            {"active_since": "2027-01-01"},
+        ):
+            full = db.mule_rails(limit=10000, offset=0, **kwargs)
+            win = db.mule_rails_window(**kwargs)
+            self.assertEqual(win["total"], full["total"], kwargs)
+            self.assertEqual(
+                win["summary"]["by_rail_type"], full["summary"]["by_rail_type"], kwargs
+            )
+
+    def test_mule_rails_window_excludes_junk_unknown_and_empty(self):
+        """Junk-template VPAs, unknown rails and rail-less rows count as
+        deposits in money-flows but must never count as receiving rails."""
+        c = db.connect()
+        c.execute(
+            "INSERT INTO payment_transactions(source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,last_modified)"
+            " VALUES('deposit/junk.png','deposit','GJ',100,'444444444444','upi','only@food','2026-09-03T13:00:00Z')"
+        )
+        c.execute(
+            "INSERT INTO payment_transactions(source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,last_modified)"
+            " VALUES('deposit/norail.png','deposit','GN',200,'555555555555','unknown','','2026-09-03T13:00:00Z')"
+        )
+        c.execute(
+            "INSERT INTO payment_transactions(source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,last_modified)"
+            " VALUES('deposit/with.png','withdrawal','GW',300,'666666666666','upi','out@okaxis','2026-09-03T13:00:00Z')"
+        )
+        c.commit()
+        win = db.mule_rails_window(active_since="2026-09-01", source="object")
+        # Fixture live@okaxis only: junk/unknown/withdrawal add no rails.
+        self.assertEqual(win["total"], 1)
+        self.assertEqual(
+            win["summary"]["by_rail_type"],
+            {"upi": 1, "crypto_wallet": 0, "bank_account": 0},
+        )
+        self.assertEqual(win["window_newest"], "2026-09-03T10:00:00Z")
+        empty = db.mule_rails_window(active_since="2027-01-01", source="object")
+        self.assertEqual(empty["total"], 0)
+        self.assertIsNone(empty["window_newest"])
+
 
 class LedgerParseTests(unittest.TestCase):
     """P2: bonus math — cash = Amount − Bonus; request rows carry no bonus."""

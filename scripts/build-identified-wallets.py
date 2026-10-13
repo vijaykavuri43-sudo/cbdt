@@ -233,7 +233,7 @@ def main() -> None:
                         rows[addr]["role"] = (r.get("label") or "").strip()
 
     # ---- extras: roll-data sections 7/10/11/12/13 ----
-    txt = (REPO / "crypto-wallet-roll-data.txt").read_text(
+    txt = (REPO / "docs" / "reference" / "crypto-wallet-roll-data.txt").read_text(
         encoding="utf-8", errors="ignore"
     )
     meta = {

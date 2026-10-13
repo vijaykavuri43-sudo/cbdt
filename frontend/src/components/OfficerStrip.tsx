@@ -48,12 +48,19 @@ export function OfficerStrip() {
   const [cutoff, setCutoff] = useState('')
 
   const refresh = useCallback(() => {
-    const nextCutoff = new Date(Date.now() - 864e5).toISOString().slice(0, 19) + 'Z'
+    // Round the 24h cutoff down to the minute: the backend caches the rails
+    // summary per minute-bucket, and a per-second cutoff gave every poll a
+    // unique cache key (2026-10-13: full-table aggregate on every poll ->
+    // 25s timeout -> cards stuck at -- / 0-0-0).
+    const d = new Date(Date.now() - 864e5)
+    d.setSeconds(0, 0)
+    const nextCutoff = d.toISOString().slice(0, 19) + 'Z'
     setCutoff(nextCutoff)
     api<Flows>('/api/money-flows', { direction: 'deposit', source: 'object', since: nextCutoff, limit: 1 }).then(setDep).catch(() => {})
     api<Flows>('/api/money-flows', { direction: 'withdrawal', source: 'object', since: nextCutoff, limit: 1 }).then(setWd).catch(() => {})
-    api<RailsList>('/api/mule-rails', {
-      limit: 1,
+    // Sub-second window summary — /api/mule-rails is a full-table GROUP BY
+    // that cannot serve a live poll at current data scale.
+    api<RailsList>('/api/mule-rails-window', {
       source: 'object',
       active_since: nextCutoff,
     }).then((r) => {

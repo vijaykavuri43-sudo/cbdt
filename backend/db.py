@@ -2701,6 +2701,20 @@ def rail_quality(rail_type: str, rail_id: str) -> str:
     fragments, or OCR garble. Novelty/identity claims must use full only.
     """
     if (rail_type or "") != "upi":
+        if (rail_type or "") == "bank_account":
+            # 2026-10-03: dashboard listed masked fragments ('XX0609',
+            # 'XXXXXXXX0502') and short tails ('01414700') as accounts.
+            rid = (rail_id or "").strip()
+            if not rid:
+                return "garble"
+            if "x" in rid.lower():
+                return "masked"
+            if re.search(r"[a-zA-Z]", rid):
+                return "garble"
+            digits = re.sub(r"\D", "", rid)
+            if 9 <= len(digits) <= 18 and len(digits) == len(rid):
+                return "full"
+            return "partial"
         return "full" if (rail_id or "").strip() else "garble"
     rid = (rail_id or "").strip()
     if "@" not in rid:
@@ -2738,12 +2752,23 @@ def rail_quality(rail_type: str, rail_id: str) -> str:
         # '00e1925', '000e6139') and masked tail codes ('021-xf2b').
         # Short tails like '0767' stay partial (plain truncation, no mask).
         return "masked"
-    if re.match(r"[0xXecEC]{3,}", local):
+    if re.match(r"[0xXecEcC]{3,}", local):
         # OCR also reads mask blocks as 'e'/'c' ('eeecee7922', 'ecceee7145'):
         # a 3+ run of mask-confusable chars can never open a real VPA.
         return "masked"
-    if re.match(r"[0soxXeEC]{3,}[\d\-]", local):
-        # s/o-prefixed mask reads ('seeeee4944', 'oeeeee3202', 'sss-1172').
+    if re.match(r"[0soxXeEcC]{3,}[\dq\-]", local):
+        # s/o-prefixed mask reads ('seeeee4944', 'oeeeee3202', 'sss-1172',
+        # 'seeeeq904' — trailing q is itself a mask misread).
+        return "masked"
+    if re.match(r"^e{2,}[a-z]{0,3}\d+", local):
+        # Leading e-run mask reads ('eea280', 'een091', 'eett74', 'eetb12').
+        return "masked"
+    if re.match(r"^[0-9a-z]{1,3}e{2,}\d", local, re.IGNORECASE):
+        # Digit-open mask runs ('200eee8634', '2ceeee8634'). Real names
+        # never open with digits-then-e-runs ('neel12' stays full).
+        return "masked"
+    if re.match(r"[0soxXeEcC]{3,}[a-z]?[\dq\-]", local):
+        # Mask run + one substituted letter + digits ('oeeeeea384').
         return "masked"
     if re.match(r"[a-z0-9]{1,2}e{2,}\d", local, re.IGNORECASE):
         # Mask runs after a short open ('2ee1559', 'eea280', 'een091',
@@ -2752,17 +2777,17 @@ def rail_quality(rail_type: str, rail_id: str) -> str:
     if re.match(r"^[a-z]-\d", local, re.IGNORECASE):
         # Single-letter mask prefix ('e-2068', 's-9526355975' pattern).
         return "masked"
-    if re.match(r"^[a-z]{1,2}[ex0][ex0\d\-]*\d$", local, re.IGNORECASE):
-        # Alpha-open mask garble ('se9e01910', 'se0ee9989', 'eetb12' is
-        # borderline-kept). Real names never look like this.
+    if re.match(r"^[a-z]{1,2}[ex0][ex0\d\-q]*\d$", local, re.IGNORECASE):
+        # Alpha-open mask garble ('se9e01910', 'se0ee9989', 'seeeeq904').
+        # Real names never look like this ('sonu123' stays full).
         return "masked"
-    if re.match(r"^[oq]-?\d", local, re.IGNORECASE) or re.match(
+    if re.match(r"^[oq]{1,2}-?\d", local, re.IGNORECASE) or re.match(
         r"^(stk|spay|epay|qpay|qypay|goay|qgpay)-", local, re.IGNORECASE
     ):
         # Truncated/misread prefixes ('o120-1', 'stk-7778854270-1' for
         # '7778854270'; 'epay-' for 'gpay-'). Digit-run linkage proved these.
         return "masked"
-    if re.match(r"[0soxXeEC]{3,}[0-9]", local):
+    if re.match(r"[0soxXeEcC]{3,}[0-9]", local):
         # Mask blocks misread with 's'/'o' prefixes ('seeeee4944',
         # 'oeeeee3202', 'ooeeee2686', 'see9e9987'): s/o + e-run + digits.
         # Short names ('sonu123', 'se7en') never match: run must be 3+.
@@ -3716,6 +3741,64 @@ def mule_rails(
         "total": len(all_items),
         "summary": summary,
         "items": all_items[offset : offset + limit],
+    }
+
+
+def mule_rails_window(active_since: str = "", source: str = "") -> dict:
+    """Sub-second receiving-rail summary for a live window (Overview cards).
+
+    Root cause 2026-10-13: the Overview briefing polled /api/mule-rails with
+    a per-second active_since. That endpoint runs a FULL-table GROUP BY +
+    HAVING (measured 34.7s on 94K rows; the VM holds ~1M) on every poll —
+    per-second cache keys plus per-event cache invalidation meant zero cache
+    reuse — so every response died in the 25s frontend timeout and the
+    Receiving-rails / 24h-mix cards sat at -- / 0-0-0 while window-bounded
+    money-flows stayed fast. This function bounds the scan to the window in
+    WHERE (same indexed pattern as money_flows) and returns only the summary
+    the cards need. Counts must match mule_rails(active_since=...) totals.
+    """
+    since_n = _bound_ts(active_since, end=False)
+    conds = [
+        "direction='deposit'",
+        "rail_id!=''",
+        "rail_type!='unknown'",
+        # Same OCR-template-junk exclusion as mule_rails() so the briefing
+        # counts never include receipt-boilerplate VPAs.
+        "NOT ("
+        + " OR ".join(["lower(rail_id) LIKE ?"] * len(_VPA_JUNK_PATTERNS))
+        + ")",
+    ]
+    args: list = [p.lower() for p in _VPA_JUNK_PATTERNS]
+    if since_n:
+        conds.append("last_modified>=?")
+        args.append(since_n)
+    if source == "object":
+        conds.append("source_key NOT LIKE 'reference:%'")
+    elif source == "reference":
+        conds.append("source_key LIKE 'reference:%'")
+    where = " AND ".join(conds)
+    c = connect()
+    rows = c.execute(
+        f"SELECT rail_type, COUNT(DISTINCT rail_id) n,"
+        f" MAX(last_modified) newest FROM payment_transactions"
+        f" WHERE {where} GROUP BY rail_type",
+        args,
+    ).fetchall()
+    by_type = {"upi": 0, "crypto_wallet": 0, "bank_account": 0}
+    newest: str | None = None
+    for row in rows:
+        rt = row["rail_type"]
+        if rt in by_type:
+            by_type[rt] = int(row["n"] or 0)
+        if row["newest"] and (newest is None or row["newest"] > newest):
+            newest = row["newest"]
+    return {
+        "fact_type": "fact",
+        "active_since": since_n,
+        "source": source,
+        "total": sum(by_type.values()),
+        "summary": {"by_rail_type": by_type},
+        "window_newest": newest,
     }
 
 
