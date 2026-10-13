@@ -4607,3 +4607,141 @@ def _row_pub(r) -> dict:
         d["extract"] = None
         d.pop("extract_json", None)
     return d
+
+
+# ---------------------------------------------------------------- agent network
+# The operator/agent hierarchy is exported by the platform itself as
+# csv-files/manager_*.xlsx (public bucket) and parsed into a roster artifact.
+# Serving it from the artifact (not a DB scan) keeps the Agents tab cheap: the
+# file is ~0.6 MB and read once per cache miss.
+_AGENT_ROSTER_REL = (
+    "analysis/CASE-2026-CBTF/agent-roster-attribution-2026-10-13/agent_roster.json"
+)
+_STAFF_FINDINGS_REL = (
+    "analysis/CASE-2026-CBTF/staff-identity-negative-results-2026-10-13/"
+    "staff_identity_findings.json"
+)
+
+
+def _intel_artifact(rel: str):
+    """Locate an intelligence artifact in container (/app) or repo layout."""
+    from pathlib import Path as _P
+
+    here = _P(__file__).resolve().parent
+    for root in (
+        here.parent / "intelligence",
+        here.parent.parent / "intelligence",
+        _P("/app/intelligence"),
+        _P("/opt/s3lm/intelligence"),
+    ):
+        p = root / rel
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+    return None
+
+
+def agent_network(limit: int = 200, offset: int = 0) -> dict:
+    """Agent + operator identity surface for the dashboard Agents tab.
+
+    Three evidence layers, kept separate so the officer never reads a
+    correlation as an identity:
+      1. operator_desks  — live gateway_rows.actionby (console usernames)
+      2. agents          — platform-exported roster artifact (3,707 accounts)
+      3. login_evidence  — the only agents with a mobile+IP in public exports
+
+    Attribution guard: handles and contacts are evidence leads. Criminal-role
+    attribution requires corroboration beyond a single indicator.
+    """
+    roster = _intel_artifact(_AGENT_ROSTER_REL) or {}
+    findings = _intel_artifact(_STAFF_FINDINGS_REL) or {}
+    agents = roster.get("agents") or []
+
+    managers: dict = {}
+    brands: dict = {}
+    mobiles: dict = {}
+    for a in agents:
+        for m in a.get("upline_managers") or []:
+            managers.setdefault(m, 0)
+            managers[m] += 1
+        for o in a.get("origins") or []:
+            brands.setdefault(o, 0)
+            brands[o] += 1
+        for mo in a.get("mobiles") or []:
+            mobiles.setdefault(mo, 0)
+            mobiles[mo] += 1
+    shared_mobiles = sum(1 for v in mobiles.values() if v > 1)
+
+    # Operator consoles come from the live gateway tables, not the artifact.
+    c = connect()
+    desks = [
+        dict(r)
+        for r in c.execute(
+            """
+            SELECT actionby AS operator, COUNT(*) AS rows,
+                   COUNT(DISTINCT client) AS clients,
+                   COUNT(DISTINCT customer) AS customers,
+                   ROUND(SUM(amount),2) AS deposit_amount_inr,
+                   SUM(is_test) AS test_rows,
+                   MIN(ts) AS first_seen, MAX(ts) AS last_seen
+            FROM gateway_rows
+            WHERE actionby IS NOT NULL AND TRIM(actionby)!=''
+              AND kind='gateway_deposit'
+            GROUP BY actionby ORDER BY rows DESC
+            """
+        ).fetchall()
+    ]
+    for d in desks:
+        d["test_rows"] = int(d.get("test_rows") or 0)
+
+    ranked_agents = sorted(
+        agents,
+        key=lambda a: (
+            -len(a.get("mobiles") or []),
+            -int(a.get("child_accounts") or 0),
+            a.get("username") or "",
+        ),
+    )
+
+    def top(d, n=25):
+        return [
+            {"name": k, "agents": v}
+            for k, v in sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:n]
+        ]
+
+    return {
+        "fact_type": "fact",
+        "assessment_fact_type": "analyst_conclusion",
+        "scope_note": (
+            "Handles, mobiles and IPs are evidence leads for account identity only. "
+            "Mule/criminal attribution requires corroboration beyond a single indicator."
+        ),
+        "roster_source": roster.get("source") or "",
+        "roster_collected_utc": roster.get("collected_utc") or "",
+        "roster_note": roster.get("note") or "",
+        "guard_rail": findings.get("guard_rail") or "",
+        "summary": {
+            "operator_consoles": len(desks),
+            "agents": len(agents),
+            "agents_with_mobile": sum(1 for a in agents if a.get("mobiles")),
+            "distinct_mobiles": len(mobiles),
+            "mobiles_shared_by_multiple_agents": shared_mobiles,
+            "upline_managers": len(managers),
+            "brand_origins": len(brands),
+            "agents_with_login_evidence": len(
+                findings.get("agents_with_login_records") or []
+            ),
+        },
+        "operator_desks": desks,
+        "top_upline_managers": top(managers),
+        "top_brand_origins": top(brands),
+        "login_evidence": findings.get("agents_with_login_records") or [],
+        "staff_like_bettors": findings.get("staff_like_bettor_accounts_not_operators")
+        or [],
+        "negative_results": findings.get("negative_results") or [],
+        "unmined_corpora": findings.get("unmined_corpora") or [],
+        "items": ranked_agents[offset : offset + limit],
+        "total": len(ranked_agents),
+    }

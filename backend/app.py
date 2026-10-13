@@ -2452,6 +2452,29 @@ def mule_rails_window_api(
     return cached(cache_key, 120.0, build)
 
 
+@app.get("/api/agents")
+def agents_api(
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    _=Depends(auth),
+):
+    """Agent + operator identity surface (Agents tab).
+
+    Operator consoles are read live from gateway_rows; the 3,707-account agent
+    roster and the login-evidence set come from the parsed intelligence
+    artifacts, so this is one small GROUP BY plus a ~0.6 MB JSON read — cheap
+    enough to poll. The cache prefix 'agents:' is deliberately NOT busted on
+    enriched events (same rule as rails-window:) because the roster is a
+    point-in-time export; 120s TTL is the freshness mechanism.
+    """
+    cache_key = f"agents:{limit}:{offset}"
+
+    def build():
+        return db.agent_network(limit=limit, offset=offset)
+
+    return cached(cache_key, 120.0, build)
+
+
 @app.get("/api/export/rails")
 def export_rails(_=Depends(auth)):
     """Full suspected-mule-rail CSV for LE exhibits.

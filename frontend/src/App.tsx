@@ -12,6 +12,7 @@ import { Ledger } from './pages/Ledger'
 import { Cashflow } from './pages/Cashflow'
 import { Upis } from './pages/Upis'
 import { Wallets } from './pages/Wallets'
+import { Agents } from './pages/Agents'
 import { Ask } from './pages/Ask'
 import { OfficerQuery } from './pages/OfficerQuery'
 
@@ -24,6 +25,7 @@ type TabId =
   | 'deposits'
   | 'cashflow'
   | 'ledger'
+  | 'agents'
   | 'upis'
   | 'wallets'
   | 'ask'
@@ -50,6 +52,12 @@ const NAV: { label: string; tabs: { id: TabId; label: string; icon: string }[] }
       { id: 'deposits', label: 'Mule rails', icon: '₹' },
       { id: 'cashflow', label: 'Cash flow', icon: '⇄' },
       { id: 'ledger', label: 'Ledger', icon: '▦' },
+    ],
+  },
+  {
+    label: 'People',
+    tabs: [
+      { id: 'agents', label: 'Agents & operators', icon: '☖' },
     ],
   },
   {
@@ -206,6 +214,12 @@ export default function App() {
             <ErrorBoundary><Explorer prefixes={status?.prefixes ?? []} jumpTo={exploreJump} /></ErrorBoundary>
           </div>
         )}
+        {visited.has('agents') && (
+          <div style={{ display: tab === 'agents' ? 'block' : 'none' }}>
+            <Agents />
+          </div>
+        )}
+
         {visited.has('chat') && (
           <div style={{ display: tab === 'chat' ? 'block' : 'none' }}>
             <ErrorBoundary><Chat /></ErrorBoundary>
