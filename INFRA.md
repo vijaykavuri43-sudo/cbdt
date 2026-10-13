@@ -92,6 +92,23 @@ sudo docker logs --since 10m s3sync-b3 2>&1 | tail -n 30   # b3 mirror logs
 
 ## 6. Change log (keep this updated when infra moves)
 
+- 2026-10-13: overview rails/24h-mix outage fixed (commit c40f534): `mule_rails(active_since)`
+  ran a full-index GROUP BY+HAVING (69.3s measured on 1.08M-row VM data vs 25s
+  frontend timeout) — blank RECEIVING RAILS + 0/0/0 24H MIX. Replaced with
+  window-bounded `mule_rails_window()` + `GET /api/mule-rails-window`
+  (0.06–0.15s uncached, ~3ms cached). Table grows 10–25K rows/day, so the old
+  query crossed the timeout by growth, not by code change.
+- 2026-10-13: VM access repaired. Local `gcloud` is the **Windows binary via WSL
+  interop and hangs on every invocation** — do not use it from WSL shells.
+  Working paths: (a) direct SSH as `opencode@<IP>` with the key whose public
+  half is in the instance `ssh-keys` metadata (passwordless sudo); (b) GCP API
+  via `vijaykavuri72@gmail.com` refresh token in `~/.config/gcloud/credentials.db`
+  (only local identity with `compute.instances.get` on this project).
+  Read-only GitHub deploy key `s3lm-budget-deploy-2026-10-13` added to the repo
+  (id 166267261) + `/root/.ssh/config` on the VM points github.com at
+  `/root/.ssh/github_deploy`, so `git fetch` as root works again; `/root`
+  gitconfig has the `safe.directory` exception for `/opt/s3lm/s3-live-monitor`.
+
 - 2026-09-25: b2 sync 40x speedup (`s3sync-b2` was ~0.5/s, 68h cycle-1 drain,
   13K dashboard-notify timeouts). Root causes: 4/s shared throttle +
   synchronous 30s×2 `/api/sync/object` notify blocking all 8 workers +
