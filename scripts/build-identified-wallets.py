@@ -26,6 +26,21 @@ preserved with reasons in quarantined-wallets.csv):
     not wallet addresses; source qr-decode-sample.txt permanently deleted.
 Post-gate census: 72 - 26 + 42 - 1 = 87 rows.
 
+2026-09-21 ADDITIONS: the CBTF_Crypto_Wallets_Updated-21-09-26.docx
+table 11 adds 5 checksum-valid TRON addresses (A1-A5) that were already
+live-decoded in the bucket. They are evidence-only rows, not operator
+attributions (A1 is a Binance withdrawal wallet; A2-A5 need transaction
+corroboration), so they are appended here but never enter the LE master
+`17-CRYPTO-WALLETS.csv`. Census after additions: 87 + 5 = 92 rows.
+
+2026-09-21 FLAG: the same document flags
+`TAVawJ7BF7L9XwSf5RJdtrigHSyVTzzCxf` as an OCR near-duplicate of B6
+(`...dtr1g...`). It is base58-checksum-invalid and is not a separate
+wallet; it is quarantined (not census, not operator master). Quarantine
+after this addition: 27 + 1 = 28 rows. The canonical B6
+`TAVawJ7BF7L9XwSf5RJdtr1gHSyVTzzCxf` remains in the census but is not in
+the 5-row LE operator master.
+
 Output: s3-live-monitor/reference/identified-wallets.csv
          s3-live-monitor/reference/quarantined-wallets.csv
 Rerun after any census update, then redeploy (docker rebuilds frontend;
@@ -67,6 +82,98 @@ COLUMNS = (
     "fact_type",
 )
 
+# 2026-09-21 docx table 11 A1-A5. These are not in the roll-data extras and
+# are not LE operator wallets; they are evidence-backed additions.
+ADDITIONAL_2026_09_21 = (
+    {
+        "address": "TCLgK89AnXbC9rewvhNb9UgXCc2qJJpBXh",
+        "network": "TRON",
+        "category": "exchange",
+        "attribution": "",
+        "role": "BINANCE_WITHDRAW_10 (public explorer label; exchange withdrawal wallet, not operator)",
+        "confidence": "high",
+        "evidence_type": "deposit_evidence + tronscan_label",
+        "source_ref": "deposit/1789365938958.jpg",
+        "proof_s3_key": "deposit/1789365938958.jpg",
+        "proof_url": "https://bx-s3-dev-001.s3.ap-southeast-1.amazonaws.com/deposit/1789365938958.jpg",
+        "fact_type": "fact",
+    },
+    {
+        "address": "THM4uT2VxzSsBEp8WRbYMzRkiqvbEuBBLU",
+        "network": "TRON",
+        "category": "evidence_only",
+        "attribution": "",
+        "role": "DEPOSIT_EVIDENCE_UNATTRIBUTED",
+        "confidence": "medium",
+        "evidence_type": "deposit_evidence",
+        "source_ref": "deposit/1789387030596.jpg",
+        "proof_s3_key": "deposit/1789387030596.jpg",
+        "proof_url": "https://bx-s3-dev-001.s3.ap-southeast-1.amazonaws.com/deposit/1789387030596.jpg",
+        "fact_type": "fact",
+    },
+    {
+        "address": "TFkz4usfWmLHu78zENZU63Znqnmh267B25",
+        "network": "TRON",
+        "category": "evidence_only",
+        "attribution": "",
+        "role": "WITHDRAWAL_EVIDENCE_UNATTRIBUTED",
+        "confidence": "medium",
+        "evidence_type": "withdrawal_evidence",
+        "source_ref": "withdrawal/1789394882913.webp",
+        "proof_s3_key": "withdrawal/1789394882913.webp",
+        "proof_url": "https://bx-s3-dev-001.s3.ap-southeast-1.amazonaws.com/withdrawal/1789394882913.webp",
+        "fact_type": "fact",
+    },
+    {
+        "address": "TFv1isf5EXpXnu2NPpGSwTgipckNvsmEvz",
+        "network": "TRON",
+        "category": "evidence_only",
+        "attribution": "",
+        "role": "DEPOSIT_EVIDENCE_UNATTRIBUTED",
+        "confidence": "medium",
+        "evidence_type": "deposit_evidence",
+        "source_ref": "deposit/1789463619457.jpg",
+        "proof_s3_key": "deposit/1789463619457.jpg",
+        "proof_url": "https://bx-s3-dev-001.s3.ap-southeast-1.amazonaws.com/deposit/1789463619457.jpg",
+        "fact_type": "fact",
+    },
+    {
+        "address": "TCgcGDFVmeqgxXvsUSZAUMkdLcfovc2aVm",
+        "network": "TRON",
+        "category": "evidence_only",
+        "attribution": "",
+        "role": "WITHDRAWAL_EVIDENCE_UNATTRIBUTED",
+        "confidence": "medium",
+        "evidence_type": "withdrawal_evidence",
+        "source_ref": "withdrawal/1789482635019.webp",
+        "proof_s3_key": "withdrawal/1789482635019.webp",
+        "proof_url": "https://bx-s3-dev-001.s3.ap-southeast-1.amazonaws.com/withdrawal/1789482635019.webp",
+        "fact_type": "fact",
+    },
+)
+
+# 2026-09-21 docx table 8 FLAG. The document itself says this is an OCR
+# near-duplicate of B6, not a separate wallet, pending image re-verification.
+# It has the right base58 alphabet and length but fails the TRON checksum.
+# Keep it out of the census and preserve it with an explicit reason.
+ADDITIONAL_QUARANTINE_2026_09_21 = (
+    {
+        "address": "TAVawJ7BF7L9XwSf5RJdtrigHSyVTzzCxf",
+        "network": "TRON",
+        "category": "operator_hot_variant",
+        "quarantine_reason": (
+            "base58-checksum-invalid OCR near-duplicate of canonical B6 "
+            "TAVawJ7BF7L9XwSf5RJdtr1gHSyVTzzCxf (…dtrig… vs …dtr1g…); "
+            "the source document flags it as NOT a separate wallet until "
+            "the image is re-verified; cannot exist on-chain"
+        ),
+        "source_ref": "chat_file/gggdeepsify_1769499035441_usdtplayer_deposit.jpg",
+        "proof_s3_key": "",
+        "fact_type": "ai_lead",
+        "quarantined_on": "2026-10-25",
+    },
+)
+
 # Source-key rule 2026-09-17: the ONLY valid source is the true original
 # TRUE object metadata recovered 2026-09-17 from the 2026-07-04 bucket
 # inventory (predates all deletions) + 2026-07-05 download log. Corrects the
@@ -86,7 +193,16 @@ def main() -> None:
     rows: dict[str, dict] = {}
     quarantined: list[dict] = []
 
-    def quarantine(addr, net, cat, reason, source_ref, proof_key, fact_type):
+    def quarantine(
+        addr,
+        net,
+        cat,
+        reason,
+        source_ref,
+        proof_key,
+        fact_type,
+        quarantined_on="2026-09-17",
+    ):
         quarantined.append(
             {
                 "address": addr,
@@ -96,7 +212,7 @@ def main() -> None:
                 "source_ref": source_ref,
                 "proof_s3_key": proof_key,
                 "fact_type": fact_type,
-                "quarantined_on": "2026-09-17",
+                "quarantined_on": quarantined_on,
             }
         )
 
@@ -413,6 +529,40 @@ def main() -> None:
             "fact_type": ft,
         }
 
+    # ---- 2026-09-21 docx table 11 A1-A5 ----
+    for addition in ADDITIONAL_2026_09_21:
+        addr = addition["address"]
+        if addr in rows:
+            continue
+        if not TRON_STRICT.match(addr):
+            quarantine(
+                addr,
+                "TRON",
+                addition["category"],
+                "base58-invalid TRON string (contains 0/O/I/l); cannot exist on-chain",
+                addition["source_ref"],
+                addition["proof_s3_key"],
+                addition["fact_type"],
+            )
+            continue
+        rows[addr] = dict(addition)
+
+    # ---- 2026-09-21 docx table 8 FLAG (not a wallet) ----
+    for addition in ADDITIONAL_QUARANTINE_2026_09_21:
+        addr = addition["address"]
+        if addr in rows or any(q["address"] == addr for q in quarantined):
+            continue
+        quarantine(
+            addr,
+            addition["network"],
+            addition["category"],
+            addition["quarantine_reason"],
+            addition["source_ref"],
+            addition["proof_s3_key"],
+            addition["fact_type"],
+            addition["quarantined_on"],
+        )
+
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with open(OUT, "w", encoding="utf-8", newline="") as f:
         w = csv.DictWriter(f, fieldnames=COLUMNS)
@@ -423,8 +573,8 @@ def main() -> None:
     with open(str(OUT) + ".sha256", "w") as f:
         f.write(f"{h}  {OUT.name}\n")
     print(f"wrote {OUT} rows={len(rows)} sha256={h[:16]}")
-    if len(rows) != 87:
-        print(f"WARN: expected 87 rows, got {len(rows)}", file=sys.stderr)
+    if len(rows) != 92:
+        print(f"WARN: expected 92 rows, got {len(rows)}", file=sys.stderr)
     # ---- quarantine file: excluded false addresses, fully preserved ----
     qout = OUT.parent / "quarantined-wallets.csv"
     qcols = (
@@ -446,9 +596,9 @@ def main() -> None:
     with open(str(qout) + ".sha256", "w") as f:
         f.write(f"{qh}  {qout.name}\n")
     print(f"wrote {qout} rows={len(quarantined)} sha256={qh[:16]}")
-    if len(quarantined) != 27:
+    if len(quarantined) != 28:
         print(
-            f"WARN: expected 27 quarantined rows, got {len(quarantined)}",
+            f"WARN: expected 28 quarantined rows, got {len(quarantined)}",
             file=sys.stderr,
         )
 

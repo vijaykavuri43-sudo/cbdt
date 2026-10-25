@@ -11,7 +11,9 @@ csv-files/ keys, (3) the verified key corrections (anshul full key, nitrogen
 prefix, TD63G .png, TJ5yq inad screenshot), (4) no investigator files as
 sources, (5) no fallback columns, (6) the 2026-09-17 truth gate: no
 base58-invalid TRON strings and no non-address payloads in the census
-(27 quarantined with reasons, 87-row census).
+(28 quarantined with reasons, 92-row census: 87 original + 5 evidence-only
+additions from the 2026-09-21 CBTF wallet document; the document's flagged
+TAVaw OCR variant is quarantined, not counted as a wallet).
 """
 
 import csv
@@ -55,14 +57,52 @@ NON_SOURCE_MARKERS = (
 
 def _rows():
     rows = list(csv.DictReader(open(REF_CSV, encoding="utf-8")))
-    assert len(rows) == 87, f"census must stay 87, got {len(rows)}"
+    assert len(rows) == 92, f"census must be 92, got {len(rows)}"
     return rows
 
 
 def _quarantined():
     rows = list(csv.DictReader(open(QUAR_CSV, encoding="utf-8")))
-    assert len(rows) == 27, f"quarantine must stay 27, got {len(rows)}"
+    assert len(rows) == 28, f"quarantine must be 28, got {len(rows)}"
     return rows
+
+
+NEW_2026_09_21 = {
+    "TCLgK89AnXbC9rewvhNb9UgXCc2qJJpBXh",
+    "THM4uT2VxzSsBEp8WRbYMzRkiqvbEuBBLU",
+    "TFkz4usfWmLHu78zENZU63Znqnmh267B25",
+    "TFv1isf5EXpXnu2NPpGSwTgipckNvsmEvz",
+    "TCgcGDFVmeqgxXvsUSZAUMkdLcfovc2aVm",
+}
+
+
+def test_2026_09_21_evidence_wallets_are_in_census_not_operator_master():
+    """The 2026-09-21 docx added 5 valid, live-decoded evidence wallets.
+
+    They are evidence-only rows: the document explicitly says A1 is an
+    exchange withdrawal wallet (not operator attribution) and A2-A5 need
+    transaction-level corroboration. They must be in the census but must
+    never acquire the known_operator badge by entering the LE master.
+    """
+    rows = {r["address"]: r for r in _rows()}
+    for addr in NEW_2026_09_21:
+        assert addr in rows, f"missing 2026-09-21 wallet {addr}"
+        row = rows[addr]
+        assert row["network"] == "TRON"
+        assert row["proof_s3_key"] == row["source_ref"]
+        assert row["fact_type"] == "fact"
+    master = {
+        r["address"]
+        for r in csv.DictReader(
+            open(
+                REPO / "s3-live-monitor" / "reference" / "17-CRYPTO-WALLETS.csv",
+                encoding="utf-8",
+            )
+        )
+    }
+    assert NEW_2026_09_21.isdisjoint(master), (
+        "evidence-only 2026-09-21 wallets must not be in the operator master"
+    )
 
 
 def test_no_fallback_columns():
@@ -140,6 +180,36 @@ def test_c12_variant_quarantined_canonical_retained():
     assert "TEeqmfN74hg8vP8umv8ubD3oGAroVwRTFD" in by_addr
     qaddrs = {q["address"] for q in _quarantined()}
     assert "TEeqmfN74hg8vP8umv8ubD30GAroVWRTFD" in qaddrs
+
+
+def test_tavaw_flag_quarantined_not_census():
+    """The 2026-09-21 docx flags a checksum-invalid B6 near-duplicate.
+
+    It has a valid base58 alphabet and length, so the old alphabet-only gate
+    would miss it. The document itself says it is not a separate wallet until
+    the image is re-verified. It must be preserved in quarantine, never in the
+    census or the LE operator master, while canonical B6 remains in the census.
+    """
+    flag = "TAVawJ7BF7L9XwSf5RJdtrigHSyVTzzCxf"
+    canonical = "TAVawJ7BF7L9XwSf5RJdtr1gHSyVTzzCxf"
+    census = {r["address"] for r in _rows()}
+    quar = {q["address"]: q for q in _quarantined()}
+    master = {
+        r["address"]
+        for r in csv.DictReader(
+            open(
+                REPO / "s3-live-monitor" / "reference" / "17-CRYPTO-WALLETS.csv",
+                encoding="utf-8",
+            )
+        )
+    }
+    assert flag not in census
+    assert flag not in master
+    assert flag in quar
+    assert quar[flag]["category"] == "operator_hot_variant"
+    assert "checksum-invalid" in quar[flag]["quarantine_reason"]
+    assert canonical in census
+    assert canonical not in master
 
 
 def test_bankdata_ids_resolve_to_full_keys():

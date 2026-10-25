@@ -3530,7 +3530,7 @@ def _live_wallet_set() -> set[str]:
 
 @app.get("/api/wallets/reference")
 def wallets_reference(_=Depends(auth)):
-    """All previously-identified wallets (reference census, 87 rows).
+    """All previously-identified wallets (reference census, 92 rows).
 
     Source rule (strict): the ONLY source is the true original object key in
     the GCS bucket (synced from S3: deposit / bankingqr / chat_file / voice
