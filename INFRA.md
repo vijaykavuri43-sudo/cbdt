@@ -92,6 +92,17 @@ sudo docker logs --since 10m s3sync-b3 2>&1 | tail -n 30   # b3 mirror logs
 
 ## 6. Change log (keep this updated when infra moves)
 
+- 2026-10-25: all old-account GCP projects moved to `v2660228-org` (237163885821):
+  main project `project-9641a7b9...`, `gen-lang-client-0791146751`,
+  `project-9dd84106-d3f1-4f89-b4e`, and `s3sync-508116`. Project IDs/numbers, VM
+  `s3lm-budget`, static IP `8.231.108.145`, bucket
+  `cbtf-case-evidence-518405669914`, and evidence are unchanged. Old billing
+  `01B553-891570-5D2D90` is closed and has no linked projects; new billing
+  `01A4FE-5BE581-D29766` is open. Old account `vijaykavuri72` was removed from all
+  project IAM; both old orgs are empty and pending Console deletion. The VM's
+  gcloud uses `518405669914-compute@developer.gserviceaccount.com`. Local gcloud
+  currently authenticates as `learn2earncources@gmail.com` (checked 2026-10-25);
+  re-authenticate as `v2660228@gmail.com` before further project IAM work.
 - 2026-10-13: overview rails/24h-mix outage fixed (commit c40f534): `mule_rails(active_since)`
   ran a full-index GROUP BY+HAVING (69.3s measured on 1.08M-row VM data vs 25s
   frontend timeout) — blank RECEIVING RAILS + 0/0/0 24H MIX. Replaced with

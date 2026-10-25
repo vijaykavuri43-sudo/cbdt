@@ -21,3 +21,9 @@ __pycache__/
 .idea/
 .vscode/
 *.log
+
+# Migration backups (may contain secrets)
+migration-backup/
+
+# Generated reference checksums
+reference/*.sha256
