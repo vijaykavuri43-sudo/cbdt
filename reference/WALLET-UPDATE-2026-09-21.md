@@ -216,6 +216,35 @@ The complete 114-row list (5 document additions + 109 live-only candidates)
 is in `reference/WALLET-NEWLY-FOUND-2026-10-26.csv`. None of the 109 was added
 to the census or operator master.
 
+## Criminal-side master document (2026-10-26)
+
+The updated case document separates criminal-side wallets from bettor/user-side
+wallets and explicitly labels every uncertain record:
+
+- **62 criminal-side wallets** — 34 core (28 hawala/collection + 6 operator-side)
+  and 28 candidates (20 banking QR + 7 dashboard/platform + 1 support).
+- **12 bettor/user-side wallets excluded** — 8 withdrawal beneficiaries,
+  2 user wallets, 2 dust/poisoning.
+- **2 exchange wallets** — E1 and A1, context only.
+- **4 evidence-only TRON + 2 ETH** — unresolved; not asserted criminal.
+- **38 invalid/non-wallet records** — 9 invalid census OCR leads, 24 invalid
+  platform-hot claims, 2 OCR variants, 2 UPI identifiers, 1 partial.
+- **109 live-only valid TRON addresses** — unverified appendix; not curated and
+  not in the criminal master.
+
+All **120/120** document tokens are accounted for. The total master is
+**229 records** (120 document + 109 live-only), representing **191 valid wallet
+addresses** (189 TRON + 2 ETH). The five-row operator master is unchanged
+(B1–B5); B6 is operator-side but census-only.
+
+Files:
+
+- `reference/CBTF_Crypto_Wallets_Criminal_Side_Master_2026-10-26.docx`
+- `reference/CBTF_Crypto_Wallets_Criminal_Side_Master_2026-10-26.xlsx`
+- `reference/CRIMINAL-SIDE-WALLETS-2026-10-26.csv` — 62 rows
+- `reference/WALLET-MASTER-2026-10-26.csv` — 229 rows
+- `scripts/build-criminal-wallet-master.py` — reproducible builder
+
 ## Files changed
 
 - `reference/identified-wallets.csv` — 92 rows; unchanged by this deeper
@@ -227,6 +256,13 @@ to the census or operator master.
 - `reference/WALLET-NEWLY-FOUND-2026-10-26.csv` — 5 document additions plus
   109 live-only valid candidates, with hit counts, evidence samples, priority
   and curation status.
+- `reference/CBTF_Crypto_Wallets_Criminal_Side_Master_2026-10-26.docx` — updated
+  case document with criminal/bettor/unresolved/invalid separation.
+- `reference/CBTF_Crypto_Wallets_Criminal_Side_Master_2026-10-26.xlsx` — workbook
+  with the same 229 records and per-section sheets.
+- `reference/CRIMINAL-SIDE-WALLETS-2026-10-26.csv` — 62 criminal-side rows.
+- `reference/WALLET-MASTER-2026-10-26.csv` — all 229 records.
+- `scripts/build-criminal-wallet-master.py` — builder for the DOCX/XLSX/CSVs.
 - `scripts/build-identified-wallets.py` — quarantine generator now includes
   the TAVaw variant and pins 28 rows.
 - `backend/test_wallet_sources.py` — 28-row quarantine pin and
