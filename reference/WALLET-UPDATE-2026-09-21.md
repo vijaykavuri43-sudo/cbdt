@@ -198,6 +198,24 @@ docx, census, or quarantine). Those 109 are visible in the live feed but were
 and many are OCR variants. Eleven checksum-valid document addresses currently
 have zero live hits; they remain evidence-backed census rows, not failures.
 
+## Newly observed live-only valid addresses (2026-10-26)
+
+This is separate from the document audit. At the 2026-10-26 recheck, the live
+`wallet_hits` table still had 178 checksum-valid addresses; **109** of them are
+not in the 21-09 document, the 92-row census, or quarantine. They are
+**live-only candidates, not curated wallets**:
+
+- 4 high priority (10+ live hits)
+- 25 medium priority (3–9 live hits)
+- 80 low priority (1–2 live hits)
+- 2 are valid case-variants of checksum-invalid census OCR rows
+  (`TGhiEsAtLfH2cawDa7Ru7LWXnG7tWjbWyS` and
+  `TX1HkKxnsHNPzHdhUETZXJp6NBozdVN9kq`); re-OCR candidates, not promotions.
+
+The complete 114-row list (5 document additions + 109 live-only candidates)
+is in `reference/WALLET-NEWLY-FOUND-2026-10-26.csv`. None of the 109 was added
+to the census or operator master.
+
 ## Files changed
 
 - `reference/identified-wallets.csv` — 92 rows; unchanged by this deeper
@@ -206,6 +224,9 @@ have zero live hits; they remain evidence-backed census rows, not failures.
 - `reference/WALLET-AUDIT-2026-09-21.csv` — 120 unique token rows with docx
   references, checksum result, census/quarantine/master status, live hits and
   disposition.
+- `reference/WALLET-NEWLY-FOUND-2026-10-26.csv` — 5 document additions plus
+  109 live-only valid candidates, with hit counts, evidence samples, priority
+  and curation status.
 - `scripts/build-identified-wallets.py` — quarantine generator now includes
   the TAVaw variant and pins 28 rows.
 - `backend/test_wallet_sources.py` — 28-row quarantine pin and
