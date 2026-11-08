@@ -16,6 +16,7 @@ from .enrich import (
     extract_amount,
     extract_amount_with_currency,
     extract_bank_accounts,
+    extract_crypto_transfer,
     extract_participants,
     extract_txids,
     extract_vpa_details,
@@ -105,6 +106,41 @@ class ExtractionTests(unittest.TestCase):
         flat = " ".join(BINANCE_USDT_TEXT.split())
         idx = flat.find("69.5")
         self.assertEqual(detect_amount_currency(flat, idx, idx + 4), "USDT")
+
+    def test_tronscan_transfer_principal_with_ocr_noise(self):
+        self.assertEqual(
+            extract_crypto_transfer(
+                "TRyhzWakd9Khhp56Np1QPDsLm84BnYi4MK transferred 5854 USDT "
+                "($584.25) to TIXHSVWjd2U09uu LabhSdZztq9cGEMQPqx"
+            ),
+            (5854.0, "USDT", 584.25),
+        )
+        self.assertEqual(
+            extract_crypto_transfer(
+                "TCgLo2vsT4BNxXB5ZNKvW9vev9t54Tv4kt & transferred 508@USDT "
+                "($507.27) to TIXHSVWjd2Uo09uulabhSdZztq9cGEMQPqx"
+            ),
+            (508.0, "USDT", 507.27),
+        )
+        self.assertEqual(
+            extract_crypto_transfer(
+                "TQYCXJBL6XbSYSEBriHHpeGvVS9FutyrZM & transferred "
+                "4914QUSDT ($490.38) to TIXHSVWjd2Uo09uu1abhSdZztq9cGEMQPqx"
+            ),
+            (4914.0, "USDT", 490.38),
+        )
+        self.assertEqual(
+            extract_crypto_transfer(
+                "Transaction Details Send -250 USDT v TRC20 TR7NH"
+            ),
+            (250.0, "USDT", None),
+        )
+
+    def test_promo_percentage_is_not_a_crypto_principal(self):
+        amt, ccy, _ = extract_crypto_transfer(
+            "tronscan.org 40% 30% OFF transferred 492 @USDT ($491.27) to TIX"
+        )
+        self.assertEqual((amt, ccy), (492.0, "USDT"))
 
 
 class MoneyFlowTests(unittest.TestCase):

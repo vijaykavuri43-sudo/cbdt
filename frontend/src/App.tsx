@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type Status } from './lib/api'
 import { Gate } from './components/Gate'
-import { CommandPalette } from './components/CommandPalette'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { StatusPage } from './pages/Status'
 import { Explorer } from './pages/Explorer'
@@ -136,11 +135,9 @@ export default function App() {
 
   return (
     <div className="app">
-      <CommandPalette onJump={(id) => openTab(id as TabId)} />
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-title">GCS EVIDENCE MONITOR</div>
-          <div className="brand-sub mono">{status?.source_label ?? status?.bucket_url.split('//')[1]?.split('/')[0] ?? '…'}</div>
         </div>
         {status?.peers && status.peers.length > 0 && (
           <div className="nav-group">
@@ -149,14 +146,16 @@ export default function App() {
               const here = (status.source_label ?? '') === p.label
               const href = `${window.location.protocol}//${window.location.hostname}:${p.port}/`
               return here ? (
-                <div key={p.label} className="nav-item active mono" style={{ fontSize: 12 }}>
+                <div key={p.label} className="nav-item active mono" style={{ fontSize: 11 }}>
                   <span className="nav-icon">◉</span>
-                  {p.label}
+                  <span className="nav-label">{p.label}</span>
                 </div>
               ) : (
-                <a key={p.label} className="nav-item mono" style={{ fontSize: 12 }} href={href}>
+                <a key={p.label} className="nav-item mono" style={{ fontSize: 11 }} href={href}>
                   <span className="nav-icon">○</span>
-                  {p.label} <span className="dim">:{p.port}</span>
+                  <span className="nav-label">
+                    {p.label} <span className="dim">:{p.port}</span>
+                  </span>
                 </a>
               )
             })}
@@ -173,7 +172,7 @@ export default function App() {
                   onClick={() => openTab(t.id)}
                 >
                   <span className="nav-icon">{t.icon}</span>
-                  {t.label}
+                  <span className="nav-label">{t.label}</span>
                   {t.id === 'live' && status && !status.sweep_done && <span className="pulse-dot" />}
                 </button>
               ))}
@@ -184,13 +183,9 @@ export default function App() {
           <div className={`conn ${status?.bucket_live ? 'ok' : (status && status.bucket_live === false ? 'bad' : (status ? 'ok' : ''))}`}>
             {status?.bucket_live ? 'BUCKET REACHABLE' : (status && status.bucket_live === false ? 'BUCKET UNREACHABLE' : (status ? 'GCS MIRROR' : 'CHECKING…'))}
           </div>
-          <div className="small dim">{status?.objects_total.toLocaleString() ?? '—'} objects indexed</div>
-          <div className="mono tiny dim" style={{ marginTop: 8 }}>
-            {status?.case}
-          </div>
           <button
             className="btn tiny"
-            style={{ marginTop: 10, width: '100%' }}
+            style={{ width: '100%' }}
             onClick={() => {
               localStorage.removeItem('s3lm_token')
               location.reload()
@@ -198,9 +193,6 @@ export default function App() {
           >
             Lock console
           </button>
-          <div className="tiny dim mono" style={{ marginTop: 10, lineHeight: 1.5, opacity: 0.8 }}>
-            Ctrl+K jump · / search in Explorer
-          </div>
         </div>
       </aside>
       <main className={'content' + (tab === 'explorer' ? ' content-explorer' : '')}>

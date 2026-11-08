@@ -1178,6 +1178,52 @@ def extract_amount_with_currency(text: str) -> tuple[Optional[float], str]:
     return (words_amt, "INR") if words_amt else (None, "INR")
 
 
+# Tronscan / wallet transfer screenshots show "transferred 4914QUSDT ($490.38)"
+# or "Send -250 USDT". OCR often inserts Q/@ between amount and token, and the
+# bare number has no comma/label, so the INR-first sweep either misses it or
+# picks a promo percentage (30% → ₹30, verified 2026-11-08).
+_CRYPTO_TRANSFER_RE = re.compile(
+    r"(?:transferred|send|sent|receiv(?:e|ed))\s*[-+]?\s*"
+    r"([0-9][0-9,]*(?:\.[0-9]{1,8})?)\s*[Q@]?\s*"
+    r"(USDT|USDC|BTC|ETH|TRX|BNB)\b",
+    re.IGNORECASE,
+)
+_CRYPTO_USD_RE = re.compile(
+    r"\(\s*\$?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*\)"
+)
+
+
+def extract_crypto_transfer(
+    text: str,
+) -> tuple[Optional[float], str, Optional[float]]:
+    """Principal crypto amount from a wallet/explorer transfer screenshot.
+
+    Returns (amount, currency, usd_equivalent). The USD parenthetical is kept
+    separately; the token amount is the principal for the wallet table.
+    """
+    if not text:
+        return (None, "", None)
+    flat = " ".join(text.split())
+    m = _CRYPTO_TRANSFER_RE.search(flat)
+    if not m:
+        return (None, "", None)
+    try:
+        amt = float(m.group(1).replace(",", ""))
+    except ValueError:
+        return (None, "", None)
+    if not (0 < amt <= CRYPTO_MAX_AMOUNT):
+        return (None, "", None)
+    ccy = m.group(2).upper()
+    usd = None
+    mu = _CRYPTO_USD_RE.search(flat[m.end() : m.end() + 50])
+    if mu:
+        try:
+            usd = float(mu.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    return (amt, ccy, usd)
+
+
 _AMOUNT_WORD_ONES = {
     "zero": 0,
     "one": 1,
@@ -2718,6 +2764,15 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             # sweep directly so it needs it here too.
             tesseract_amount = extract_amount_in_words(flat)
             tesseract_ccy = "INR"
+        # Wallet/explorer receipts put the principal before the token with no
+        # amount label ("transferred 4914QUSDT"). Prefer that over a promo
+        # percentage the INR sweep may have picked (30% → ₹30).
+        crypto_amt, crypto_ccy, crypto_usd = extract_crypto_transfer(flat)
+        is_crypto = crypto_amt is not None
+        if is_crypto:
+            tesseract_amount, tesseract_ccy = crypto_amt, crypto_ccy
+            out["amount_usd"] = crypto_usd
+            out["amount_source"] = "crypto_transfer"
         out["amount_value"] = tesseract_amount
         out["amount_currency"] = tesseract_ccy
         # amount_inr feeds ₹ totals — set ONLY when the principal really is
@@ -2831,8 +2886,11 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             eaten = correct_rupee_eaten(text, out.get("amount_value"))
         except Exception:
             eaten = None
+        if is_crypto:
+            eaten = None
         if (
-            eaten is None
+            not is_crypto
+            and eaten is None
             and out.get("amount_value") is not None
             and amount_is_ref_id(text, out.get("amount_value"), out.get("utr") or "")
         ):
@@ -2843,7 +2901,7 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
             out["amount_inr"] = words if out.get("amount_currency") == "INR" else None
             tesseract_amount = words
         twin = None
-        if eaten is not None:
+        if eaten is not None and not is_crypto:
             out["amount_tesseract_raw"] = out.get("amount_value")
             out["amount_value"] = eaten
             out["amount_inr"] = eaten if out.get("amount_currency") == "INR" else None
@@ -2853,7 +2911,7 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
                 out["twin_artifact"] = twin
         use_vision = False
         vision_ok = bool(config.GEMINI_ENABLED or config.GROQ_ENABLED)
-        if vision_ok:
+        if vision_ok and not is_crypto:
             has_rejected = bool(out.get("amount_ignored"))
             if tesseract_amount is None:
                 use_vision = True
@@ -2914,6 +2972,57 @@ def ocr_slip(data: bytes, allow_gemini: bool = True) -> dict:
     except Exception as e:
         out["error"] = str(e)[:200]
     return out
+
+
+def repair_crypto_amounts() -> int:
+    """Backfill crypto principals from stored OCR text (no image refetch).
+
+    Wallet/explorer screenshots (Tronscan, wallet send screens) store the
+    principal as "transferred 4914QUSDT ($490.38)" with no amount label. The
+    INR-first sweep missed it and could store a promo "30%" as ₹30. This
+    repairs the wallet-bearing keys once after deploy; new images use
+    extract_crypto_transfer() inside ocr_slip().
+    """
+    c = db.connect()
+    keys = [r["key"] for r in c.execute("SELECT DISTINCT key FROM wallet_hits")]
+    fixed = 0
+    for key in keys:
+        row = c.execute(
+            "SELECT extract_json FROM objects WHERE key=?", (key,)
+        ).fetchone()
+        if not row or not row["extract_json"]:
+            continue
+        try:
+            payload = json.loads(row["extract_json"])
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        text = payload.get("text_sample") or ""
+        if "USDT" not in text.upper():
+            continue
+        amt, ccy, usd = extract_crypto_transfer(text)
+        if amt is None:
+            continue
+        if (
+            payload.get("amount_value") == amt
+            and payload.get("amount_currency") == ccy
+            and payload.get("amount_inr") is None
+        ):
+            continue
+        payload["amount_value"] = amt
+        payload["amount_currency"] = ccy
+        payload["amount_inr"] = None
+        payload["amount_usd"] = usd
+        payload["amount_source"] = "crypto_transfer"
+        c.execute(
+            "UPDATE objects SET extract_json=? WHERE key=?",
+            (json.dumps(payload), key),
+        )
+        db._sync_wallet_hits(c, key, payload)
+        fixed += 1
+    c.commit()
+    return fixed
 
 
 def gemini_ocr_slip(data: bytes) -> dict:

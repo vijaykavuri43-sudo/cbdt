@@ -10,7 +10,7 @@ import queue
 from typing import Any, Optional
 
 from . import config, db, evidence
-from .enrich import EnrichmentWorker
+from .enrich import EnrichmentWorker, repair_crypto_amounts
 
 
 def _rss_mb():
@@ -761,6 +761,31 @@ class Collector:
                 pass
 
         threading.Thread(target=ext_backfill, daemon=True, name="ext-backfill").start()
+
+        def crypto_amount_repair():
+            try:
+                if db.get_meta("crypto_amount_repair_v1") == "done":
+                    return
+                n = repair_crypto_amounts()
+                db.set_meta("crypto_amount_repair_v1", "done")
+                evidence.append_collection_log(
+                    {
+                        "event": "monitor_crypto_amount_repair",
+                        "method": "re-extract USDT principal from stored OCR text",
+                        "counts": {"keys_fixed": n},
+                    }
+                )
+            except Exception as exc:
+                evidence.append_collection_log(
+                    {
+                        "event": "monitor_crypto_amount_repair_error",
+                        "error": str(exc)[:300],
+                    }
+                )
+
+        threading.Thread(
+            target=crypto_amount_repair, daemon=True, name="crypto-amount-repair"
+        ).start()
 
         def wallet_backfill():
             # Materialized wallet index (2026-09-16): one-time seed so the

@@ -24,7 +24,7 @@ services:
       - S3LM_GCS_PREFIX=s3-mirror/
       - S3LM_SOURCE_LABEL=bx-s3-dev-001
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-sync/
-      - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82
+      - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
       # Public base URL used for officer-verifiable exhibit links in CSV exports.
       # MUST be updated if the VM is ever recreated with a new external IP.
       - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL:-http://8.231.108.145}
@@ -156,7 +156,7 @@ services:
       - S3LM_GCS_PREFIX=s3-mirror-bxs3dev001/
       - S3LM_SOURCE_LABEL=bxs3dev001
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-bxs3dev001-sync/
-      - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82
+      - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
       - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL_B2:-http://8.231.108.145:81}
       - S3LM_DOWNLOADS_SUBDIR=bxs3dev001
       - S3LM_DEFAULT_PREFIXES=deposit/,withdrawal/
@@ -268,7 +268,7 @@ services:
       - S3LM_GCS_PREFIX=s3-mirror-tw-artifacts/
       - S3LM_SOURCE_LABEL=tw-artifacts-center
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-tw-artifacts-sync/
-      - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82
+      - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
       - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL_B3:-http://8.231.108.145:82}
       - S3LM_DOWNLOADS_SUBDIR=tw-artifacts-center
       - S3LM_DEFAULT_PREFIXES=QR-images/,payment-proofs/,development/
@@ -352,6 +352,115 @@ services:
       timeout: 5s
       retries: 3
 
+  # ---------- Bucket 4: bx-s3-dev-002 (2026-10-04 snapshot twin, +139,661
+  # sole-copy purged deposit/withdrawal images / 48.21 GB) ----------
+  # Dashboard: http://<VM-IP>:83/ · mirror: gs://…/s3-mirror-bx-s3-dev-002/
+  # Preservation target identified in bucket-diff-attribution-2026-10-13 and
+  # bucket-inventory-consolidated-2026-10-31. Read-only; sync never PUTs S3.
+  s3lm-b4:
+    build: .
+    image: s3lm:latest
+    container_name: s3lm-b4
+    command: ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8787", "--workers", "2", "--timeout-graceful-shutdown", "30"]
+    stop_grace_period: 60s
+    ports:
+      - "83:8787"
+    environment:
+      - S3LM_TOKEN=${S3LM_TOKEN:-}
+      - S3LM_NO_GATE=${S3LM_NO_GATE:-}
+      - S3LM_HOST=0.0.0.0
+      - S3LM_PORT=8787
+      - S3LM_OBJECT_SOURCE=gcs
+      - S3LM_GCS_BUCKET=${S3LM_GCS_BUCKET:-cbtf-case-evidence-518405669914}
+      - S3LM_GCS_PREFIX=s3-mirror-bx-s3-dev-002/
+      - S3LM_SOURCE_LABEL=bx-s3-dev-002
+      - S3LM_SYNC_STATUS_PREFIX=s3-mirror-bx-s3-dev-002-sync/
+      - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
+      - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL_B4:-http://8.231.108.145:83}
+      - S3LM_DOWNLOADS_SUBDIR=bx-s3-dev-002
+      - S3LM_DEFAULT_PREFIXES=deposit/,withdrawal/
+      - S3LM_HOT_PREFIXES=deposit/,withdrawal/
+      - S3LM_ENRICH_MAX_AGE_HOURS=0
+      - S3LM_ENRICH_WORKERS=2
+      - S3LM_ENRICH_BATCH=64
+      - OMP_THREAD_LIMIT=1
+      - S3LM_GEMINI_API_KEY=${S3LM_GEMINI_API_KEY:-}
+      - S3LM_GEMINI_MODEL=${S3LM_GEMINI_MODEL:-gemini-3.8-flash}
+      - S3LM_GEMINI_FALLBACK_MODEL=${S3LM_GEMINI_FALLBACK_MODEL:-gemini-2.5-flash-lite}
+      - S3LM_GEMINI_DAILY_CAP=${S3LM_GEMINI_DAILY_CAP:-100000}
+      - S3LM_GEMINI_PER_BATCH=${S3LM_GEMINI_PER_BATCH:-48}
+      - S3LM_GEMINI_API_KEYS=${S3LM_GEMINI_API_KEYS:-}
+      - S3LM_GEMINI_RESERVE=${S3LM_GEMINI_RESERVE:-5}
+      - S3LM_GEMINI_PER_MIN=${S3LM_GEMINI_PER_MIN:-8}
+      - S3LM_AI_MODEL=${S3LM_AI_MODEL:-gemini-2.5-flash}
+      - S3LM_AIASK_DAILY_CAP=${S3LM_AIASK_DAILY_CAP:-500}
+      - S3LM_AIASK_PER_MIN=${S3LM_AIASK_PER_MIN:-10}
+      - S3LM_GROQ_API_KEY=${S3LM_GROQ_API_KEY:-}
+      - S3LM_GROQ_MODEL=${S3LM_GROQ_MODEL:-qwen/qwen3.8-27b}
+      - S3LM_GROQ_FALLBACK_MODEL=${S3LM_GROQ_FALLBACK_MODEL:-openai/gpt-oss-120b}
+      - S3LM_GROQ_VISION_MODEL=${S3LM_GROQ_VISION_MODEL:-qwen/qwen3.6-27b}
+      - S3LM_GROQ_VISION_FALLBACK=${S3LM_GROQ_VISION_FALLBACK:-qwen/qwen3.8-27b}
+      - S3LM_COLD_SEC=${S3LM_COLD_SEC:-1800}
+      - S3LM_CRAWL_CAP=${S3LM_CRAWL_CAP:-20000}
+      - S3LM_SLIP_OCR=1
+      - S3LM_SLIP_BATCH=64
+      - S3LM_SLIP_INTERVAL_SEC=30
+      - S3LM_INTELLIGENCE_ROOT=/app/intelligence
+      - S3LM_REFERENCE_ROOT=/app/intelligence
+    volumes:
+      - s3lm-data-b4:/root/.local/share/s3-live-monitor
+      - ../intelligence:/app/intelligence
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 10G
+
+  s3sync-b4:
+    image: s3lm:latest
+    container_name: s3sync-b4
+    entrypoint: ["python3", "/app/sync/s3-gcs-sync.py"]
+    stop_grace_period: 30s
+    depends_on:
+      s3lm-b4:
+        condition: service_healthy
+    environment:
+      - S3SYNC_BUCKET_URL=https://bx-s3-dev-002.s3.ap-southeast-1.amazonaws.com
+      - S3SYNC_GCS_BUCKET=${S3LM_GCS_BUCKET:-cbtf-case-evidence-518405669914}
+      - S3SYNC_GCS_PREFIX=s3-mirror-bx-s3-dev-002/
+      - S3SYNC_STATUS_PREFIX=s3-mirror-bx-s3-dev-002-sync/
+      - S3SYNC_SOURCE_LABEL=bx-s3-dev-002
+      - S3SYNC_HOT_PREFIXES=deposit/,withdrawal/
+      - S3SYNC_STATE_DB=/root/.local/share/s3-sync/state.db
+      - S3SYNC_RATE_PER_SEC=${S3SYNC_RATE_PER_SEC_B4:-8}
+      - S3SYNC_LIST_RATE_PER_SEC=${S3SYNC_LIST_RATE_PER_SEC_B4:-8}
+      - S3SYNC_WORKERS=${S3SYNC_WORKERS_B4:-8}
+      - S3SYNC_NOTIFY_TIMEOUT=${S3SYNC_NOTIFY_TIMEOUT:-8}
+      - S3SYNC_MEM_LIMIT=${S3SYNC_MEM_LIMIT:-8388608}
+      - S3SYNC_QUEUE_MAX=${S3SYNC_QUEUE_MAX:-20000}
+      - S3SYNC_CYCLE_SEC=${S3SYNC_CYCLE_SEC:-60}
+      - S3SYNC_CATCHUP_CYCLE_SEC=${S3SYNC_CATCHUP_CYCLE_SEC:-5}
+      - S3SYNC_MAX_BYTES=${S3SYNC_MAX_BYTES:-536870912}
+      - S3SYNC_MONITOR_URL=http://s3lm-b4:8787
+      - S3SYNC_MONITOR_TOKEN_FILE=/root/.local/share/s3-live-monitor/access-token.txt
+      - S3SYNC_AUDIT_LOG=/app/intelligence/audit/collection-log.jsonl
+      - S3LM_CASE=CASE-2026-CBTF
+      - S3LM_AUTH=STANDING-JUDICIAL-AUTH-ILLEGAL-BETTING
+    volumes:
+      - s3lm-data-b4:/root/.local/share/s3-live-monitor
+      - s3sync-state-b4:/root/.local/share/s3-sync
+      - ../intelligence:/app/intelligence
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    healthcheck:
+      test: ["CMD-SHELL", "grep -qs 's3-gcs-sync' /proc/1/cmdline"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   s3lm-data:
   s3sync-state:
@@ -359,3 +468,5 @@ volumes:
   s3lm-data-b3:
   s3sync-state-b2:
   s3sync-state-b3:
+  s3lm-data-b4:
+  s3sync-state-b4:
