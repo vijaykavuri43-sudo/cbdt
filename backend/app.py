@@ -240,12 +240,49 @@ def auth(request: Request):
         raise HTTPException(401, "locked — access key required")
 
 
+def _wal_guard():
+    """Keep the SQLite WAL bounded and surface regressions in the log.
+
+    A failed write once left a transaction open, pinning the WAL; it grew to
+    19 GB and the main DB went four days without a checkpoint. The rollback
+    fix in db._SafeConnection removes that cause, and this guard is the second
+    line of defence: checkpoint at 512 MB, truncate past 2 GB. Only one uvicorn
+    worker process runs it (non-blocking lock file).
+    """
+    import fcntl
+
+    lock_path = Path(str(config.DB_PATH) + ".walguard")
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except Exception:
+        return
+    wal = Path(str(config.DB_PATH) + "-wal")
+    while True:
+        try:
+            size = wal.stat().st_size if wal.exists() else 0
+            if size > 512 * 1024 * 1024:
+                truncate = size > 2 * 1024 * 1024 * 1024
+                res = db.checkpoint(truncate=truncate)
+                print(
+                    f"[wal-guard] wal={size // (1024 * 1024)}MB "
+                    f"{'TRUNCATE' if truncate else 'PASSIVE'} -> {res}",
+                    flush=True,
+                )
+        except Exception as e:
+            print(f"[wal-guard] failed: {e}", flush=True)
+        time.sleep(60)
+
+
 @app.on_event("startup")
 def startup():
     for d in config.ensure_dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
     db.connect()
     print(f"[gate] enabled; access key stored at {config.TOKEN_FILE}")
+    if os.environ.get("S3LM_WAL_GUARD", "1") != "0":
+        threading.Thread(target=_wal_guard, daemon=True, name="wal-guard").start()
 
     # One-time repair of amounts persisted by pre-fix extraction (unbounded QR am=).
     # Runs off the request thread; Overview totals correct from first page load.

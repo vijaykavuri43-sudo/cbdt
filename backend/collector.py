@@ -1,7 +1,9 @@
 """Collector: full manifest sweep + incremental watermark polling + SSE event bus."""
 
 import ctypes
+import fcntl
 import gc
+import os
 import threading
 import time
 import queue
@@ -611,6 +613,26 @@ class Collector:
             self._stop.wait(config.SLIP_INTERVAL_SEC)
 
     def start_background(self):
+        # uvicorn runs 2 worker processes for HTTP responsiveness. Without this
+        # guard each worker also started its own sweep/poll/enrich/slip/wallet
+        # loops — duplicate OCR of the same keys, double writes, 300s lock waits
+        # and 232K failed sync notifies. Only the lock owner runs the pipeline;
+        # if it dies, uvicorn's replacement worker acquires the lock on startup.
+        lock_path = config.DATA_DIR / "collector.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            print(
+                "[collector] background pipeline already owned by another "
+                "worker — this worker serves HTTP only",
+                flush=True,
+            )
+            return
+        self._background_lock_fd = fd
+
         master = evidence.load_master_vpas()
         master_wallets = evidence.load_master_wallets()
 

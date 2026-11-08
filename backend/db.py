@@ -2,7 +2,9 @@
 
 import json
 import csv
+import fcntl
 import math
+import os
 import re
 import sqlite3
 import threading
@@ -42,11 +44,107 @@ def _sanitize_amount(value) -> float | None:
     return num
 
 
-# RLock (not Lock): writer paths nest — e.g. ledger.sync_ledger holds this
-# while merge_object_wallets re-acquires it. A plain Lock deadlocks there
-# (verified 2026-09-16: sync hung forever). Same-thread re-entry is safe:
-# connections are thread-local, so the same conn is reused.
-_writer_lock = threading.RLock()
+class _WriterLock:
+    """Thread- AND process-wide writer serialization.
+
+    uvicorn runs 2 worker processes; a threading.RLock only serialized writes
+    inside one process, so the two workers raced for SQLite's single WAL writer
+    slot. When one lost the race it could return "database is locked" and, with
+    no rollback, leave an open transaction that pinned the WAL forever (live:
+    19 GB WAL, main DB uncheckpointed for 4 days, 113 lock errors/day). An
+    advisory file lock on the persistent volume serializes writers across
+    processes; the RLock keeps nested writes (ledger -> wallets) re-entrant.
+
+    RLock (not Lock): writer paths nest — e.g. ledger.sync_ledger holds this
+    while merge_object_wallets re-acquires it. A plain Lock deadlocks there
+    (verified 2026-09-16: sync hung forever). Same-thread re-entry is safe:
+    connections are thread-local, so the same conn is reused.
+    """
+
+    def __init__(self):
+        self._rlock = threading.RLock()
+        self._fd = None
+        self._depth = 0
+
+    def __enter__(self):
+        self._rlock.acquire()
+        try:
+            if self._depth == 0:
+                path = Path(str(config.DB_PATH) + ".wlock")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o600)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX)
+                except BaseException:
+                    os.close(fd)
+                    raise
+                self._fd = fd
+            self._depth += 1
+        except BaseException:
+            self._rlock.release()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            self._depth -= 1
+            if self._depth == 0 and self._fd is not None:
+                try:
+                    fcntl.flock(self._fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(self._fd)
+                    self._fd = None
+        finally:
+            self._rlock.release()
+        return False
+
+
+class _SafeConnection(sqlite3.Connection):
+    """Roll back on statement failure so no transaction is ever left pinned.
+
+    Python's sqlite3 opens an implicit transaction before DML. If a write fails
+    (e.g. SQLITE_BUSY from a concurrent writer) and the caller does not
+    commit/rollback, that connection keeps its transaction and its WAL snapshot
+    open. In WAL mode a pinned snapshot prevents checkpointing, so the WAL grows
+    without bound and every later write fails with "database is locked".
+    """
+
+    def _safe_rollback(self):
+        try:
+            super().rollback()
+        except Exception:
+            pass
+
+    def execute(self, *args, **kwargs):
+        try:
+            return super().execute(*args, **kwargs)
+        except sqlite3.OperationalError:
+            self._safe_rollback()
+            raise
+
+    def executemany(self, *args, **kwargs):
+        try:
+            return super().executemany(*args, **kwargs)
+        except sqlite3.OperationalError:
+            self._safe_rollback()
+            raise
+
+    def executescript(self, *args, **kwargs):
+        try:
+            return super().executescript(*args, **kwargs)
+        except sqlite3.OperationalError:
+            self._safe_rollback()
+            raise
+
+    def commit(self):
+        try:
+            return super().commit()
+        except sqlite3.OperationalError:
+            self._safe_rollback()
+            raise
+
+
+_writer_lock = _WriterLock()
 _local = threading.local()
 
 
@@ -54,7 +152,9 @@ def connect() -> sqlite3.Connection:
     conn = getattr(_local, "conn", None)
     if conn is None:
         config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(config.DB_PATH), timeout=30.0)
+        conn = sqlite3.connect(
+            str(config.DB_PATH), timeout=30.0, factory=_SafeConnection
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -465,28 +565,44 @@ def upsert_objects(rows: list[dict]) -> int:
         )
         for r in rows
     ]
-    with _writer_lock:
-        c = connect()
-        cur = c.executemany(
-            "INSERT OR IGNORE INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext)"
-            " VALUES(?,?,?,?,?,?,?)",
-            data,
-        )
-        inserted = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
-        # Preserve first-seen time and completed extraction when content is
-        # unchanged. An overwritten key is a new evidentiary object: refresh
-        # metadata and put it back on the enrichment queue.
-        c.executemany(
-            "UPDATE objects SET top_prefix=?,size=?,last_modified=?,etag=?,ext=?,"
-            " enriched=0,extract_json=NULL,enrich_attempts=0,enrich_error=NULL,enrich_retry_utc=NULL,enriched_utc=NULL"
-            " WHERE key=? AND (size<>? OR etag<>? OR last_modified<>?)",
-            [
-                (top, size, lm, etag, ext, key, size, etag, lm)
-                for key, top, size, lm, etag, _seen, ext in data
-            ],
-        )
-        c.commit()
-        return inserted
+    updates = [
+        (top, size, lm, etag, ext, key, size, etag, lm)
+        for key, top, size, lm, etag, _seen, ext in data
+    ]
+    # The sync daemon calls this for every mirrored object (~24/s on bucket 2).
+    # Under momentary contention SQLite can still return SQLITE_BUSY after the
+    # busy timeout; retry briefly instead of surfacing a 500 to the daemon and
+    # letting the object wait for the next cold crawl.
+    last_err: sqlite3.OperationalError | None = None
+    for attempt in range(4):
+        try:
+            with _writer_lock:
+                c = connect()
+                cur = c.executemany(
+                    "INSERT OR IGNORE INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext)"
+                    " VALUES(?,?,?,?,?,?,?)",
+                    data,
+                )
+                inserted = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+                # Preserve first-seen time and completed extraction when content
+                # is unchanged. An overwritten key is a new evidentiary object:
+                # refresh metadata and put it back on the enrichment queue.
+                c.executemany(
+                    "UPDATE objects SET top_prefix=?,size=?,last_modified=?,etag=?,ext=?,"
+                    " enriched=0,extract_json=NULL,enrich_attempts=0,enrich_error=NULL,enrich_retry_utc=NULL,enriched_utc=NULL"
+                    " WHERE key=? AND (size<>? OR etag<>? OR last_modified<>?)",
+                    updates,
+                )
+                c.commit()
+                return inserted
+        except sqlite3.OperationalError as e:
+            last_err = e
+            msg = str(e).lower()
+            if "locked" not in msg and "busy" not in msg:
+                raise
+            time.sleep(0.25 * (2**attempt))
+    assert last_err is not None
+    raise last_err
 
 
 def object_versions(keys: list[str]) -> dict[str, tuple[int, str, str]]:
@@ -1069,16 +1185,22 @@ def pending_slips(limit: int = 24) -> list[str]:
         r["key"]
         for r in c.execute(
             f"SELECT key FROM objects WHERE {where} AND seen_utc >= ? "
-            "ORDER BY seen_utc DESC LIMIT ?",
+            "ORDER BY last_modified DESC, seen_utc DESC LIMIT ?",
             (slip_args + [fresh_cut, limit]),
         ).fetchall()
     ]
     if len(head) >= limit:
         return head
+    # Bulk fill MUST stay newest-first too. Unsorted fill returned the oldest
+    # pending rows (index order), so after the WAL lock storm left a 28K slip
+    # backlog the live 24h briefing cards kept showing 10-33h-old evidence
+    # while yesterday's 21K deposits waited behind history. The 28K backlog
+    # sorts in milliseconds via the enrich partial index.
     fill = [
         r["key"]
         for r in c.execute(
-            f"SELECT key FROM objects WHERE {where} LIMIT ?",
+            f"SELECT key FROM objects WHERE {where}"
+            " ORDER BY last_modified DESC LIMIT ?",
             (slip_args + [limit]),
         ).fetchall()
     ]

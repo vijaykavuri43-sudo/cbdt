@@ -123,7 +123,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 600M
+          # b1 is the largest bucket (~1.2M keys / 367GB inventory). Live
+          # measurement 2026-11-08: 541MiB/600MiB — one bad cycle from an OOM
+          # kill. 1G matches b2, which carries the next-largest backlog.
+          memory: 1G
     healthcheck:
       # s3sync doesn't serve HTTP and python:3.12-slim ships no pgrep/ps —
       # check the python process via /proc instead (PGREP_MISSING false-negative
