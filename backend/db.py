@@ -507,45 +507,61 @@ def reset_collection_state(source_id: str):
         return True
 
 
-def repair_non_iso_timestamps() -> dict:
-    """One-time-ish repair: rewrite non-ISO last_modified rows to ISO-8601 UTC.
+def repair_non_iso_timestamps(force: bool = False) -> dict:
+    """One-time repair: rewrite non-ISO last_modified rows to ISO-8601 UTC.
 
     The GCS mirror's custom metadata historically carried RFC-1123 HTTP-dates
     ('Wed, 31 Jul 2024 21:45:23 GMT'). Lexicographic -modified sorting then put
     every RFC row above every ISO row, so 'newest-first' feeds showed 2024
-    objects on top. Runs at every backend startup (cheap when nothing to fix:
-    the scan is a single LIKE-indexed count). Idempotent; unparseable values
-    are left untouched and reported, never dropped.
+    objects on top. Unparseable values are left untouched, never dropped.
+
+    2026-11-08: the `NOT LIKE` predicate cannot use an index, so this was a
+    2.47M-row full scan taken under the global writer lock at EVERY startup —
+    a measured 5+ minute stall that held back the 24h enrichment drain after
+    each restart. Scan on a read connection (WAL readers never block writers),
+    take the writer lock only for the fixes, and record completion so later
+    startups skip the scan. Ingestion normalizes timestamps, so a completed
+    scan stays valid; pass force=True to re-run after a restore.
     """
-    with _writer_lock:
-        c = connect()
-        rows = c.execute(
-            "SELECT key, last_modified FROM objects "
-            "WHERE last_modified != '' AND last_modified NOT LIKE '____-__-__T__:__:__Z'"
-        ).fetchall()
-        if not rows:
-            return {"checked": 0, "normalized": 0, "unparseable": 0}
-        updates: list[tuple[str, str]] = []
-        unparseable = 0
-        for r in rows:
-            fixed = normalize_object_ts(r["last_modified"])
-            if fixed != r["last_modified"] and fixed.startswith("20"):
-                updates.append((fixed, r["key"]))
-            else:
-                unparseable += 1
-        if updates:
-            c.executemany("UPDATE objects SET last_modified=? WHERE key=?", updates)
+    if not force and get_meta("ts_normalize_scan_v1") == "done":
+        return {"checked": 0, "normalized": 0, "unparseable": 0, "skipped": True}
+    rows = connect().execute(
+        "SELECT key, last_modified FROM objects "
+        "WHERE last_modified != '' AND last_modified NOT LIKE '____-__-__T__:__:__Z'"
+    ).fetchall()
+    if not rows:
+        set_meta("ts_normalize_scan_v1", "done")
+        return {"checked": 0, "normalized": 0, "unparseable": 0}
+    updates: list[tuple[str, str, str]] = []
+    unparseable = 0
+    for r in rows:
+        fixed = normalize_object_ts(r["last_modified"])
+        if fixed != r["last_modified"] and fixed.startswith("20"):
+            updates.append((fixed, r["key"], r["last_modified"]))
+        else:
+            unparseable += 1
+    if updates:
+        with _writer_lock:
+            c = connect()
+            # Optimistic guard: a concurrent sweep/enrichment may have already
+            # rewritten the row; never clobber a newer value with our snapshot.
+            for fixed, key, old in updates:
+                c.execute(
+                    "UPDATE objects SET last_modified=? WHERE key=? AND last_modified=?",
+                    (fixed, key, old),
+                )
             c.execute(
                 "INSERT INTO meta(k,v) VALUES('ts_normalize_utc',?) "
                 "ON CONFLICT(k) DO UPDATE SET v=excluded.v",
                 (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),),
             )
             c.commit()
-        return {
-            "checked": len(rows),
-            "normalized": len(updates),
-            "unparseable": unparseable,
-        }
+    set_meta("ts_normalize_scan_v1", "done")
+    return {
+        "checked": len(rows),
+        "normalized": len(updates),
+        "unparseable": unparseable,
+    }
 
 
 def upsert_objects(rows: list[dict]) -> int:
