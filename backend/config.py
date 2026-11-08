@@ -50,6 +50,29 @@ def _parse_peers() -> list:
 
 PEERS = _parse_peers()
 
+
+def _parse_peer_internal() -> dict:
+    """Container-network URLs for sibling dashboards: "80=http://s3lm:8787;...".
+
+    The host-mapped ports in PEERS (80/81/82/83) are not addressable from
+    inside another app container. The AI investigator uses these internal
+    URLs for cross-source questions; absent entries fall back to
+    127.0.0.1:<port> (works for bare-metal/local runs).
+    """
+    out: dict = {}
+    for chunk in os.environ.get("S3LM_PEER_INTERNAL", "").split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        port, url = chunk.split("=", 1)
+        port, url = port.strip(), url.strip().rstrip("/")
+        if port.isdigit() and url:
+            out[int(port)] = url
+    return out
+
+
+PEER_INTERNAL = _parse_peer_internal()
+
 DATA_DIR = Path(
     os.environ.get("S3LM_DATA", Path.home() / ".local" / "share" / "s3-live-monitor")
 )

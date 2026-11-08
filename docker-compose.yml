@@ -25,6 +25,9 @@ services:
       - S3LM_SOURCE_LABEL=bx-s3-dev-001
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-sync/
       - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
+      # Container-network URLs for cross-source AI questions (host-mapped ports
+      # are not reachable from inside another app container).
+      - S3LM_PEER_INTERNAL=80=http://s3lm:8787;81=http://s3lm-b2:8787;82=http://s3lm-b3:8787;83=http://s3lm-b4:8787
       # Public base URL used for officer-verifiable exhibit links in CSV exports.
       # MUST be updated if the VM is ever recreated with a new external IP.
       - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL:-http://8.231.108.145}
@@ -157,6 +160,9 @@ services:
       - S3LM_SOURCE_LABEL=bxs3dev001
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-bxs3dev001-sync/
       - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
+      # Container-network URLs for cross-source AI questions (host-mapped ports
+      # are not reachable from inside another app container).
+      - S3LM_PEER_INTERNAL=80=http://s3lm:8787;81=http://s3lm-b2:8787;82=http://s3lm-b3:8787;83=http://s3lm-b4:8787
       - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL_B2:-http://8.231.108.145:81}
       - S3LM_DOWNLOADS_SUBDIR=bxs3dev001
       - S3LM_DEFAULT_PREFIXES=deposit/,withdrawal/
@@ -269,6 +275,9 @@ services:
       - S3LM_SOURCE_LABEL=tw-artifacts-center
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-tw-artifacts-sync/
       - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
+      # Container-network URLs for cross-source AI questions (host-mapped ports
+      # are not reachable from inside another app container).
+      - S3LM_PEER_INTERNAL=80=http://s3lm:8787;81=http://s3lm-b2:8787;82=http://s3lm-b3:8787;83=http://s3lm-b4:8787
       - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL_B3:-http://8.231.108.145:82}
       - S3LM_DOWNLOADS_SUBDIR=tw-artifacts-center
       - S3LM_DEFAULT_PREFIXES=QR-images/,payment-proofs/,development/
@@ -376,6 +385,9 @@ services:
       - S3LM_SOURCE_LABEL=bx-s3-dev-002
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-bx-s3-dev-002-sync/
       - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
+      # Container-network URLs for cross-source AI questions (host-mapped ports
+      # are not reachable from inside another app container).
+      - S3LM_PEER_INTERNAL=80=http://s3lm:8787;81=http://s3lm-b2:8787;82=http://s3lm-b3:8787;83=http://s3lm-b4:8787
       - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL_B4:-http://8.231.108.145:83}
       - S3LM_DOWNLOADS_SUBDIR=bx-s3-dev-002
       - S3LM_DEFAULT_PREFIXES=deposit/,withdrawal/

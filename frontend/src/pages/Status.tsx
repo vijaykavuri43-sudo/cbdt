@@ -433,12 +433,12 @@ export function StatusPage() {
         </div>
         <div className="small dim" style={{ marginBottom: 8 }}>
           gateway-brand = white-label frontends from settlement exports · qr-payload / qr-expanded = network-relevant URLs inside collection QR codes (bank rails + generic junk excluded) · intel-inventory = verified intel frontends absent from settlements (historical kept) ·
-          showing {(netUrls?.rows ?? []).slice(0, 100).length} of {(netUrls?.rows ?? []).length}{netUrls?.counts?.valid_frontends != null ? ' · ' + netUrls.counts.valid_frontends + ' valid/resolved frontends' : ''} · CSV carries every row
+          showing all {(netUrls?.rows ?? []).length}{netUrls?.counts?.valid_frontends != null ? ' · ' + netUrls.counts.valid_frontends + ' valid/resolved frontends' : ''} · CSV carries every row
         </div>
         <div className="dp-table-wrap"><table className="dp-table"><thead><tr>
           <th>Host</th><th>Source</th><th className="num">Hits</th><th className="num">Amount</th><th>Valid URL</th><th>Status</th><th>Server IP</th><th>Evidence key</th>
         </tr></thead>
-          <tbody>{(netUrls?.rows ?? []).slice(0, 100).map((r) => <tr key={r.source + ':' + r.host}>
+          <tbody>{(netUrls?.rows ?? []).map((r) => <tr key={r.source + ':' + r.host}>
             <td className="mono" style={{ fontWeight: 700 }}>{r.host}</td>
             <td className="small">{r.source}</td>
             <td className="num">{r.hits.toLocaleString()}</td>

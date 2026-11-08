@@ -182,14 +182,433 @@ def _build_overview() -> tuple[str, list]:
             f"{n.get('network')}={n.get('count')}" for n in (w.get("by_network") or [])[:8]
         )
     txt = (
-        f"CASE-2026-CBTF GCS mirror (whole evidence bucket). Indexed objects: {e.get('total')}; "
+        f"CASE-2026-CBTF — source {config.SOURCE_LABEL} ({config.SOURCE_ID}). "
+        f"Indexed objects: {e.get('total')}; "
         f"enriched: {e.get('enriched_done')} ({e.get('coverage_pct')}%); "
         f"pending OCR: {e.get('pending_now')}; slip backlog: {e.get('slip_backlog')}. "
         f"Payment rows: {n_pay}. Distinct crypto wallets: {w_dist} (hits {w_hits}"
         f"{'; ' + w_net if w_net else ''}). {money} "
         f"Top folders (file counts): {ptxt}."
     )
+    try:
+        _hits = int(w_hits or 0)
+        _cov = float(e.get("coverage_pct") or 0)
+        _backlog = int(e.get("slip_backlog") or 0)
+    except Exception:
+        _hits, _cov, _backlog = 0, 0.0, 0
+    if _hits == 0 and (_cov < 99.9 or _backlog > 0):
+        txt += (
+            f" IMPORTANT: this source currently has 0 extracted wallets, but "
+            f"extraction is only {_cov}% complete with {_backlog:,} slips queued "
+            f"(ETA {e.get('eta_hours')}h). Zero here means NOT YET DECODED, "
+            "not that the bucket contains no crypto wallets."
+        )
+    if _cov < 99.9 or _backlog > 0:
+        txt += (
+            f" DATA COMPLETENESS: only {_cov}% processed with {_backlog:,} slips "
+            "still queued — any zero/partial tally below is INCOMPLETE, not proof "
+            "that the item is absent from the source bucket."
+        )
     return txt, [{"kind": "overview", "ref": "/api/status"}]
+
+
+# ---------- cross-source (peer dashboard) context -------------------------
+# Each dashboard only sees its own SQLite manifest. Officers routinely ask
+# "does port 83 have wallets?" while sitting on port 80 (or vice versa), so
+# the assistant needs the sibling dashboards' live summaries. Peer rows are
+# tiny and cached for a few seconds; no case data leaves the VM.
+
+_SOURCE_PORTS = re.compile(
+    r"\bport\s*(?:#|no\.?|number)?\s*(80|81|82|83)\b", re.I
+)
+_SOURCE_PORT_ALT = re.compile(r"\b(80|81|82|83)\s*(?:port|dashboard)\b", re.I)
+_SOURCE_WORDS = (
+    "port",
+    "peer",
+    "dashboard",
+    "source",
+    "bucket",
+    "s3",
+    "gcs",
+    "mirror",
+    "all sources",
+    "all buckets",
+    "which bucket",
+    "which source",
+    "other bucket",
+    "every source",
+    "each source",
+)
+_WALLET_FAST_WORDS = (
+    "wallet",
+    "crypto",
+    "usdt",
+    "tron",
+    "btc",
+    "bitcoin",
+    "eth",
+    "tether",
+    "binance",
+    "blockchain",
+)
+
+_peer_cache: dict = {}
+_peer_lock = threading.Lock()
+_PEER_TTL = max(
+    10.0,
+    float(__import__("os").environ.get("S3LM_AIASK_PEERS_TTL", "30") or 30),
+)
+
+
+def _local_peer() -> dict:
+    for p in config.PEERS:
+        if p.get("label") == config.SOURCE_LABEL:
+            return p
+    return {"label": config.SOURCE_LABEL, "port": 0}
+
+
+def _wallet_sample(rows: list) -> list[dict]:
+    return [
+        {
+            "address": r.get("address"),
+            "network": r.get("network"),
+            "hits": r.get("hits"),
+            "key": r.get("key"),
+        }
+        for r in (rows or [])[:5]
+    ]
+
+
+def _local_source_row(peer: dict) -> dict:
+    try:
+        w = db.wallet_stats()
+    except Exception:
+        w = {}
+    try:
+        e = db.enrichment_progress()
+    except Exception:
+        e = {}
+    try:
+        total = db.total_count()
+    except Exception:
+        total = None
+    try:
+        sample = db.wallet_distinct(limit=5, sort="hits")
+    except Exception:
+        sample = []
+    return {
+        "port": peer.get("port"),
+        "label": config.SOURCE_LABEL,
+        "bucket_url": config.SOURCE_ID,
+        "objects_total": total,
+        "enrichment": e,
+        "wallets": {
+            "wallet_hits": w.get("wallet_hits", 0),
+            "distinct_wallets": w.get("distinct_wallets", 0),
+            "by_network": w.get("by_network", []),
+            "sample": _wallet_sample(sample),
+        },
+        "reachable": True,
+    }
+
+
+def _fetch_peer_row(peer: dict) -> dict:
+    port = peer.get("port")
+    base = config.PEER_INTERNAL.get(port) or f"http://127.0.0.1:{port}"
+    row = {
+        "port": port,
+        "label": peer.get("label"),
+        "reachable": False,
+    }
+    try:
+        import httpx
+
+        headers = {"x-api-token": config.API_TOKEN}
+        with httpx.Client(timeout=3.0, trust_env=False) as client:
+            sr = client.get(base + "/api/status", headers=headers)
+            sr.raise_for_status()
+            st = sr.json()
+            row.update(
+                {
+                    "label": st.get("source_label") or peer.get("label"),
+                    "bucket_url": st.get("bucket_url"),
+                    "objects_total": st.get("objects_total"),
+                    "enrichment": st.get("enrichment") or {},
+                    "reachable": True,
+                }
+            )
+            try:
+                wr = client.get(
+                    base + "/api/wallets",
+                    params={"limit": 5, "distinct": 1},
+                    headers=headers,
+                )
+                wr.raise_for_status()
+                wd = wr.json()
+                row["wallets"] = {
+                    "wallet_hits": wd.get("wallet_hits_total", 0),
+                    "distinct_wallets": wd.get("distinct_wallets", 0),
+                    "by_network": wd.get("by_network") or [],
+                    "sample": _wallet_sample(wd.get("items") or []),
+                }
+            except Exception:
+                row["wallets"] = {}
+    except Exception as e:
+        row["error"] = str(e)[:120]
+    return row
+
+
+def _peer_rows() -> list[dict]:
+    """Local + sibling dashboard summaries (cached; failures are non-fatal)."""
+    now = time.monotonic()
+    with _peer_lock:
+        cached = _peer_cache.get("rows")
+    if cached and now - cached[0] < _PEER_TTL:
+        return cached[1]
+
+    peers = list(config.PEERS) or [_local_peer()]
+    rows: list = [None] * len(peers)
+    remote: list[tuple[int, dict]] = []
+    for i, p in enumerate(peers):
+        if p.get("label") == config.SOURCE_LABEL:
+            rows[i] = _local_source_row(p)
+        else:
+            remote.append((i, p))
+    if remote:
+        import concurrent.futures as _cf
+
+        with _cf.ThreadPoolExecutor(max_workers=min(4, len(remote))) as pool:
+            futs = {pool.submit(_fetch_peer_row, p): i for i, p in remote}
+            try:
+                for fut in _cf.as_completed(futs, timeout=6):
+                    i = futs[fut]
+                    try:
+                        rows[i] = fut.result()
+                    except Exception as e:
+                        p = peers[i]
+                        rows[i] = {
+                            "port": p.get("port"),
+                            "label": p.get("label"),
+                            "reachable": False,
+                            "error": str(e)[:120],
+                        }
+            except Exception:
+                pass
+        for i, p in remote:
+            if rows[i] is None:
+                rows[i] = {
+                    "port": p.get("port"),
+                    "label": p.get("label"),
+                    "reachable": False,
+                }
+    out = [r for r in rows if r]
+    with _peer_lock:
+        _peer_cache["rows"] = (now, out)
+    return out
+
+
+def _fmt_int(v) -> str:
+    try:
+        return f"{int(v or 0):,}"
+    except Exception:
+        return "0"
+
+
+def _source_line(row: dict) -> str:
+    e = row.get("enrichment") or {}
+    w = row.get("wallets") or {}
+    parts = [
+        f"port {row.get('port')}",
+        str(row.get("label") or "?"),
+        str(row.get("bucket_url") or "?"),
+        f"objects={_fmt_int(row.get('objects_total'))}",
+    ]
+    if e:
+        parts.append(
+            f"enriched={_fmt_int(e.get('enriched_done'))}/{_fmt_int(e.get('total'))}"
+            f" ({e.get('coverage_pct')}%)"
+        )
+        if e.get("slip_backlog") is not None:
+            parts.append(f"slip_backlog={_fmt_int(e.get('slip_backlog'))}")
+    if w:
+        parts.append(
+            f"wallet_hits={_fmt_int(w.get('wallet_hits'))}, "
+            f"distinct_wallets={_fmt_int(w.get('distinct_wallets'))}"
+        )
+        nets = w.get("by_network") or []
+        if nets:
+            parts.append(
+                "networks="
+                + ", ".join(
+                    f"{n.get('network') or '?'}:{_fmt_int(n.get('count'))}" for n in nets
+                )
+            )
+    if not row.get("reachable", True):
+        parts.append("UNREACHABLE")
+    return " · ".join(parts)
+
+
+def _zero_wallet_caveat(row: dict) -> str:
+    w = row.get("wallets") or {}
+    e = row.get("enrichment") or {}
+    try:
+        hits = int(w.get("wallet_hits") or 0)
+        cov = float(e.get("coverage_pct") or 0)
+        backlog = int(e.get("slip_backlog") or 0)
+    except Exception:
+        return ""
+    if hits == 0 and (cov < 99.9 or backlog > 0):
+        return (
+            f"NOTE for port {row.get('port')} ({row.get('label')}): wallet count 0 "
+            f"does NOT mean the bucket has none — extraction is still in progress "
+            f"({cov}% complete, {_fmt_int(backlog)} slips queued, "
+            f"ETA {e.get('eta_hours')}h). Wallet QRs in unprocessed images will "
+            "appear as the queue drains."
+        )
+    return ""
+
+
+def _source_triggered(ql: str) -> bool:
+    if _SOURCE_PORTS.search(ql) or _SOURCE_PORT_ALT.search(ql):
+        return True
+    if any(w in ql for w in _SOURCE_WORDS):
+        return True
+    for p in config.PEERS:
+        label = (p.get("label") or "").lower()
+        if label and label in ql:
+            return True
+    return False
+
+
+def _ctx_sources(ql: str) -> tuple[str, list]:
+    if not _source_triggered(ql):
+        return "", []
+    rows = _peer_rows()
+    if not rows:
+        return "", []
+    lines = [_source_line(r) for r in rows]
+    caveats = [_zero_wallet_caveat(r) for r in rows]
+    txt = (
+        "EVIDENCE SOURCES (all dashboards; answer per source and label the port):\n"
+        + "\n".join(lines)
+    )
+    caveats = [c for c in caveats if c]
+    if caveats:
+        txt += "\n" + "\n".join(caveats)
+    return txt, [{"kind": "sources", "ref": "/api/status"}]
+
+
+def _source_fast_answer(q: str) -> Optional[dict]:
+    """Deterministic source/wallet answers (no model, no quota, no latency).
+
+    Fixes the common failure where an officer on port 83 asks about port 80
+    and the local-only assistant answers 0. Only handles explicit source
+    questions; everything else falls through to the normal AI path.
+    """
+    ql = q.lower()
+    if not any(w in ql for w in _WALLET_FAST_WORDS):
+        return None
+    m = _SOURCE_PORTS.search(q) or _SOURCE_PORT_ALT.search(q)
+    all_sources = any(
+        w in ql
+        for w in (
+            "which bucket",
+            "which source",
+            "which port",
+            "all buckets",
+            "all sources",
+            "each bucket",
+            "every bucket",
+            "compare",
+        )
+    )
+    local = _local_peer()
+    target = None
+    rows = None
+
+    if m:
+        port = int(m.group(1))
+        if port == int(local.get("port") or -1):
+            target = _local_source_row(local)
+        else:
+            rows = _peer_rows()
+            target = next(
+                (r for r in rows if int(r.get("port") or -1) == port), None
+            )
+    elif all_sources:
+        rows = _peer_rows()
+    elif any(
+        w in ql
+        for w in ("this bucket", "the bucket", "evidence bucket", "our bucket")
+    ):
+        target = _local_source_row(local)
+    else:
+        return None
+
+    if m and target is None:
+        return None
+    if target is None and not rows:
+        return None
+    if target is not None and not target.get("reachable", True):
+        return None
+
+    def one(r: dict) -> str:
+        w = r.get("wallets") or {}
+        e = r.get("enrichment") or {}
+        hits = int(w.get("wallet_hits") or 0)
+        dist = int(w.get("distinct_wallets") or 0)
+        lines = [
+            f"Port {r.get('port')} — {r.get('label')} ({r.get('bucket_url') or '?'}):",
+            f"- Wallet hits (all time): {hits:,}",
+            f"- Distinct crypto wallets: {dist:,}",
+        ]
+        nets = w.get("by_network") or []
+        if nets:
+            lines.append(
+                "- By network: "
+                + ", ".join(
+                    f"{n.get('network') or '?'}={int(n.get('count') or 0):,}"
+                    for n in nets
+                )
+            )
+        if e:
+            eta = e.get("eta_hours")
+            lines.append(
+                f"- Extraction: {e.get('coverage_pct')}% enriched, "
+                f"{int(e.get('slip_backlog') or 0):,} slips queued"
+                + (f", ETA ~{eta}h" if eta else "")
+            )
+        if hits == 0:
+            lines.append(
+                "- 0 means extraction is still in progress — NOT that the "
+                "bucket has no crypto wallets."
+            )
+        sample = w.get("sample") or []
+        if sample:
+            lines.append("- Top wallets (most-hit):")
+            for s in sample[:5]:
+                lines.append(
+                    f"  • {s.get('address')} | {s.get('network') or '?'} | "
+                    f"hits={s.get('hits')} | key={s.get('key') or '?'}"
+                )
+            if dist > len(sample):
+                lines.append(
+                    f"  … {dist:,} distinct total; open Crypto Wallets for the full list."
+                )
+        return "\n".join(lines)
+
+    if target is not None:
+        answer = one(target)
+    else:
+        answer = "\n\n".join(one(r) for r in (rows or []))
+    return {
+        "answer": answer,
+        "sources": [
+            {"kind": "sources", "ref": "/api/status"},
+            {"kind": "wallets", "ref": "/api/wallets"},
+        ],
+        "model": "local",
+    }
 
 
 def _ctx_money(q: str) -> tuple[str, list]:
@@ -1143,8 +1562,20 @@ _SYSTEM = (
     "not proof — say so when relevant. If the context lacks the answer, say what "
     "is missing and suggest the exact dashboard page or query to check. "
     "Be concise: short summary first, then 3-8 bullets. Never invent identifiers. "
-    "You have a CASE OVERVIEW of the whole GCS evidence bucket (folder counts, "
-    "OCR coverage, deposit/withdrawal slip totals, unique rails, wallets). Use it. "
+    "You have a CASE OVERVIEW of the local GCS evidence source (folder counts, "
+    "OCR coverage, deposit/withdrawal slip totals, unique rails, wallets) and "
+    "EVIDENCE SOURCES for every sibling dashboard (port, source label, bucket, "
+    "objects, OCR coverage, wallet counts). Use them. "
+    "When the officer names a port/source/dashboard, answer for THAT source and "
+    "label the port; never claim a port is unrecognized — map it via EVIDENCE "
+    "SOURCES. If the officer says 'this bucket', use the local source. "
+    "If a source has wallet_hits=0 but coverage <100% or slip_backlog >0, say "
+    "extraction is still in progress/queued — NEVER that the bucket has no "
+    "crypto wallets. Quote the coverage and backlog as the reason. "
+    "Apply the same rule to any other zero tally (UPIs, rails, payments): call "
+    "it partially processed/not yet decoded when coverage <100% or a backlog "
+    "exists; do not present 0 as absence. "
+    "If WALLETS (live) disagrees with the cached overview, prefer WALLETS. "
     "If the officer asks what is in the bucket, list the top folders from overview. "
     "Numbers under EXACT MATH are exact database results — quote them verbatim, "
     "never recompute or round them. Wallet addresses, rail handles, ledger rows "
@@ -1183,6 +1614,9 @@ def ask(question: str, store: Any) -> dict:
             "sources": [],
             "model": "local",
         }
+    fast = _source_fast_answer(q)
+    if fast:
+        return fast
     if not (config.GEMINI_ENABLED or config.GROQ_ENABLED):
         return {
             "answer": "AI assistant is offline — set the Gemini or Groq key on the VM first.",
@@ -1206,8 +1640,12 @@ def ask(question: str, store: Any) -> dict:
         sources += img_src
 
     t, s = _ctx_overview()
-    ctx_parts.insert(0, "CASE OVERVIEW (whole bucket):\n" + t)
+    ctx_parts.insert(0, "CASE OVERVIEW (local source):\n" + t)
     sources += s
+    src_txt, src = _ctx_sources(ql)
+    if src_txt:
+        ctx_parts.append(src_txt)
+        sources += src
     if any(
         w in ql
         for w in (
