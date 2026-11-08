@@ -3382,7 +3382,12 @@ class EnrichmentWorker:
             # Generous on purpose — aborting only error-counts keys for a
             # later bounded retry, it never drops them silently.
             per_worker = (len(tasks) + max(1, workers) - 1) // max(1, workers)
-            decode_timeout = max(3600.0, 150.0 * per_worker)
+            # A wedged child (corrupt image / stuck tesseract) used to hold the
+            # whole drain for an HOUR because this bound was max(3600, ...).
+            # 96 slips at 4 workers are ~5 min of real OCR; anything past 10
+            # minutes is wedged, so abort, rebuild the pool, and error-count the
+            # batch for a bounded retry.
+            decode_timeout = min(600.0, max(120.0, 60.0 * per_worker))
             t_dec = _t.monotonic()
             try:
                 results = list(

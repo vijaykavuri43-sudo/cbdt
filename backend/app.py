@@ -3,12 +3,14 @@
 import asyncio
 from datetime import datetime, timedelta
 import csv
+import faulthandler
 import hashlib
 import io
 import json
 import mimetypes
 import os
 import re
+import signal
 import threading
 import time
 from pathlib import Path
@@ -280,6 +282,13 @@ def startup():
     for d in config.ensure_dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
     db.connect()
+    # Stack dump on demand: `docker exec s3lm kill -USR1 <worker-pid>` writes
+    # every thread's stack to the log. The 2026-11-08 stall (drains=0 while the
+    # owner burned CPU) was invisible without it.
+    try:
+        faulthandler.register(signal.SIGUSR1, all_threads=True)
+    except Exception:
+        pass
     print(f"[gate] enabled; access key stored at {config.TOKEN_FILE}")
     if os.environ.get("S3LM_WAL_GUARD", "1") != "0":
         threading.Thread(target=_wal_guard, daemon=True, name="wal-guard").start()

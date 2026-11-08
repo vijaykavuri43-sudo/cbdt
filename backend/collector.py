@@ -580,6 +580,11 @@ class Collector:
         the ~1M backlog. Alternates with enrich_loop on the same drain lock."""
         if not self.enricher:
             return
+        # Slip-first: both specific drains share _specific_lock. The wallet
+        # batch (96 hint images) used to grab it at boot and run for ~7 min,
+        # so the 24h deposit/withdrawal slips never got a turn.
+        if self._stop.wait(30):
+            return
         while not self._stop.is_set():
             try:
                 keys = db.pending_wallets(96)
@@ -591,7 +596,7 @@ class Collector:
                     )
             except Exception:
                 pass
-            self._stop.wait(20.0)
+            self._stop.wait(60.0)
 
     def slip_loop(self):
         """Gambler-slip drain: deposit/withdrawal/payment images newest-first.
@@ -608,8 +613,10 @@ class Collector:
                     self.enricher.drain_specific(
                         keys, workers=max(1, config.ENRICH_WORKERS // 2)
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                # Never silently spin: a broken pending query looked identical
+                # to "no work" and hid the 24h-card stall for hours.
+                print(f"[slip-loop] error: {e}"[:300], flush=True)
             self._stop.wait(config.SLIP_INTERVAL_SEC)
 
     def start_background(self):
@@ -659,8 +666,9 @@ class Collector:
         threading.Thread(target=self.full_sweep, daemon=True, name="sweep").start()
         threading.Thread(target=self.poll_loop, daemon=True, name="poll").start()
         threading.Thread(target=self.enrich_loop, daemon=True, name="enrich").start()
-        threading.Thread(target=self.wallet_loop, daemon=True, name="wallet").start()
+        # Slip first: deterministic lock winner for the 24h briefing cards.
         threading.Thread(target=self.slip_loop, daemon=True, name="slip").start()
+        threading.Thread(target=self.wallet_loop, daemon=True, name="wallet").start()
 
         def payment_index():
             try:

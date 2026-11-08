@@ -29,7 +29,7 @@ services:
       # MUST be updated if the VM is ever recreated with a new external IP.
       - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL:-http://8.231.108.145}
       - S3LM_ENRICH_MAX_AGE_HOURS=0
-      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-6}
+      - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-8}
       - S3LM_ENRICH_BATCH=${S3LM_ENRICH_BATCH:-96}
       - OMP_THREAD_LIMIT=1
       # Gemini Vision verify (key lives ONLY in the VM .env, never in git)
@@ -66,8 +66,8 @@ services:
       # starving sync notifies + dashboard reads until the app hangs. Smaller
       # batches bound the lock hold; the claim registry dedups overlap.
       - S3LM_SLIP_OCR=${S3LM_SLIP_OCR:-1}
-      - S3LM_SLIP_BATCH=${S3LM_SLIP_BATCH:-64}
-      - S3LM_SLIP_INTERVAL_SEC=${S3LM_SLIP_INTERVAL_SEC:-30}
+      - S3LM_SLIP_BATCH=${S3LM_SLIP_BATCH:-96}
+      - S3LM_SLIP_INTERVAL_SEC=${S3LM_SLIP_INTERVAL_SEC:-5}
       - S3LM_INTELLIGENCE_ROOT=/app/intelligence
       - S3LM_REFERENCE_ROOT=/app/intelligence
     volumes:
