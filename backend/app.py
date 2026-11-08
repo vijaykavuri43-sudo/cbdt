@@ -2122,7 +2122,7 @@ def enrich_repair_fetch_misses(
     automatically on every startup; this endpoint is the manual re-run.
     """
     try:
-        return db.requeue_fetch_misses(limit=limit)
+        return db.requeue_fetch_misses(limit=limit, force=True)
     except Exception as e:
         raise HTTPException(500, f"repair-fetch-misses failed: {e}")
 

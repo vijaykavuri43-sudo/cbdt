@@ -1125,27 +1125,47 @@ def mark_enrichment_error(key: str, error: str):
         c.commit()
 
 
-def requeue_fetch_misses(limit: int = 200000) -> dict:
+def requeue_fetch_misses(limit: int = 200000, force: bool = False) -> dict:
     """Revive rows poisoned by the pre-fix 5-attempt fetch budget.
 
     Rows with enriched=1, no payload, and a fetch-miss error went terminal
     while the GCS mirror was still catching up — the bytes are (now)
     fetchable but no queue will ever select them. Reset them to pending
     with a fresh attempt budget so the live/slip loops pick them up.
-    Returns counts; capped by limit. Safe to run on every startup.
+
+    2026-11-08: `enrich_error LIKE` is not indexable, so the startup UPDATE
+    full-scanned 2.47M rows while holding the global writer lock (another
+    4+ minute enrichment stall). Select candidates on a read connection,
+    take the lock only for the rowid updates, and record completion so later
+    startups skip it. The manual endpoint passes force=True.
     """
-    with _writer_lock:
-        c = connect()
-        cur = c.execute(
-            "UPDATE objects SET enriched=0, enrich_attempts=0, "
-            "enrich_retry_utc=NULL WHERE rowid IN ("
+    if not force and get_meta("fetch_requeue_v1") == "done":
+        return {"requeued": 0, "limit": limit, "skipped": True}
+    rowids = [
+        r["rowid"]
+        for r in connect().execute(
             "SELECT rowid FROM objects WHERE enriched=1 "
             "AND extract_json IS NULL AND enrich_error LIKE 'fetch%' "
-            "LIMIT ?)",
+            "LIMIT ?",
             (limit,),
-        )
-        c.commit()
-        return {"requeued": cur.rowcount, "limit": limit}
+        ).fetchall()
+    ]
+    requeued = 0
+    if rowids:
+        with _writer_lock:
+            c = connect()
+            for start in range(0, len(rowids), 1000):
+                chunk = rowids[start : start + 1000]
+                marks = ",".join("?" * len(chunk))
+                cur = c.execute(
+                    "UPDATE objects SET enriched=0, enrich_attempts=0, "
+                    f"enrich_retry_utc=NULL WHERE rowid IN ({marks})",
+                    chunk,
+                )
+                requeued += cur.rowcount
+            c.commit()
+    set_meta("fetch_requeue_v1", "done")
+    return {"requeued": requeued, "limit": limit}
 
 
 def pending_enrichment(limit: int = 20, full_scan: bool = False) -> list[str]:
@@ -1919,43 +1939,57 @@ def payment_row_count() -> int:
     )
 
 
-def sanitize_stored_amounts() -> dict:
+def sanitize_stored_amounts(force: bool = False) -> dict:
     """One-time repair of amounts already persisted by pre-fix extraction.
 
     The QR `am=` path had no plausibility bound, so UTR/reference values got
     stored as amounts and inflated the Overview totals. We null those in
     place (keeping the raw value flagged for audit), rebuild the payment rows,
     and re-materialize the money-flow summaries.
+
+    2026-11-08: this json_extract sweep ran under the global writer lock at
+    every startup. Read/decide off-lock, write only the fixes under the lock
+    with an optimistic extract_json guard, then record completion so later
+    startups skip the sweep (force=True re-runs it after a restore).
     """
-    cleared = 0
-    with _writer_lock:
-        c = connect()
-        rows = c.execute(
-            "SELECT key, extract_json FROM objects WHERE extract_json IS NOT NULL"
-            " AND json_extract(extract_json,'$.kind') IN ('deposit','withdrawal')"
-            " AND json_extract(extract_json,'$.amount_inr') IS NOT NULL"
-            " AND NOT (json_extract(extract_json,'$.amount_inr') BETWEEN 0.01 AND ?)",
-            (MAX_AMOUNT_INR,),
-        ).fetchall()
-        for r in rows:
-            try:
-                p = json.loads(r["extract_json"])
-            except Exception:
-                continue
-            raw = p.get("amount_inr")
-            if _sanitize_amount(raw) is not None:
-                continue
-            p["amount_rejected_inr"] = raw
-            p["amount_inr"] = None
-            c.execute(
-                "UPDATE objects SET extract_json=? WHERE key=?",
-                (json.dumps(p, ensure_ascii=False), r["key"]),
-            )
-            _replace_payment_rows(c, r["key"], p)
-            cleared += 1
-        c.commit()
+    if not force and get_meta("amount_sanitize_v1") == "done":
+        return {"impossible_amounts_cleared": 0, "skipped": True}
+    rows = connect().execute(
+        "SELECT key, extract_json FROM objects WHERE extract_json IS NOT NULL"
+        " AND json_extract(extract_json,'$.kind') IN ('deposit','withdrawal')"
+        " AND json_extract(extract_json,'$.amount_inr') IS NOT NULL"
+        " AND NOT (json_extract(extract_json,'$.amount_inr') BETWEEN 0.01 AND ?)",
+        (MAX_AMOUNT_INR,),
+    ).fetchall()
+    fixes: list[tuple[str, dict, str]] = []
+    for r in rows:
+        try:
+            p = json.loads(r["extract_json"])
+        except Exception:
+            continue
+        raw = p.get("amount_inr")
+        if _sanitize_amount(raw) is not None:
+            continue
+        p["amount_rejected_inr"] = raw
+        p["amount_inr"] = None
+        fixes.append((r["key"], p, r["extract_json"]))
+    if fixes:
+        with _writer_lock:
+            c = connect()
+            for key, payload, original in fixes:
+                cur = c.execute(
+                    "UPDATE objects SET extract_json=? "
+                    "WHERE key=? AND extract_json=?",
+                    (json.dumps(payload, ensure_ascii=False), key, original),
+                )
+                if cur.rowcount:
+                    _replace_payment_rows(c, key, payload)
+            c.commit()
+    set_meta("amount_sanitize_v1", "done")
+    if not fixes:
+        return {"impossible_amounts_cleared": 0, "skipped": True}
     totals = refresh_payment_summaries()
-    return {"impossible_amounts_cleared": cleared, **totals}
+    return {"impossible_amounts_cleared": len(fixes), **totals}
 
 
 def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
