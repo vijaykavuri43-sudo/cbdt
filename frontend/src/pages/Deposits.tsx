@@ -61,7 +61,7 @@ export function Deposits() {
       q: query,
       limit: 200,
       offset: 0,
-    })
+    }, 90000)
       .then((muleRails) => {
         setMules(muleRails)
         setUpdated(new Date().toLocaleTimeString())

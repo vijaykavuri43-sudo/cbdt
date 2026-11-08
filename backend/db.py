@@ -339,6 +339,20 @@ CREATE TABLE IF NOT EXISTS wallet_hits(
 );
 CREATE INDEX IF NOT EXISTS idx_wh_lm ON wallet_hits(last_modified DESC);
 CREATE INDEX IF NOT EXISTS idx_wh_addr_lm ON wallet_hits(address, last_modified DESC);
+CREATE TABLE IF NOT EXISTS upi_hits(
+  key TEXT PRIMARY KEY,
+  vpa TEXT NOT NULL,
+  last_modified TEXT DEFAULT '',
+  seen_utc TEXT DEFAULT '',
+  kind TEXT DEFAULT '',
+  sender_only INTEGER DEFAULT 0,
+  has_bene INTEGER DEFAULT 0,
+  has_sender INTEGER DEFAULT 0,
+  amount_inr REAL,
+  payee_name TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_uh_lm ON upi_hits(last_modified DESC);
+CREATE INDEX IF NOT EXISTS idx_uh_vpa_lm ON upi_hits(vpa, last_modified DESC);
 CREATE TABLE IF NOT EXISTS utr_identity(
   utr TEXT PRIMARY KEY,
   gambler TEXT DEFAULT '',
@@ -977,6 +991,131 @@ def _sync_wallet_hits(c: sqlite3.Connection, key: str, payload: dict | None) -> 
     return len(seen_addrs)
 
 
+def _sync_upi_hits(
+    c: sqlite3.Connection,
+    key: str,
+    payload: dict | None,
+    last_modified: str | None = None,
+    seen_utc: str | None = None,
+) -> int:
+    """Write-through UPI index; caller holds _writer_lock."""
+    c.execute("DELETE FROM upi_hits WHERE key=?", (key,))
+    if not isinstance(payload, dict):
+        return 0
+    kind = str(payload.get("kind") or "")
+    vpa = str(payload.get("vpa") or "").strip().lower()
+    if kind not in ("qr", "deposit") or not vpa:
+        return 0
+    has_sender = has_bene = 0
+    for d in payload.get("vpa_details") or []:
+        if not isinstance(d, dict):
+            continue
+        if str(d.get("vpa") or "").strip().lower() != vpa:
+            continue
+        role = str(d.get("role") or "")
+        if role == "sender":
+            has_sender = 1
+        elif role == "beneficiary":
+            has_bene = 1
+    if last_modified is None or seen_utc is None:
+        meta = c.execute(
+            "SELECT last_modified,seen_utc FROM objects WHERE key=?", (key,)
+        ).fetchone()
+        last_modified = (meta["last_modified"] if meta else "") or ""
+        seen_utc = (meta["seen_utc"] if meta else "") or ""
+    amount = payload.get("amount_inr")
+    if not isinstance(amount, (int, float)):
+        amount = None
+    c.execute(
+        "INSERT OR REPLACE INTO upi_hits(key,vpa,last_modified,seen_utc,kind,"
+        "sender_only,has_bene,has_sender,amount_inr,payee_name)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (
+            key,
+            vpa,
+            last_modified or "",
+            seen_utc or "",
+            kind,
+            1 if (has_sender and not has_bene) else 0,
+            has_bene,
+            has_sender,
+            amount,
+            str(payload.get("payee_name") or ""),
+        ),
+    )
+    return 1
+
+
+def backfill_upi_hits(batch: int = 20000) -> int:
+    """One-time newest-first seed of upi_hits; write-through keeps it live."""
+    set_meta("upi_index_v1", "building")
+    total = 0
+    last_lm: str | None = None
+    last_key: str | None = None
+    select = (
+        "SELECT key,last_modified,seen_utc,extract_json FROM objects"
+        " WHERE extract_json IS NOT NULL"
+        " AND json_extract(extract_json,'$.kind') IN ('qr','deposit')"
+        " AND json_extract(extract_json,'$.vpa') IS NOT NULL"
+    )
+    while True:
+        c = connect()
+        if last_lm is None:
+            rows = c.execute(
+                select + " ORDER BY last_modified DESC,key DESC LIMIT ?", (batch,)
+            ).fetchall()
+        else:
+            rows = c.execute(
+                select
+                + " AND (last_modified < ? OR (last_modified = ? AND key < ?))"
+                " ORDER BY last_modified DESC,key DESC LIMIT ?",
+                (last_lm, last_lm, last_key, batch),
+            ).fetchall()
+        if not rows:
+            break
+        last_lm = rows[-1]["last_modified"]
+        last_key = rows[-1]["key"]
+        items: list[tuple[sqlite3.Row, dict]] = []
+        for r in rows:
+            try:
+                p = json.loads(r["extract_json"])
+            except Exception:
+                continue
+            if p.get("kind") not in ("qr", "deposit") or not p.get("vpa"):
+                continue
+            items.append((r, p))
+        if items:
+            with _writer_lock:
+                wc = connect()
+                for r, p in items:
+                    try:
+                        total += (
+                            _sync_upi_hits(
+                                wc,
+                                r["key"],
+                                p,
+                                r["last_modified"],
+                                r["seen_utc"],
+                            )
+                            or 0
+                        )
+                    except Exception:
+                        continue
+                wc.commit()
+        if len(rows) < batch:
+            break
+        time.sleep(0.05)
+    set_meta("upi_index_v1", "ready")
+    return total
+
+
+def upi_index_state() -> str:
+    try:
+        return str(get_meta("upi_index_v1") or "")
+    except Exception:
+        return ""
+
+
 def backfill_wallet_hits(batch: int = 20000) -> int:
     """One-time seed of wallet_hits from existing payloads (batched by rowid).
 
@@ -1054,6 +1193,7 @@ def mark_enriched(key: str, payload: dict | None):
         if payload:
             _replace_payment_rows(c, key, payload)
             _sync_wallet_hits(c, key, payload)
+            _sync_upi_hits(c, key, payload)
         c.commit()
 
 
@@ -1093,6 +1233,7 @@ def persist_enriched_batch(items: list[tuple[str, dict | None]]) -> int:
             if payload:
                 _replace_payment_rows(c, key, payload)
                 _sync_wallet_hits(c, key, payload)
+                _sync_upi_hits(c, key, payload)
             done += 1
         c.commit()
     return done
@@ -2018,6 +2159,7 @@ def sanitize_stored_amounts(force: bool = False) -> dict:
                 )
                 if cur.rowcount:
                     _replace_payment_rows(c, key, payload)
+                    _sync_upi_hits(c, key, payload)
             c.commit()
     set_meta("amount_sanitize_v1", "done")
     if not fixes:
@@ -2098,6 +2240,7 @@ def repair_twin_artifacts(dry_run: bool = True, limit: int = 20000) -> dict:
                     (json.dumps(p, ensure_ascii=False), key),
                 )
                 _replace_payment_rows(wc, key, p)
+                _sync_upi_hits(wc, key, p)
             wc.commit()
     totals = {} if dry_run else refresh_payment_summaries()
     return {
@@ -2355,6 +2498,7 @@ def repair_malformed_amounts(dry_run: bool = True, limit: int = 20000) -> dict:
                     (json.dumps(p, ensure_ascii=False), key),
                 )
                 _replace_payment_rows(wc, key, p)
+                _sync_upi_hits(wc, key, p)
             wc.commit()
     totals = {} if dry_run else refresh_payment_summaries()
     return {
@@ -2553,6 +2697,7 @@ def repair_txid_wallets(
                     (json.dumps(p, ensure_ascii=False), key),
                 )
                 _sync_wallet_hits(wc, key, p)
+                _sync_upi_hits(wc, key, p)
             wc.commit()
     return {
         "scanned": scanned,
@@ -2763,6 +2908,7 @@ def apply_source_wallet_reads(corrections: list[dict], dry_run: bool = True) -> 
                     (json.dumps(p, ensure_ascii=False), key),
                 )
                 _sync_wallet_hits(wc, key, p)
+                _sync_upi_hits(wc, key, p)
             wc.commit()
     return {
         "corrections": len(corrections or []),
@@ -4084,6 +4230,95 @@ def _vpa_sender_only_row_filter() -> str:
     return f"NOT {_vpa_sender_only_row_expr()}"
 
 
+def _vpa_junk_index_clause() -> tuple[str, list]:
+    return (
+        "".join(" AND lower(vpa) NOT LIKE ?" for _ in _VPA_JUNK_PATTERNS),
+        [p.lower() for p in _VPA_JUNK_PATTERNS],
+    )
+
+
+def _vpa_exclude_index_clause(exclude: Collection[str] = ()) -> tuple[str, list]:
+    exc = sorted({str(v).lower() for v in exclude if v})
+    if not exc:
+        return "", []
+    return (" AND vpa NOT IN (" + ",".join("?" for _ in exc) + ")", exc)
+
+
+def _upi_counts_index(
+    exclude: Collection[str] = (), which: str = "both", hide_senders: bool = True
+) -> dict:
+    c = connect()
+    jclause, jargs = _vpa_junk_index_clause()
+    xclause, xargs = _vpa_exclude_index_clause(exclude)
+    base = " FROM upi_hits WHERE 1=1" + jclause + xclause
+    args = jargs + xargs
+    feed_total = distinct_total = 0
+    if which in ("both", "feed"):
+        rowf = " AND sender_only=0" if hide_senders else ""
+        feed_total = c.execute("SELECT COUNT(*)" + base + rowf, args).fetchone()[0]
+    if which in ("both", "distinct"):
+        if hide_senders:
+            distinct_total = c.execute(
+                "SELECT COUNT(*) FROM (SELECT vpa"
+                + base
+                + " GROUP BY vpa HAVING NOT (SUM(has_sender)>0 AND SUM(has_bene)=0))",
+                args,
+            ).fetchone()[0]
+        else:
+            distinct_total = c.execute(
+                "SELECT COUNT(DISTINCT vpa)" + base, args
+            ).fetchone()[0]
+    return {"feed_total": feed_total, "distinct_total": distinct_total}
+
+
+def _upi_distinct_index(
+    limit: int = 300,
+    offset: int = 0,
+    exclude: Collection[str] = (),
+    hide_senders: bool = True,
+) -> list[dict]:
+    jclause, jargs = _vpa_junk_index_clause()
+    xclause, xargs = _vpa_exclude_index_clause(exclude)
+    hclause = (
+        " AND NOT (has_sender=1 AND COALESCE(has_bene,0)=0)"
+        if hide_senders
+        else ""
+    )
+    rows = (
+        connect()
+        .execute(
+            f"""
+        SELECT vpa, slips, total_inr, with_amount, first_seen, last_seen,
+               key, payee_name, amount_inr, last_modified,
+               CASE WHEN has_qr=1 AND has_dep=1 THEN 'qr+deposit'
+                    WHEN has_qr=1 THEN 'qr' ELSE 'deposit' END AS origin,
+               has_bene, has_sender
+        FROM (
+          SELECT vpa, key, payee_name, amount_inr, last_modified,
+                 ROW_NUMBER() OVER (PARTITION BY vpa ORDER BY last_modified DESC) rn,
+                 COUNT(*) OVER (PARTITION BY vpa) slips,
+                 SUM(amount_inr) OVER (PARTITION BY vpa) total_inr,
+                 SUM(CASE WHEN amount_inr IS NOT NULL THEN 1 ELSE 0 END)
+                   OVER (PARTITION BY vpa) with_amount,
+                 MIN(last_modified) OVER (PARTITION BY vpa) first_seen,
+                 MAX(last_modified) OVER (PARTITION BY vpa) last_seen,
+                 MAX(CASE WHEN kind='qr' THEN 1 ELSE 0 END)
+                   OVER (PARTITION BY vpa) has_qr,
+                 MAX(CASE WHEN kind='deposit' THEN 1 ELSE 0 END)
+                   OVER (PARTITION BY vpa) has_dep,
+                 MAX(has_bene) OVER (PARTITION BY vpa) has_bene,
+                 MAX(has_sender) OVER (PARTITION BY vpa) has_sender
+          FROM upi_hits WHERE 1=1{jclause}{xclause}
+        ) WHERE rn=1{hclause}
+        ORDER BY last_seen DESC LIMIT ? OFFSET ?
+        """,
+            (*jargs, *xargs, limit, offset),
+        )
+        .fetchall()
+    )
+    return [dict(r) for r in rows]
+
+
 def upi_feed(
     limit: int = 300,
     offset: int = 0,
@@ -4147,6 +4382,8 @@ def upi_distinct(
     counterparties) are hidden by default via the has_sender/has_bene window
     flags; has_sender is also returned so mixed rows badge "also seen as
     sender". Unknowns (no role tags) are kept for triage."""
+    if upi_index_state() in ("building", "ready"):
+        return _upi_distinct_index(limit, offset, exclude, hide_senders)
     xclause, xargs = _vpa_exclude_clause(exclude)
     part = "PARTITION BY LOWER(json_extract(extract_json,'$.vpa'))"
     rows = (
@@ -4234,6 +4471,8 @@ def upi_counts(
     hide_senders=True (default) drops sender-only rows/VPAs from both totals
     so cards and pages agree with the filtered tab.
     """
+    if upi_index_state() in ("building", "ready"):
+        return _upi_counts_index(exclude, which, hide_senders)
     xclause, xargs = _vpa_exclude_clause(exclude)
     c = connect()
     base = (
@@ -4722,6 +4961,7 @@ def merge_object_wallets(key: str, wallets: list[dict], kind: str) -> int:
                 (json.dumps(payload, ensure_ascii=False), now, key),
             )
             _sync_wallet_hits(c, key, payload)
+            _sync_upi_hits(c, key, payload)
             c.commit()
     return added
 

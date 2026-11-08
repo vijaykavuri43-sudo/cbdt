@@ -591,6 +591,10 @@ def _ist_str(utc_iso) -> str:
         return ""
 
 
+def enrichment_progress_cached() -> dict:
+    return cached("enrichment-progress", 60.0, db.enrichment_progress)
+
+
 def _build_status():
     st = dict(collector.state)
     try:
@@ -607,7 +611,7 @@ def _build_status():
     st["prefixes"] = (
         db.get_meta("prefixes") or "\n".join(config.DEFAULT_PREFIXES)
     ).splitlines()
-    st["enrichment"] = db.enrichment_progress()
+    st["enrichment"] = enrichment_progress_cached()
     st["last_poll_ist"] = _ist_str(st.get("last_poll_utc"))
     st["started_ist"] = _ist_str(st.get("started_utc"))
     st["gemini_enabled"] = config.GEMINI_ENABLED
@@ -2471,7 +2475,7 @@ def mule_rails_api(
         )
         return raw
 
-    return cached(cache_key, 15.0, build)
+    return cached(cache_key, 300.0, build)
 
 
 @app.get("/api/mule-rails-window")
@@ -3264,7 +3268,7 @@ def export_payout_accounts(_=Depends(auth)):
 def extraction_status(_=Depends(auth)):
     """Explicit extraction/backfill status so sync and OCR progress are not conflated."""
     return {
-        **db.enrichment_progress(),
+        **enrichment_progress_cached(),
         "payment_rows": db.payment_row_count(),
         "workers": config.ENRICH_WORKERS,
         "batch": config.ENRICH_BATCH,
@@ -3521,7 +3525,7 @@ def wallets_api(
     # holds most wallet-bearing deposit/withdrawal images) — never the
     # live-queue-only figure that reads 0 while 500k+ slips await decode.
     try:
-        enr = db.enrichment_progress()
+        enr = enrichment_progress_cached()
         _live = enr.get("pending_now") or 0
         _slip = enr.get("slip_backlog") or 0
         extraction_status = {

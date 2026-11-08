@@ -786,6 +786,35 @@ class Collector:
             target=wallet_backfill, daemon=True, name="wallet-backfill"
         ).start()
 
+        def upi_backfill():
+            # Materialized UPI index: the UPI tab's distinct/window queries
+            # scanned 1.3M JSON payloads (60s+ each). Seed newest-first so the
+            # tab shows recent VPAs while the background fill completes.
+            try:
+                if db.upi_index_state() == "ready":
+                    return
+                db.set_meta("upi_index_v1", "building")
+                n = db.backfill_upi_hits()
+                if n:
+                    evidence.append_collection_log(
+                        {
+                            "event": "monitor_upi_backfill",
+                            "method": "one-time upi_hits seeding for indexed reads",
+                            "counts": {"hits": n},
+                        }
+                    )
+            except Exception as exc:
+                evidence.append_collection_log(
+                    {
+                        "event": "monitor_upi_backfill_error",
+                        "error": str(exc)[:300],
+                    }
+                )
+
+        threading.Thread(
+            target=upi_backfill, daemon=True, name="upi-backfill"
+        ).start()
+
     def stop(self):
         self._stop.set()
         if self.enricher:

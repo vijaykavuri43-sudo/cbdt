@@ -40,7 +40,7 @@ export function Ledger() {
   const refresh = useCallback(() => {
     setError('')
     api<Summary>('/api/ledger/summary').then(setData).catch((e) => setError(String(e)))
-    api<Gateway>('/api/gateway/summary').then(setGw).catch(() => {})
+    api<Gateway>('/api/gateway/summary', undefined, 90000).then(setGw).catch(() => {})
   }, [])
   useEffect(refresh, [refresh])
 
