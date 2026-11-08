@@ -187,7 +187,14 @@ def checkpoint(truncate: bool = False) -> dict:
     """
     mode = "TRUNCATE" if truncate else "PASSIVE"
     try:
-        with _writer_lock:
+        if truncate:
+            with _writer_lock:
+                row = connect().execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
+        else:
+            # PASSIVE never blocks readers/writers, so it must not queue behind
+            # the global writer lock. Called after EVERY drain; taking the lock
+            # here let a startup backfill stall the 24h slip loop at its final
+            # checkpoint (observed 2026-11-08).
             row = connect().execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
         if row:
             return {"mode": mode, "busy": row[0], "frames": row[1], "done": row[2]}
@@ -673,13 +680,26 @@ def prefix_stats() -> list[dict]:
 
 def refresh_prefix_stats() -> int:
     """Materialize per-prefix inventory (called ~minutely; served by prefix_stats)."""
+    # Aggregate off-lock (read-only), then take the writer lock only for the
+    # atomic cache replacement. Holding the lock across the GROUP BY scan let
+    # this minutely job add to write starvation on the 2.47M-row table.
+    rows = (
+        connect()
+        .execute(
+            "SELECT top_prefix p,COUNT(*) n,SUM(size) s,MAX(last_modified) newest,"
+            " strftime('%Y-%m-%dT%H:%M:%SZ','now') refreshed_utc"
+            " FROM objects GROUP BY top_prefix"
+        )
+        .fetchall()
+    )
+    data = [tuple(r) for r in rows]
     with _writer_lock:
         c = connect()
         c.execute("DELETE FROM prefix_stats_cache")
-        c.execute(
+        c.executemany(
             "INSERT INTO prefix_stats_cache(p,n,s,newest,refreshed_utc)"
-            " SELECT top_prefix,COUNT(*),SUM(size),MAX(last_modified),"
-            " strftime('%Y-%m-%dT%H:%M:%SZ','now') FROM objects GROUP BY top_prefix"
+            " VALUES(?,?,?,?,?)",
+            data,
         )
         c.commit()
         return c.execute("SELECT COUNT(*) n FROM prefix_stats_cache").fetchone()["n"]
@@ -1466,30 +1486,44 @@ def day_histogram(days: int = 14) -> list[dict]:
     return out
 
 
-def backfill_ext(batch: int = 20000, max_batches: int = 0) -> int:
+def backfill_ext(batch: int = 20000, max_batches: int = 0, force: bool = False) -> int:
     """Fill ext for rows inserted before the column existed.
 
     Runs in a background thread at startup; each batch is one indexed UPDATE.
     Returns number of rows stamped. max_batches=0 -> until done.
+
+    2026-11-08: `ext=''` cannot use the partial idx_obj_ext (WHERE ext != ''),
+    so the final empty SELECT full-scanned 2.47M rows/10GB WHILE HOLDING the
+    global writer lock — every restart blocked persist, sync notices, poll
+    upserts and the slip checkpoint for 10+ minutes. Read candidates off-lock,
+    write only real rows under the lock, and record one completed pass so later
+    startups skip the scan entirely (force=True re-runs after a restore).
     """
+    if not force and get_meta("ext_backfill_v1") == "done":
+        return 0
     total = 0
     batches = 0
     while True:
-        with _writer_lock:
-            c = connect()
-            rows = c.execute(
-                "SELECT key FROM objects WHERE ext = '' AND key LIKE '%.%' AND key NOT LIKE '%/' LIMIT ?",
-                (batch,),
-            ).fetchall()
-            if not rows:
-                break
-            data = [(file_ext(r["key"]), r["key"]) for r in rows]
-            c.executemany("UPDATE objects SET ext=? WHERE key=?", data)
-            c.commit()
-        total += len(rows)
+        c = connect()
+        rows = c.execute(
+            "SELECT key FROM objects WHERE ext = '' AND key LIKE '%.%' AND key NOT LIKE '%/' LIMIT ?",
+            (batch,),
+        ).fetchall()
+        if not rows:
+            break
+        # "none" (not "") for odd keys such as a trailing dot: stamping an
+        # empty ext would re-select the same row forever.
+        data = [(file_ext(r["key"]) or "none", r["key"]) for r in rows]
+        if data:
+            with _writer_lock:
+                w = connect()
+                w.executemany("UPDATE objects SET ext=? WHERE key=?", data)
+                w.commit()
+        total += len(data)
         batches += 1
         if max_batches and batches >= max_batches:
             break
+    set_meta("ext_backfill_v1", "done")
     return total
 
 
