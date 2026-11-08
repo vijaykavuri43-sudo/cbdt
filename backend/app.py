@@ -341,6 +341,12 @@ def startup():
             print("[warmup] ledger+gateway summaries prebuilt")
         except Exception as e:
             print(f"[warmup] summary prebuild failed: {e}")
+        try:
+            from . import aiask
+            aiask.warm()
+            print("[warmup] AI investigator overview prebuilt")
+        except Exception as e:
+            print(f"[warmup] AI overview prebuild failed: {e}")
 
     threading.Thread(target=_warm, daemon=True, name="summary-warmup").start()
 

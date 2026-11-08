@@ -919,5 +919,15 @@ class ExportRailsTests(unittest.TestCase):
         self.assertEqual(data["solo@okaxis"][idx["priority"]], "lead")
 
 
+class AskFastPathTests(unittest.TestCase):
+    def test_greeting_returns_locally_without_gemini(self):
+        from . import aiask
+
+        out = aiask.ask("Hi", None)
+        self.assertEqual(out["model"], "local")
+        self.assertEqual(out["sources"], [])
+        self.assertIn("Hello Officer", out["answer"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,17 @@ _consec_fail = 0
 _cooldown_until = 0.0
 _stats = {"calls": 0, "ok": 0, "errors": 0, "capped": 0, "limited": 0, "last_error": ""}
 _minute_hits: deque = deque()
+_overview_cache: Optional[tuple[float, str, list]] = None
+_ov_lock = threading.Lock()
+_OVERVIEW_TTL = max(
+    30.0,
+    float(__import__("os").environ.get("S3LM_AIASK_OVERVIEW_TTL", "600") or 600),
+)
+_GREETING_RE = re.compile(
+    r"^(hi|hello|hey|hiya|yo|thanks|thank you|ok|okay|"
+    r"good (morning|afternoon|evening))[!.\s]*$",
+    re.I,
+)
 
 # Officer Q&A deliberately uses gemini-2.5-flash, NOT the enrich pair
 # (3.8-flash + lite fallback): free-tier quota is 20 req/day/MODEL, and the
@@ -110,6 +121,32 @@ def _note(ok: bool, err: str = ""):
 
 
 def _ctx_overview() -> tuple[str, list]:
+    """Cached whole-bucket overview (heavy: wallets, prefix + money scans).
+
+    The first build costs 20-30s on a busy host, so warm it at startup and
+    reuse it for S3LM_AIASK_OVERVIEW_TTL seconds. Greetings never touch it.
+    """
+    global _overview_cache
+    now = time.monotonic()
+    with _ov_lock:
+        c = _overview_cache
+    if c and now - c[0] < _OVERVIEW_TTL:
+        return c[1], c[2]
+    txt, src = _build_overview()
+    with _ov_lock:
+        _overview_cache = (now, txt, src)
+    return txt, src
+
+
+def warm() -> None:
+    """Build the overview cache off the request path."""
+    try:
+        _ctx_overview()
+    except Exception:
+        pass
+
+
+def _build_overview() -> tuple[str, list]:
     e = db.enrichment_progress()
     try:
         w = db.wallet_stats()
@@ -1135,6 +1172,17 @@ def ask(question: str, store: Any) -> dict:
             "sources": [],
             "model": AI_MODEL,
         }
+    ql = q.lower()
+    if _GREETING_RE.match(q.strip()):
+        return {
+            "answer": (
+                "Hello Officer. I'm online and reading the live case index. "
+                "Ask about bucket totals, deposits/withdrawals, UPI rails, "
+                "crypto wallets, or paste a UTR, VPA, wallet, or object key."
+            ),
+            "sources": [],
+            "model": "local",
+        }
     if not (config.GEMINI_ENABLED or config.GROQ_ENABLED):
         return {
             "answer": "AI assistant is offline — set the Gemini or Groq key on the VM first.",
@@ -1149,7 +1197,6 @@ def ask(question: str, store: Any) -> dict:
             "model": AI_MODEL,
         }
 
-    ql = q.lower()
     ctx_parts, sources = [], []
 
     # image question: fetch first, vision-describe with data context
