@@ -1,5 +1,6 @@
 ﻿import { useCallback, useEffect, useState } from 'react'
 import { api, eventsUrl, AuthError, tabHidden, type Status } from '../lib/api'
+import { readApiCache, writeApiCache } from '../lib/cache'
 import { fmtBytes, fmtINR, fmtTime } from '../lib/format'
 import { OfficerStrip } from '../components/OfficerStrip'
 import { folderInfo } from '../lib/format'
@@ -70,33 +71,64 @@ interface NetUrlRow {
 }
 
 export function StatusPage() {
-  const [st, setSt] = useState<Status | null>(null)
-  const [stats, setStats] = useState<Stats | null>(null)
-  const [types, setTypes] = useState<Types | null>(null)
-  const [health, setHealth] = useState<BucketHealth | null>(null)
-  const [mirrorSync, setMirrorSync] = useState<MirrorSync | null>(null)
-  const [netUrls, setNetUrls] = useState<{ rows: NetUrlRow[]; counts: any } | null>(null)
+  // Hydrate from the last successful fetch so a bucket switch / reload paints
+  // real values instantly instead of blank cards and "Loading…" panels. The
+  // effects below always revalidate in the background.
+  const [st, setSt] = useState<Status | null>(() => readApiCache<Status>('/api/status')?.v ?? null)
+  const [stats, setStats] = useState<Stats | null>(() => readApiCache<Stats>('/api/stats')?.v ?? null)
+  const [types, setTypes] = useState<Types | null>(() => readApiCache<Types>('/api/types')?.v ?? null)
+  const [health, setHealth] = useState<BucketHealth | null>(() => readApiCache<BucketHealth>('/api/bucket-health')?.v ?? null)
+  const [mirrorSync, setMirrorSync] = useState<MirrorSync | null>(() => readApiCache<MirrorSync>('/api/mirror-sync')?.v ?? null)
+  const [netUrls, setNetUrls] = useState<{ rows: NetUrlRow[]; counts: any } | null>(
+    () => readApiCache<{ rows: NetUrlRow[]; counts: any }>('/api/network-urls')?.v ?? null,
+  )
   const [pinging, setPinging] = useState(false)
   const [liveConnected, setLiveConnected] = useState(false)
   const [lastEventAt, setLastEventAt] = useState<string | null>(null)
   const [eventPulse, setEventPulse] = useState(false)
   const doRefresh = useCallback(() => {
-    api<Stats>('/api/stats').then(setStats).catch(() => {})
-    api<Status>('/api/status').then(setSt).catch(() => {})
-    api<{ rows: NetUrlRow[]; counts: any }>('/api/network-urls').then(setNetUrls).catch(() => {})
+    // Independent promises: a slow/failing heavy aggregate must never block
+    // the status cards (Promise.all previously left the whole page blank when
+    // /api/stats timed out after a deploy — 2026-11-11).
+    api<Stats>('/api/stats', undefined, 60000)
+      .then((x) => { setStats(x); writeApiCache('/api/stats', undefined, x) })
+      .catch(() => {})
+    api<Status>('/api/status')
+      .then((s) => { setSt(s); writeApiCache('/api/status', undefined, s) })
+      .catch(() => {})
+    api<{ rows: NetUrlRow[]; counts: any }>('/api/network-urls', undefined, 60000)
+      .then((d) => { setNetUrls(d); writeApiCache('/api/network-urls', undefined, d) })
+      .catch(() => {})
   }, [])
   const refreshStats = doRefresh
 
   useEffect(() => {
     let alive = true
-    const load = () =>
-      Promise.all([api<Status>('/api/status'), api<Stats>('/api/stats')])
-        .then(([s, x]) => { if (alive) { setSt(s); setStats(x) } })
+    const load = () => {
+      api<Status>('/api/status')
+        .then((s) => { if (alive) { setSt(s); writeApiCache('/api/status', undefined, s) } })
         .catch(() => {})
+      api<Stats>('/api/stats', undefined, 60000)
+        .then((x) => { if (alive) { setStats(x); writeApiCache('/api/stats', undefined, x) } })
+        .catch(() => {})
+    }
     load()
     const t = setInterval(() => { if (!tabHidden()) load() }, st?.sweep_done ? 30000 : 8000)
     return () => { alive = false; clearInterval(t) }
   }, [st?.sweep_done])
+
+  // Network inventory is independent of the status poll and previously was
+  // only fetched after the first SSE event — the table sat on "Loading…"
+  // forever on a quiet bucket. Load it on mount and revalidate periodically.
+  useEffect(() => {
+    let alive = true
+    const load = () => api<{ rows: NetUrlRow[]; counts: any }>('/api/network-urls', undefined, 60000)
+      .then((d) => { if (alive) { setNetUrls(d); writeApiCache('/api/network-urls', undefined, d) } })
+      .catch(() => {})
+    load()
+    const t = setInterval(() => { if (!tabHidden()) load() }, 300000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
 
   // SSE for live deposit/withdrawal badge + stat refresh
   useEffect(() => {
@@ -128,7 +160,9 @@ export function StatusPage() {
 
   useEffect(() => {
     let alive = true
-    const loadTypes = () => api<Types>('/api/types').then((t) => alive && setTypes(t)).catch(() => {})
+    const loadTypes = () => api<Types>('/api/types')
+      .then((t) => { if (alive) { setTypes(t); writeApiCache('/api/types', undefined, t) } })
+      .catch(() => {})
     loadTypes()
     const t = setInterval(loadTypes, 300000)
     return () => { alive = false; clearInterval(t) }
@@ -136,14 +170,20 @@ export function StatusPage() {
 
   const ping = useCallback(() => {
     setPinging(true)
-    api<BucketHealth>('/api/bucket-health').then(setHealth).catch((e) => {
+    api<BucketHealth>('/api/bucket-health').then((h) => {
+      setHealth(h)
+      writeApiCache('/api/bucket-health', undefined, h)
+    }).catch((e) => {
       // bucket-health is unauthenticated: a network/HTTP failure here is a
       // genuine reachability problem. But an AuthError means the SESSION is
       // stale, not the bucket — report "unknown" instead of the misleading
       // "not reachable" (review 2026-09-02; endpoint no longer returns 401).
       setHealth(e instanceof AuthError ? { live: false, auth: true } : { live: false })
     }).finally(() => setPinging(false))
-    api<MirrorSync>('/api/mirror-sync').then(setMirrorSync).catch(() => setMirrorSync({ daemon_seen: false, verdict: 'UNKNOWN — endpoint unavailable' }))
+    api<MirrorSync>('/api/mirror-sync').then((m) => {
+      setMirrorSync(m)
+      writeApiCache('/api/mirror-sync', undefined, m)
+    }).catch(() => setMirrorSync({ daemon_seen: false, verdict: 'UNKNOWN — endpoint unavailable' }))
   }, [])
   useEffect(ping, [ping])
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AuthError, api, objectUrl, post, type ObjRow } from '../lib/api'
+import { readApiCache, writeApiCache } from '../lib/cache'
 import { extOf, fileColor, fileIcon, fmtBytes, fmtTime, folderInfo, shortKey } from '../lib/format'
 import { Preview } from '../components/Preview'
 
@@ -295,6 +296,9 @@ export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { 
           if (rid !== reqIdRef.current) return
           setLiveItems(d.items ?? [])
           setNextCursor(d.has_more ? d.next_cursor : null)
+          // A response slower than the 20s backstop must not leave the
+          // "Still loading" banner on screen next to loaded rows.
+          setErrMsg((prev) => (prev.startsWith('Still loading') ? '' : prev))
         })
         .catch((e) => {
           if (rid !== reqIdRef.current) return
@@ -311,6 +315,11 @@ export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { 
     // Client page cache (60s): Back / re-click / Next-then-Prev answers instantly
   // without re-querying; server totals are cached 300s so this stays coherent.
   const ck = `${listPrefix}|${order}|${limit}|${page}|${debouncedQ}|${ext}|${since}|${until}|${listFlat ? 1 : ''}`
+  const listParams = {
+    prefix: listPrefix, q: debouncedQ, order, limit, offset: page * limit,
+    ext, since, until, flat: listFlat ? 1 : '',
+  }
+  const treeParams = { prefix }
   // Folder tree is independent of the file-list page cache: a cache-hit
   // revisit must still (re)load the sidebar that resetFolderView cleared
   // (2026-09-05: Up-to-root showed files but an empty sidebar on cache hit).
@@ -320,10 +329,18 @@ export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { 
     // Mark attempted up-front: page turns must not hammer a failing tree;
     // folder change or the Retry button resets the ref to force refetch.
     treePrefixRef.current = prefix
-    api<any>('/api/tree', { prefix }).then((t) => {
+    // Paint the persisted folder tree immediately on a reload/bucket switch;
+    // the request below still revalidates it.
+    const cachedTree = readApiCache<any>('/api/tree', treeParams)
+    if (cachedTree) {
+      setDirs(cachedTree.v?.dirs ?? [])
+      setDirsPrefix(cachedTree.v?.prefix || prefix)
+    }
+    api<any>('/api/tree', treeParams).then((t) => {
       if (rid !== reqIdRef.current) return
       setDirs(t.dirs ?? [])
       setDirsPrefix(t.prefix || prefix)
+      writeApiCache('/api/tree', treeParams, t)
     }).catch((e) => {
       // Folder-list failure is sidebar-local: it must never blank the file
       // grid's error state or masquerade as "no subfolders" (2026-09-05).
@@ -331,7 +348,19 @@ export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { 
       if (rid === reqIdRef.current && !(e instanceof AuthError)) setTreeErr(String(e?.message || e))
     })
   }
-  const cached = pageCache.current.get(ck)
+  // Persisted snapshot (survives reloads and cross-bucket navigation) seeds
+  // the grid before the network answers. Keep revalidating unless the
+  // in-memory page cache is still fresh.
+  let cached = pageCache.current.get(ck)
+  if (!cached) {
+    const persisted = readApiCache<any>('/api/list', listParams)
+    if (persisted) {
+      cached = { at: persisted.t, data: persisted.v }
+      pageCache.current.set(ck, cached)
+      setData(persisted.v)
+      setInitialLoad(false)
+    }
+  }
   if (cached && Date.now() - cached.at < 60000) {
     setData(cached.data)
     window.clearTimeout(loadTimer)
@@ -340,13 +369,15 @@ export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { 
     fetchTree()
     return
   }
-  api<any>('/api/list', { prefix: listPrefix, q: debouncedQ, order, limit, offset: page * limit, ext, since, until, flat: listFlat ? 1 : '' })
+  api<any>('/api/list', listParams)
       .then((d) => {
         if (rid !== reqIdRef.current) return
         pageCache.current.set(ck, { at: Date.now(), data: d })
         if (pageCache.current.size > 40) { const oldest = pageCache.current.keys().next().value; if (oldest !== undefined) pageCache.current.delete(oldest) }
         setData(d)
+        writeApiCache('/api/list', listParams, d)
         prefetchNext(ck, d)
+        setErrMsg((prev) => (prev.startsWith('Still loading') ? '' : prev))
       })
       .catch((e) => {
         if (rid !== reqIdRef.current) return
@@ -690,7 +721,7 @@ export function Explorer({ prefixes, jumpTo }: { prefixes: string[]; jumpTo?: { 
         )}
         {/* Content */}
         <div className="ex-main" ref={contentRef}>
-          {loading ? (
+          {loading && rows().length === 0 && !data.total ? (
             /* Skeleton loading */
             <div className="ex-grid">
               {Array.from({ length: 12 }).map((_, i) => (

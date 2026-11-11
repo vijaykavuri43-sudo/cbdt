@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api, type Status } from './lib/api'
+import { api, clearToken, type Status } from './lib/api'
+import { clearApiCache, readApiCache, writeApiCache } from './lib/cache'
 import { Gate } from './components/Gate'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { StatusPage } from './pages/Status'
@@ -14,6 +15,32 @@ import { Wallets } from './pages/Wallets'
 import { Agents } from './pages/Agents'
 import { Ask } from './pages/Ask'
 import { OfficerQuery } from './pages/OfficerQuery'
+
+interface BootConfig {
+  source_label?: string
+  peers?: { label: string; port: number }[]
+  prefixes?: string[]
+  bucket_url?: string
+  case?: string
+  auth_ref?: string
+}
+
+declare global {
+  interface Window {
+    /** Injected by the backend's SPA fallback — available before any fetch. */
+    __S3LM_BOOT__?: BootConfig
+  }
+}
+
+const EMPTY_BOOT: BootConfig = {}
+
+function readBoot(): BootConfig {
+  try {
+    return window.__S3LM_BOOT__ ?? EMPTY_BOOT
+  } catch {
+    return EMPTY_BOOT
+  }
+}
 
 type TabId =
   | 'status'
@@ -78,8 +105,16 @@ export default function App() {
   const [tab, setTab] = useState<TabId>('status')
   const [visited, setVisited] = useState<Set<TabId>>(() => new Set(['status']))
   const [exploreJump, setExploreJump] = useState<{ p: string; t: number } | null>(null)
-  const [status, setStatus] = useState<Status | null>(null)
+  // Paint the last known status before the network answers; the boot config
+  // (injected into index.html) keeps the Sources group visible even on the
+  // very first visit, so the sidebar never blanks while switching buckets.
+  const [boot] = useState<BootConfig>(readBoot)
+  const [status, setStatus] = useState<Status | null>(
+    () => readApiCache<Status>('/api/status')?.v ?? null,
+  )
   const [locked, setLocked] = useState(false)
+  const peers = boot.peers?.length ? boot.peers : (status?.peers ?? [])
+  const currentLabel = boot.source_label || status?.source_label || ''
 
   const openTab = useCallback((id: TabId, prefix?: string) => {
     setTab(id)
@@ -96,20 +131,29 @@ export default function App() {
     return api<Status>('/api/status')
       .then((s) => {
         setStatus(s)
+        writeApiCache('/api/status', undefined, s)
         setLocked(false)
       })
       .catch(() => {})
   }, [])
 
+  const hasStatus = !!status
   useEffect(() => {
     if (locked) return
     load()
-    const t = setInterval(load, 60000)
+    // Retry faster until the first status arrives (cold backend / deploy):
+    // waiting a full minute left the sidebar and Overview blank.
+    const t = setInterval(load, hasStatus ? 60000 : 8000)
     return () => clearInterval(t)
-  }, [locked, load])
+  }, [locked, load, hasStatus])
 
   useEffect(() => {
-    const h = () => setLocked(true)
+    const h = () => {
+      // A 401 means the session is dead — drop cached case data so it cannot
+      // be read from localStorage while the console is locked.
+      clearApiCache()
+      setLocked(true)
+    }
     window.addEventListener('s3lm-unauth', h)
     return () => window.removeEventListener('s3lm-unauth', h)
   }, [])
@@ -128,6 +172,7 @@ export default function App() {
       <Gate
         onUnlock={(s) => {
           setStatus(s)
+          writeApiCache('/api/status', undefined, s)
           setLocked(false)
         }}
       />
@@ -139,11 +184,11 @@ export default function App() {
         <div className="brand">
           <div className="brand-title">GCS EVIDENCE MONITOR</div>
         </div>
-        {status?.peers && status.peers.length > 0 && (
+        {peers.length > 0 && (
           <div className="nav-group">
             <div className="nav-group-label">Sources</div>
-            {status.peers.map((p) => {
-              const here = (status.source_label ?? '') === p.label
+            {peers.map((p) => {
+              const here = currentLabel === p.label
               const href = `${window.location.protocol}//${window.location.hostname}:${p.port}/`
               return here ? (
                 <div key={p.label} className="nav-item active mono" style={{ fontSize: 11 }}>
@@ -187,7 +232,8 @@ export default function App() {
             className="btn tiny"
             style={{ width: '100%' }}
             onClick={() => {
-              localStorage.removeItem('s3lm_token')
+              clearToken()
+              clearApiCache()
               location.reload()
             }}
           >
@@ -203,7 +249,7 @@ export default function App() {
         )}
         {visited.has('explorer') && (
           <div className={tab === 'explorer' ? 'pane-fill' : 'pane-hidden'}>
-            <ErrorBoundary><Explorer prefixes={status?.prefixes ?? []} jumpTo={exploreJump} /></ErrorBoundary>
+            <ErrorBoundary><Explorer prefixes={status?.prefixes ?? boot.prefixes ?? []} jumpTo={exploreJump} /></ErrorBoundary>
           </div>
         )}
         {visited.has('agents') && (

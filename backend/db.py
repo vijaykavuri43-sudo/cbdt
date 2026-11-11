@@ -737,6 +737,36 @@ def subfolders(prefix: str) -> dict:
     hit = _tree_cache.get(prefix)
     if hit is not None and now - hit[0] < _TREE_TTL:
         return hit[1]
+    if not prefix:
+        # Root fast path (2026-11-11): the old substr/LIKE '%' scan walked all
+        # 758k+ objects on every cold /api/tree, which on a busy host exceeded
+        # the Explorer's 20s budget. prefix_stats_cache already holds exactly
+        # this aggregation (top_prefix -> count/bytes) for the minutely
+        # materialized view, so root browsing becomes a small metadata read.
+        rows = connect().execute(
+            "SELECT p,n,s FROM prefix_stats_cache"
+        ).fetchall()
+        if not rows:
+            rows = _prefix_stats_live()
+        dirs = []
+        files_n = 0
+        files_s = 0
+        for r in rows:
+            p = r["p"] or ""
+            n = int(r["n"] or 0)
+            s = int(r["s"] or 0)
+            if p.endswith("/") and p.strip("/"):
+                dirs.append({"seg": p.strip("/"), "n": n, "size": s})
+            else:
+                # "(root)" (collector label) or "" = files directly at root.
+                files_n += n
+                files_s += s
+        dirs.sort(key=lambda d: d["seg"])
+        out = {"dirs": dirs, "files_n": files_n, "files_size": files_s}
+        if len(_tree_cache) > 500:
+            _tree_cache.clear()
+        _tree_cache[prefix] = (time.monotonic(), out)
+        return out
     plen = len(prefix)
     like = prefix.replace("%", r"\%").replace("_", r"\_") + "%"
     rows = (
@@ -845,6 +875,11 @@ def list_objects(
     where = ("WHERE " + " AND ".join(conds)) if conds else ""
     cache_key = (prefix, q, tuple(exts or []), since_n, until_n, flat)
     total = _cached_list_total(cache_key, where, list(args))
+    # Empty folder (root on this bucket contains 0 direct files): never run
+    # the ORDER BY page scan. On a 758k-row table cold caches made this page
+    # exceed the Explorer's 20s budget while showing "Nothing found" anyway.
+    if total == 0:
+        return {"total": 0, "items": []}
     conn = connect()
     # Stable newest-first: secondary key breaks ties where many objects share same timestamp.
     order_sql = {

@@ -17,7 +17,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Any
 
@@ -40,6 +40,123 @@ def _key_lock(key: str) -> threading.Lock:
             lk = threading.Lock()
             _stats_locks[key] = lk
         return lk
+
+
+# ---- persistent snapshot cache (fast first paint after deploy/navigation) ----
+# The in-memory cache below is per-worker and starts empty on every deploy /
+# restart. Officers navigate between four dashboards by full page loads; if a
+# worker is cold, /api/status, /api/stats and /api/types each rebuild heavy
+# aggregates inline and the console sits blank for seconds (2026-11-11).
+# Persist the expensive, first-paint payloads per key so a fresh worker can
+# serve the last snapshot immediately and rebuild in the background.
+_PERSIST_CACHE_KEYS = frozenset(
+    {
+        "status",
+        "stats",
+        "types",
+        "enrichment-progress",
+        "ledger:summary",
+        "gateway:summary",
+        "gateway:network-urls",
+        "wallets:live-set",
+    }
+)
+_CACHE_DIR = config.DATA_DIR / "http-cache"
+_CACHE_MAX_AGE_SEC = 24 * 3600.0
+_CACHE_MIN_WRITE_SEC = 10.0
+_persist_last: dict[str, float] = {}
+_disk_lookup_at: dict[str, float] = {}
+_persist_lock = threading.Lock()
+
+
+def _cache_file(key: str) -> Path:
+    # Include the source id: re-pointing a container's volume at a different
+    # bucket must never resurrect the previous source's snapshot.
+    ident = f"{config.SOURCE_ID}\x00{key}".encode("utf-8")
+    return _CACHE_DIR / (hashlib.sha1(ident).hexdigest()[:20] + ".json")
+
+
+def _persist_cache_entry(key: str, val: Any):
+    """Fire-and-forget snapshot write, throttled per key."""
+    if key not in _PERSIST_CACHE_KEYS:
+        return
+    now = time.monotonic()
+    with _persist_lock:
+        if now - _persist_last.get(key, 0.0) < _CACHE_MIN_WRITE_SEC:
+            return
+        _persist_last[key] = now
+
+    def _write():
+        try:
+            _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps(
+                {"key": key, "saved": time.time(), "value": val},
+                separators=(",", ":"),
+                default=str,
+            )
+            if len(payload) > 4 * 1024 * 1024:
+                return
+            path = _cache_file(key)
+            tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            os.replace(tmp, path)
+        except Exception:
+            pass
+
+    threading.Thread(target=_write, daemon=True, name=f"cache-persist:{key}").start()
+
+
+def _cache_store(key: str, val: Any):
+    _stats_cache[key] = (time.monotonic(), val)
+    _persist_cache_entry(key, val)
+
+
+def _load_cache_from_disk(key: str) -> bool:
+    """Load a persisted snapshot as *stale* so it paints now and rebuilds next.
+
+    The entry's monotonic timestamp is back-dated just inside stale_grace:
+    cached() serves it to the caller instantly and starts one background
+    rebuild, so a cold worker never blocks the first page load.
+    """
+    if key not in _PERSIST_CACHE_KEYS:
+        return False
+    now = time.monotonic()
+    with _persist_lock:
+        if now - _disk_lookup_at.get(key, 0.0) < 15.0:
+            return False
+        _disk_lookup_at[key] = now
+    try:
+        payload = json.loads(_cache_file(key).read_text(encoding="utf-8"))
+        if payload.get("key") != key:
+            return False
+        age = time.time() - float(payload.get("saved") or 0)
+        if age < 0 or age > _CACHE_MAX_AGE_SEC:
+            return False
+        _stats_cache[key] = (time.monotonic() - 601.0, payload.get("value"))
+        return True
+    except Exception:
+        return False
+
+
+def _load_all_cache_from_disk():
+    try:
+        if not _CACHE_DIR.exists():
+            return
+        for path in _CACHE_DIR.glob("*.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                key = payload.get("key")
+                if key not in _PERSIST_CACHE_KEYS:
+                    continue
+                age = time.time() - float(payload.get("saved") or 0)
+                if age < 0 or age > _CACHE_MAX_AGE_SEC:
+                    continue
+                _stats_cache[key] = (time.monotonic() - 601.0, payload.get("value"))
+            except Exception:
+                continue
+        print(f"[cache] restored {len(_stats_cache)} snapshots from disk")
+    except Exception as e:
+        print(f"[cache] disk restore failed: {e}")
 
 
 def cached(key: str, ttl: float, builder, stale_grace: float = 600.0):
@@ -73,13 +190,17 @@ def cached(key: str, ttl: float, builder, stale_grace: float = 600.0):
         ent = _stats_cache.get(key)
         if ent and now - ent[0] < ttl:
             return ent[1]
+        if ent is None and _load_cache_from_disk(key):
+            # Another worker (or the previous process) already built this
+            # payload: serve its snapshot now, rebuild in the background.
+            ent = _stats_cache.get(key)
         if ent and key not in _stats_rebuilding and now - ent[0] < ttl + stale_grace:
             _stats_rebuilding.add(key)
 
             def _rebuild():
                 try:
                     val = builder()
-                    _stats_cache[key] = (time.monotonic(), val)
+                    _cache_store(key, val)
                 except Exception:
                     pass
                 finally:
@@ -92,7 +213,7 @@ def cached(key: str, ttl: float, builder, stale_grace: float = 600.0):
         if key in _stats_rebuilding and ent:
             return ent[1]
         val = builder()
-        _stats_cache[key] = (time.monotonic(), val)
+        _cache_store(key, val)
         return val
     finally:
         if acquired:
@@ -103,6 +224,16 @@ def _invalidate_prefix(prefix: str):
     for k in list(_stats_cache.keys()):
         if k.startswith(prefix):
             _stats_cache.pop(k, None)
+    # Drop persisted snapshots too, otherwise a cold worker would resurrect
+    # the pre-mutation numbers right after an ingestion sync.
+    for k in list(_PERSIST_CACHE_KEYS):
+        if k.startswith(prefix):
+            try:
+                _cache_file(k).unlink(missing_ok=True)
+            except Exception:
+                pass
+            with _persist_lock:
+                _persist_last.pop(k, None)
 
 
 # Invalidate money-flows/status/stats the moment collector/enricher publishes,
@@ -281,6 +412,10 @@ def _wal_guard():
 def startup():
     for d in config.ensure_dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
+    # Restore the last first-paint payloads before serving requests. Each
+    # uvicorn worker starts cold; this lets /api/status, /api/stats and
+    # /api/types answer instantly after a deploy and rebuild in background.
+    _load_all_cache_from_disk()
     db.connect()
     # Stack dump on demand: `docker exec s3lm kill -USR1 <worker-pid>` writes
     # every thread's stack to the log. The 2026-11-08 stall (drains=0 while the
@@ -328,17 +463,36 @@ def startup():
 
     threading.Thread(target=_repair, daemon=True).start()
 
-    # 2026-09-16: prebuild the heavy officer aggregates in the background so
-    # the first tab open after a restart never pays the cold-cache inline
-    # build (ledger/gateway summaries scan ~660k rows — past the 25s frontend
-    # timeout — which rendered Cash Flow as a timeout error).
+    # 2026-11-11: warm the first-paint payloads BEFORE the heavy officer
+    # aggregates. Status/types are what the console renders on open; a deploy
+    # used to sit blank while ledger/gateway scans ran first.
     def _warm():
+        try:
+            cached("status", 5.0, _build_status)
+            cached("types", 60.0, db.type_census)
+            print("[warmup] status+types prebuilt")
+        except Exception as e:
+            print(f"[warmup] status/types prebuild failed: {e}")
+        # Heavy aggregates only need to be built once per container: the
+        # sibling worker pulls the persisted snapshot on demand, so avoid
+        # doubling 660k-row scans on the same SQLite file at every restart.
+        try:
+            import fcntl
+
+            lock_path = Path(str(config.DB_PATH) + ".warmguard")
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except Exception:
+            print("[warmup] heavy prebuild owned by sibling worker; skipping")
+            return
         try:
             from . import gateway, ledger
 
+            cached("stats", 30.0, _build_stats)
             cached("ledger:summary", 300.0, ledger.summary)
             cached("gateway:summary", 300.0, gateway.summary)
-            print("[warmup] ledger+gateway summaries prebuilt")
+            cached("gateway:network-urls", 300.0, gateway.network_urls)
+            print("[warmup] stats + ledger+gateway summaries prebuilt")
         except Exception as e:
             print(f"[warmup] summary prebuild failed: {e}")
         try:
@@ -3801,6 +3955,57 @@ def maintenance_checkpoint_status(_=Depends(auth)):
 
 
 # ---- SPA fallback: serve index.html for any non-/api route when dist exists ----
+def _boot_config() -> dict:
+    """Source labels/peers/prefixes available at first paint.
+
+    The sidebar's "Sources" group used to wait for /api/status, so switching
+    buckets showed a console with no bucket list until the (cold) status
+    payload arrived. Baking this small config into index.html makes the four
+    sources and the active bucket render before the first fetch.
+    """
+    try:
+        prefixes = (
+            db.get_meta("prefixes") or "\n".join(config.DEFAULT_PREFIXES)
+        ).splitlines()
+    except Exception:
+        prefixes = list(config.DEFAULT_PREFIXES)
+    return {
+        "source_label": config.SOURCE_LABEL,
+        "peers": config.PEERS,
+        "prefixes": [p for p in prefixes if p],
+        "bucket_url": config.SOURCE_ID,
+        "case": config.CASE_ID,
+        "auth_ref": config.AUTH_REF,
+    }
+
+
+_BOOT_HTML_CACHE: dict = {"at": 0.0, "mtime": 0.0, "html": None}
+
+
+def _index_html_with_boot() -> str | None:
+    dist = Path(__file__).resolve().parents[1] / "frontend" / "dist" / "index.html"
+    try:
+        mtime = dist.stat().st_mtime
+    except OSError:
+        return None
+    now = time.monotonic()
+    if (
+        _BOOT_HTML_CACHE["html"]
+        and _BOOT_HTML_CACHE["mtime"] == mtime
+        and now - _BOOT_HTML_CACHE["at"] < 5.0
+    ):
+        return _BOOT_HTML_CACHE["html"]
+    try:
+        html = dist.read_text(encoding="utf-8")
+        boot = json.dumps(_boot_config(), separators=(",", ":")).replace("<", "\\u003c")
+        script = f"<script>window.__S3LM_BOOT__={boot}</script>"
+        html = html.replace("</head>", script + "</head>", 1) if "</head>" in html else script + html
+        _BOOT_HTML_CACHE.update(at=now, mtime=mtime, html=html)
+        return html
+    except Exception:
+        return None
+
+
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str):
     # let /api/* 404 naturally
@@ -3808,15 +4013,13 @@ def spa_fallback(full_path: str):
         from fastapi import HTTPException as _HE
 
         raise _HE(404, "not found")
-    idx = _FRONTEND_DIST / "index.html" if "_FRONTEND_DIST" in dir() else None
-    # resolve via global
     try:
-        dist = Path(__file__).resolve().parents[1] / "frontend" / "dist" / "index.html"
-        if dist.exists():
+        html = _index_html_with_boot()
+        if html is not None:
             # No-store: after each deploy the bundle hash changes, and a
             # cached index.html (verified 2026-09-11: stale "0 pending" UI)
             # is worse than one extra 304-checked fetch per load.
-            return FileResponse(str(dist), headers={"Cache-Control": "no-store"})
+            return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
     except Exception:
         pass
     from fastapi import HTTPException as _HE2

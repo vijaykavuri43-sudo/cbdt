@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, eventsUrl, objectUrl } from '../lib/api'
+import { readApiCache, writeApiCache } from '../lib/cache'
 import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
 import { fileColor, fileIcon, fmtBoth, fmtBytes, fmtIST, kindOf } from '../lib/format'
 import { Preview } from '../components/Preview'
@@ -18,8 +19,24 @@ interface FeedEvt {
   kind?: string | null
 }
 
+function seedFeed(items: any[] | undefined): FeedEvt[] {
+  return (items ?? []).map((r) => ({
+    type: 'new_object',
+    key: r.key,
+    size: r.size,
+    last_modified: r.last_modified,
+    seen_utc: r.seen_utc,
+    payload: r.extract ?? null,
+    top_prefix: r.key.includes('/') ? r.key.split('/')[0] + '/' : '',
+  }))
+}
+
 export function LiveFeed() {
-  const [events, setEvents] = useState<FeedEvt[]>([])
+  // Paint the last known arrivals immediately on reload/bucket switch; the
+  // effect below revalidates and merges the fresh 24h seed.
+  const [events, setEvents] = useState<FeedEvt[]>(() =>
+    seedFeed(readApiCache<{ items: any[] }>('/api/recent', { hours: 24, limit: 60 })?.v?.items),
+  )
   const [paused, setPaused] = useState(false)
   const [sound, setSound] = useState(true)
   const [filter, setFilter] = useState('')
@@ -40,16 +57,10 @@ export function LiveFeed() {
   useEffect(() => {
     mountedAt.current = new Date().toISOString().slice(0, 19) + 'Z'
     // Seed with newest arrivals first so the pane is never initially empty.
-    api<{ items: any[] }>('/api/recent', { hours: 24, limit: 60 }).then((d) => {
-      const seed: FeedEvt[] = (d.items ?? []).map((r) => ({
-        type: 'new_object',
-        key: r.key,
-        size: r.size,
-        last_modified: r.last_modified,
-        seen_utc: r.seen_utc,
-        payload: r.extract ?? null,
-        top_prefix: r.key.includes('/') ? r.key.split('/')[0] + '/' : '',
-      }))
+    const recentParams = { hours: 24, limit: 60 }
+    api<{ items: any[] }>('/api/recent', recentParams).then((d) => {
+      writeApiCache('/api/recent', recentParams, d)
+      const seed = seedFeed(d.items)
       if (seed.length) setEvents((prev) => {
         const known = new Set(prev.map((e) => e.key))
         return [...prev, ...seed.filter((e) => !known.has(e.key))].slice(0, 300)

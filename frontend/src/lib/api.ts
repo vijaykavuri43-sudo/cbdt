@@ -28,6 +28,19 @@ export function setToken(t: string) {
   }
 }
 
+export function clearToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    /* ignore */
+  }
+  try {
+    document.cookie = `${TOKEN_KEY}=; path=/; max-age=0; SameSite=Lax`
+  } catch {
+    /* ignore */
+  }
+}
+
 export function hasToken(): boolean {
   return !!getToken()
 }

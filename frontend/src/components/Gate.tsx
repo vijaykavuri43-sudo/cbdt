@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, getToken, setToken, hasToken, type Status } from '../lib/api'
+import { api, clearToken, getToken, setToken, hasToken, type Status } from '../lib/api'
 
 export function Gate({ onUnlock }: { onUnlock: (s: Status) => void }) {
   const [val, setVal] = useState(getToken())
@@ -15,7 +15,7 @@ export function Gate({ onUnlock }: { onUnlock: (s: Status) => void }) {
       const s = await api<Status>('/api/status')
       onUnlock(s)
     } catch (e) {
-      localStorage.removeItem('s3lm_token')
+      clearToken()
       setErr(e instanceof Error && e.message === 'locked' ? 'Access key rejected.' : String(e))
     } finally {
       setBusy(false)
