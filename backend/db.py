@@ -881,6 +881,42 @@ def list_objects(
     if total == 0:
         return {"total": 0, "items": []}
     conn = connect()
+    # Root file fast path: with only a handful of direct-at-root keys, the
+    # generic `ORDER BY key` plan scans the entire 2.5M-key primary index to
+    # find them (17.5s measured live 2026-11-11 — the Explorer's 20s timeout).
+    # idx_obj_root_lm stores exactly these rows; fetch them in index order and
+    # sort/slice in Python. Fall back to SQL for pathological roots.
+    if (
+        not prefix
+        and not flat
+        and not q
+        and not exts
+        and not since_n
+        and not until_n
+        and total <= 5000
+    ):
+        rows = conn.execute(
+            "SELECT key,size,last_modified,etag,seen_utc,enriched,extract_json"
+            " FROM objects WHERE instr(key,'/') = 0"
+            " ORDER BY last_modified DESC, key DESC"
+        ).fetchall()
+        if order == "key":
+            rows.sort(key=lambda r: r["key"])
+        elif order == "-modified":
+            rows.sort(
+                key=lambda r: (r["last_modified"] or "", r["key"] or ""),
+                reverse=True,
+            )
+        elif order == "-seen":
+            rows.sort(
+                key=lambda r: (r["seen_utc"] or "", r["key"] or ""), reverse=True
+            )
+        else:  # size DESC, key ASC
+            rows.sort(key=lambda r: (-int(r["size"] or 0), r["key"] or ""))
+        return {
+            "total": total,
+            "items": [_row_pub(r) for r in rows[offset : offset + limit]],
+        }
     # Stable newest-first: secondary key breaks ties where many objects share same timestamp.
     order_sql = {
         "key": "key ASC",

@@ -82,6 +82,35 @@ class RootTreeTests(unittest.TestCase):
         out = db.list_objects("does-not-exist/")
         self.assertEqual(out, {"total": 0, "items": []})
 
+    def test_root_listing_uses_partial_index_and_correct_orders(self):
+        c = db.connect()
+        c.executemany(
+            "INSERT INTO objects(key,top_prefix,size,last_modified,etag,seen_utc,ext)"
+            " VALUES(?,?,?,?,?,?,?)",
+            [
+                ("z.txt", "(root)", 30, "2026-01-03T00:00:00Z", "e3",
+                 "2026-01-05T00:00:00Z", ".txt"),
+                ("a.txt", "(root)", 10, "2026-01-01T00:00:00Z", "e1",
+                 "2026-01-01T00:00:00Z", ".txt"),
+                ("m.txt", "(root)", 20, "2026-01-02T00:00:00Z", "e2",
+                 "2026-01-03T00:00:00Z", ".txt"),
+            ],
+        )
+        c.commit()
+        db._list_total_cache.clear()
+
+        def keys(order, offset=0, limit=200):
+            out = db.list_objects("", limit=limit, offset=offset, order=order)
+            self.assertEqual(out["total"], 3)
+            return [i["key"] for i in out["items"]]
+
+        self.assertEqual(keys("key"), ["a.txt", "m.txt", "z.txt"])
+        self.assertEqual(keys("-modified"), ["z.txt", "m.txt", "a.txt"])
+        self.assertEqual(keys("-seen"), ["z.txt", "m.txt", "a.txt"])
+        self.assertEqual(keys("size"), ["z.txt", "m.txt", "a.txt"])
+        self.assertEqual(keys("key", offset=1, limit=1), ["m.txt"])
+        self.assertEqual(keys("size", offset=5, limit=1), [])
+
 
 if __name__ == "__main__":
     unittest.main()
