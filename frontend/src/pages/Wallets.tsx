@@ -566,7 +566,7 @@ export function Wallets() {
                           <td className="small dim">{fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency ?? (r.amount_inr != null ? 'INR' : null))}{r.hits != null ? ` · ${r.hits}×` : ''}</td>
                           <td style={{ whiteSpace: 'nowrap' }}>
                             {r.key && <a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view proof</a>}
-                             {r.address && <>{' · '}<a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={traceDeskAddressUrl(r.address)} target="_blank" rel="noopener noreferrer" className="small">TraceDesk ↗</a></>}
+                             {r.address && <>{' · '}<a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(r.address, null) ?? '#'} target="_blank" rel="noreferrer" className="small">Tronscan ↗</a>{' · '}<a href={traceDeskAddressUrl(r.address)} target="_blank" rel="noopener noreferrer" className="small">TraceDesk ↗</a></>}
                           </td>
                         </tr>
                       ))}
@@ -593,7 +593,10 @@ export function Wallets() {
                     <tbody>
                       {popupRef.map((w) => (
                         <tr key={w.address}>
-                          <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>{w.address}</td>
+                          <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>
+                            {w.address}
+                            {w.address && <div className="tiny" style={{ fontWeight: 400 }}><a href={arkhamAddressUrl(w.address)} target="_blank" rel="noreferrer">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(w.address, null) ?? '#'} target="_blank" rel="noreferrer">Tronscan ↗</a>{' · '}<a href={traceDeskAddressUrl(w.address)} target="_blank" rel="noopener noreferrer">TraceDesk ↗</a></div>}
+                          </td>
                           <td>{w.network ?? '—'}</td>
                           <td className="small">{w.label || w.role || '—'}</td>
                           <td className="small">{w.first_seen ? fmtIST(w.first_seen) : '—'}</td>
