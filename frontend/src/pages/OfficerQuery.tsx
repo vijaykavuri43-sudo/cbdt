@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl, saveCsvFromUrl } from '../lib/api'
-import { arkhamAddressUrl, bestTronscanUrl } from '../lib/explorers'
+import { arkhamAddressUrl, bestTronscanUrl, traceDeskAddressUrl } from '../lib/explorers'
 import { fmtINR, fmtIST, fmtTime, previewJoined, shortKey } from '../lib/format'
 
 type Folder = 'all' | 'deposit' | 'withdrawal' | 'bankingqr' | 'other'
@@ -706,7 +706,9 @@ export function OfficerQuery() {
                             <div className="tiny">
                               <a href={arkhamAddressUrl(r.rail_id)} target="_blank" rel="noreferrer">Arkham ↗</a>
                               {' · '}
-                              <a href={bestTronscanUrl(r.rail_id) ?? '#'} target="_blank" rel="noreferrer">Tronscan ↗</a>
+                               <a href={bestTronscanUrl(r.rail_id) ?? '#'} target="_blank" rel="noreferrer">Tronscan ↗</a>
+                               {' · '}
+                               <a href={traceDeskAddressUrl(r.rail_id)} target="_blank" rel="noopener noreferrer">TraceDesk ↗</a>
                             </div>
                           )}
                         </td>

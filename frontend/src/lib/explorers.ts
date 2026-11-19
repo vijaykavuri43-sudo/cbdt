@@ -2,6 +2,7 @@
 // Every crypto wallet shown in the dashboard links out to:
 //   - Arkham (address view) — platform.arkhamintelligence.com/explorer/address/{addr}
 //   - Tronscan — tx view when a 64-hex txid was extracted, else address view.
+//   - TraceDesk — starts a new tracer graph from the address.
 // URL shapes verified 2026-09-05:
 //   Arkham addr: https://platform.arkhamintelligence.com/explorer/address/<addr>
 //   Arkham tx:   https://platform.arkhamintelligence.com/explorer/tx/<txid>
@@ -22,6 +23,10 @@ export function tronscanAddressUrl(address: string): string {
 
 export function tronscanTxUrl(txid: string): string {
   return `https://tronscan.org/#/transaction/${encodeURIComponent(txid.trim().toLowerCase())}`
+}
+
+export function traceDeskAddressUrl(address: string): string {
+  return `https://cryptocasedesk.vercel.app/#/tracer?newgraph=1&address=${encodeURIComponent(address.trim())}`
 }
 
 export type Txids = string[] | string | null | undefined

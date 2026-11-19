@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { api, objectUrl, type ExtractPayload, type ObjRow } from '../lib/api'
-import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
+import { arkhamAddressUrl, bestTronscanUrl, traceDeskAddressUrl, tronscanLabel } from '../lib/explorers'
 import { extOf, fmtBoth, fmtBytes, kindOf, shortKey } from '../lib/format'
 import { SheetViewer } from './SheetViewer'
 import { VoiceNote } from './VoiceNote'
@@ -179,6 +179,7 @@ export function Preview({ obj, onClose }: { obj: ObjRow; onClose: () => void }) 
                   </button>
                   <a href={arkhamAddressUrl(addr)} target="_blank" rel="noreferrer" style={{ fontSize: 10 }}>Arkham ↗</a>
                   {tron && <a href={tron} target="_blank" rel="noreferrer" style={{ fontSize: 10 }}>{tronscanLabel(txids)}</a>}
+                  <a href={traceDeskAddressUrl(addr)} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10 }}>TraceDesk ↗</a>
                 </span>
               )
             })}

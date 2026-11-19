@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, createRefreshGuard, eventsUrl, exportWalletsUrl, objectUrl, post, saveCsvFromUrl, tabHidden } from '../lib/api'
-import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
+import { arkhamAddressUrl, bestTronscanUrl, traceDeskAddressUrl, tronscanLabel } from '../lib/explorers'
 import { fmtIST, fmtMoney } from '../lib/format'
 
 // Every row is one address decoded from a live bucket image (QR / slip /
@@ -344,7 +344,7 @@ export function Wallets() {
           {(qDebounced || network) && (
             <button className="ex-toggle" onClick={() => { setQ(''); setQDebounced(''); setNetwork('') }} title="Clear search + network filter">✕ clear</button>
           )}
-          <span className="small dim">All rows: bucket-decoded wallets — exact source file + view proof + Arkham + Tronscan.</span>
+          <span className="small dim">All rows: bucket-decoded wallets — exact source file + view proof + Arkham + Tronscan + TraceDesk.</span>
         </div>
         <span className="small dim">Live hits: QR/slip/chat extraction; nil right now is backlog — {(data?.extraction_status?.pending ?? 0).toLocaleString()} undecoded ({(data?.extraction_status?.pending_live ?? 0).toLocaleString()} live queue + {(data?.extraction_status?.slip_backlog ?? 0).toLocaleString()} older slips).</span>
       </div>
@@ -390,7 +390,7 @@ export function Wallets() {
                   {r.hits != null && <span className="ex-badge" title={`Seen in ${r.hits} bucket object(s) · ${r.first_seen ?? ''} → ${r.last_seen ?? ''}`} style={{ marginLeft: 6 }}>{r.hits}× hits</span>}
                   {r.known_operator && <span className="ex-badge" style={{ marginLeft: 6, borderColor: 'var(--accent2)', color: 'var(--accent2)' }} title="Address is on the LE Submission Master operator list">known operator</span>}
                 </td>
-                <td style={{ whiteSpace: 'nowrap' }}><a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view proof</a>{' · '}{r.address && <><a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(r.address, r.txids) ?? '#'} target="_blank" rel="noreferrer" className="small">{tronscanLabel(r.txids)}</a></>}</td>
+                 <td style={{ whiteSpace: 'nowrap' }}><a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view proof</a>{' · '}{r.address && <><a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(r.address, r.txids) ?? '#'} target="_blank" rel="noreferrer" className="small">{tronscanLabel(r.txids)}</a>{' · '}<a href={traceDeskAddressUrl(r.address)} target="_blank" rel="noopener noreferrer" className="small">TraceDesk ↗</a></>}</td>
               </tr>
             ))}
             {rows.length === 0 && (
@@ -482,7 +482,7 @@ export function Wallets() {
                     : w.proof_s3_key
                       ? <span className="small dim" title={`True source key ${w.in_mirror === false ? 'deleted from the bucket before the mirror captured it — no proof available' : 'not yet indexed on this host'}`}>{w.in_mirror === false ? 'deleted' : 'pending'}</span>
                       : <span className="small dim" title="Report citation recorded no bucket object (spreadsheet cell, dashboard snapshot, or chat reference) — not a bucket source">no bucket key</span>}
-                  {w.address && <>{' · '}<a href={arkhamAddressUrl(w.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(w.address, null) ?? '#'} target="_blank" rel="noreferrer" className="small">Tronscan ↗</a></>}
+                   {w.address && <>{' · '}<a href={arkhamAddressUrl(w.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={bestTronscanUrl(w.address, null) ?? '#'} target="_blank" rel="noreferrer" className="small">Tronscan ↗</a>{' · '}<a href={traceDeskAddressUrl(w.address)} target="_blank" rel="noopener noreferrer" className="small">TraceDesk ↗</a></>}
                 </td>
                 <td>
                   {w.in_live
@@ -566,7 +566,7 @@ export function Wallets() {
                           <td className="small dim">{fmtMoney(r.amount_value ?? r.amount_inr, r.amount_currency ?? (r.amount_inr != null ? 'INR' : null))}{r.hits != null ? ` · ${r.hits}×` : ''}</td>
                           <td style={{ whiteSpace: 'nowrap' }}>
                             {r.key && <a href={objectUrl(r.key)} target="_blank" rel="noreferrer" className="small">view proof</a>}
-                            {r.address && <>{' · '}<a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a></>}
+                             {r.address && <>{' · '}<a href={arkhamAddressUrl(r.address)} target="_blank" rel="noreferrer" className="small">Arkham ↗</a>{' · '}<a href={traceDeskAddressUrl(r.address)} target="_blank" rel="noopener noreferrer" className="small">TraceDesk ↗</a></>}
                           </td>
                         </tr>
                       ))}

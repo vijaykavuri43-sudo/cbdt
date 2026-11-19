@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, eventsUrl, objectUrl } from '../lib/api'
 import { readApiCache, writeApiCache } from '../lib/cache'
-import { arkhamAddressUrl, bestTronscanUrl, tronscanLabel } from '../lib/explorers'
+import { arkhamAddressUrl, bestTronscanUrl, traceDeskAddressUrl, tronscanLabel } from '../lib/explorers'
 import { fileColor, fileIcon, fmtBoth, fmtBytes, fmtIST, kindOf } from '../lib/format'
 import { Preview } from '../components/Preview'
 import { VoiceNote } from '../components/VoiceNote'
@@ -309,6 +309,8 @@ function FeedCard({ evt, flash, onOpen }: { evt: FeedEvt; flash: boolean; onOpen
               <a href={arkhamAddressUrl(String(w.address))} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 10 }}>Arkham ↗</a>
               {' · '}
               <a href={bestTronscanUrl(String(w.address), (w as any).txids) ?? '#'} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 10 }}>{tronscanLabel((w as any).txids)}</a>
+              {' · '}
+              <a href={traceDeskAddressUrl(String(w.address))} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ fontSize: 10 }}>TraceDesk ↗</a>
             </span>
           </div>
         ))}

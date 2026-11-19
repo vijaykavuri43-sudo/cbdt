@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, exportRailsUrl } from '../lib/api'
-import { arkhamAddressUrl, bestTronscanUrl } from '../lib/explorers'
+import { arkhamAddressUrl, bestTronscanUrl, traceDeskAddressUrl } from '../lib/explorers'
 import { fmtINR, previewJoined } from '../lib/format'
 
 type RailType = '' | 'upi' | 'bank_account' | 'crypto_wallet' | 'unknown'
@@ -193,6 +193,8 @@ export function Deposits() {
                         <a href={arkhamAddressUrl(r.rail_id)} target="_blank" rel="noreferrer">Arkham ↗</a>
                         {' · '}
                         <a href={bestTronscanUrl(r.rail_id) ?? '#'} target="_blank" rel="noreferrer">Tronscan ↗</a>
+                        {' · '}
+                        <a href={traceDeskAddressUrl(r.rail_id)} target="_blank" rel="noopener noreferrer">TraceDesk ↗</a>
                       </div>
                     )}
                     <span className="money-badge">{railLabels[r.rail_type] || r.rail_type}</span>

@@ -3114,6 +3114,7 @@ _WALLET_HIT_EXPORT_COLUMNS = (
     "dashboard_source_link",
     "arkham_url",
     "tronscan_url",
+    "tracedesk_url",
     "case",
     "auth_ref",
     "fact_type",
@@ -3138,6 +3139,7 @@ _WALLET_DISTINCT_EXPORT_COLUMNS = (
     "all_dashboard_links",
     "arkham_url",
     "tronscan_url",
+    "tracedesk_url",
     "case",
     "auth_ref",
     "fact_type",
@@ -3162,6 +3164,7 @@ _WALLET_REF_EXPORT_COLUMNS = (
     "last_seen_utc",
     "arkham_url",
     "tronscan_url",
+    "tracedesk_url",
     "fact_type",
     "case",
     "auth_ref",
@@ -3192,16 +3195,17 @@ def _wallet_source_keys() -> dict[str, list[str]]:
     return out
 
 
-def _wallet_explorer_urls(addr: str) -> tuple[str, str]:
+def _wallet_explorer_urls(addr: str) -> tuple[str, str, str]:
     from urllib.parse import quote
 
     a = (addr or "").strip()
     if not a:
-        return "", ""
+        return "", "", ""
     q = quote(a, safe="")
     return (
         f"https://platform.arkhamintelligence.com/explorer/address/{q}",
         f"https://tronscan.org/#/address/{q}",
+        f"https://cryptocasedesk.vercel.app/#/tracer?newgraph=1&address={q}",
     )
 
 
@@ -3230,7 +3234,7 @@ def export_wallets(
         for r in cur:
             addr = r["address"] or ""
             key = r["key"] or ""
-            arkham, tron = _wallet_explorer_urls(addr)
+            arkham, tron, tracedesk = _wallet_explorer_urls(addr)
             amt = (
                 r["amount_value"] if r["amount_value"] is not None else r["amount_inr"]
             )
@@ -3249,6 +3253,7 @@ def export_wallets(
                     "dashboard_source_link": _source_link(key) if key else "",
                     "arkham_url": arkham,
                     "tronscan_url": tron,
+                    "tracedesk_url": tracedesk,
                     "case": config.CASE_ID,
                     "auth_ref": config.AUTH_REF,
                     "fact_type": "ai_lead",
@@ -3269,7 +3274,7 @@ def export_wallets(
                 addr = it.get("address") or ""
                 key = it.get("key") or ""
                 all_keys = keys_by_addr.get(addr) or ([key] if key else [])
-                arkham, tron = _wallet_explorer_urls(addr)
+                arkham, tron, tracedesk = _wallet_explorer_urls(addr)
                 amt = it.get("amount_value")
                 if amt is None:
                     amt = it.get("amount_inr")
@@ -3299,6 +3304,7 @@ def export_wallets(
                         ),
                         "arkham_url": arkham,
                         "tronscan_url": tron,
+                        "tracedesk_url": tracedesk,
                         "case": config.CASE_ID,
                         "auth_ref": config.AUTH_REF,
                         "fact_type": "ai_lead",
@@ -3320,7 +3326,7 @@ def export_wallets(
             addr = r.get("address") or ""
             m = master.get(addr.lower())
             t = times.get(addr) or {}
-            arkham, tron = _wallet_explorer_urls(addr)
+            arkham, tron, tracedesk = _wallet_explorer_urls(addr)
             path, folder, all_keys = _officer_source_path(
                 r.get("proof_s3_key") or "",
                 r.get("source_ref") or "",
@@ -3346,6 +3352,7 @@ def export_wallets(
                     "last_seen_utc": t.get("last_seen") or "",
                     "arkham_url": arkham,
                     "tronscan_url": tron,
+                    "tracedesk_url": tracedesk,
                     "fact_type": r.get("fact_type") or "fact",
                     "case": config.CASE_ID,
                     "auth_ref": config.AUTH_REF,
