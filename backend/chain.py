@@ -1857,7 +1857,12 @@ def _run_backfill(
                 counts[skip] = counts.get(skip, 0) + 1
                 results.append({"source_key": key, "skipped": skip})
                 print(f"[chain] {idx}/{len(todo)} skipped:{skip} {key}", flush=True)
-                api_streak += 1
+                # Only an API outage stops the pass; a queue entry whose
+                # object disappeared is simply done.
+                if skip in ("api_unavailable", "api_error"):
+                    api_streak += 1
+                else:
+                    api_streak = 0
             else:
                 api_streak = 0
                 st = str((res.get("summary") or {}).get("tx_status") or "unknown")
