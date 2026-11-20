@@ -544,6 +544,7 @@ _fail_count = 0
 _pause_until = 0.0
 _last_ok_utc = ""
 _last_error = ""
+_error_seq = 0
 _stats_lock = threading.Lock()
 
 
@@ -572,12 +573,28 @@ def _note_ok():
 
 
 def _note_fail(msg: str):
-    global _fail_count, _pause_until, _last_error
+    global _fail_count, _pause_until, _last_error, _error_seq
     with _stats_lock:
         _fail_count += 1
+        _error_seq += 1
         _last_error = str(msg)[:300]
         if _fail_count >= 10:
             _pause_until = time.time() + 600
+
+
+def api_ready() -> bool:
+    """False while Tronscan is failing/paused.
+
+    Callers must not persist a negative ("unresolved") result while the API is
+    unavailable: that would permanently mislabel a slip after a transient 429
+    or network outage.
+    """
+    with _stats_lock:
+        return (
+            ENABLED
+            and time.time() >= _pause_until
+            and _fail_count < 3
+        )
 
 
 def _api_get(path: str, params: dict) -> dict:
@@ -1558,13 +1575,23 @@ def verify_source_key(source_key: str, known: Optional[list[str]] = None) -> dic
     bundle = db.chain_source_bundle(source_key)
     if not bundle:
         return {"source_key": source_key, "skipped": "missing"}
+    if not api_ready():
+        # Never write "unresolved" while Tronscan is failing; the next run
+        # (or the worker) retries instead of permanently mislabelling a slip.
+        return {"source_key": source_key, "skipped": "api_unavailable"}
     known = known if known is not None else db.chain_known_addresses()
+    with _stats_lock:
+        err_before = _error_seq
     result = resolve_source(
         source_key,
         bundle.get("payload") or {},
         bundle.get("rows") or [],
         known=known,
     )
+    with _stats_lock:
+        failed = _error_seq > err_before
+    if failed:
+        return {"source_key": source_key, "skipped": "api_error", "result": result}
     db.chain_apply_source_result(source_key, result)
     try:
         db.chain_queue_mark_checked(source_key)
@@ -1628,6 +1655,9 @@ def _worker_loop():
         return
     while not _stop.is_set():
         try:
+            if not api_ready():
+                _stop.wait(WORKER_SLEEP)
+                continue
             # A manual/API backfill already owns the Tronscan budget; don't
             # duplicate its work from the background worker.
             with _job_lock:
@@ -1727,19 +1757,25 @@ def _run_backfill(
                 )
             else:
                 res = verify_source_key(key, known=known)
-            st = str((res.get("summary") or {}).get("tx_status") or "unknown")
-            counts[st] = counts.get(st, 0) + 1
-            results.append(
-                {
-                    "source_key": key,
-                    "tx_status": st,
-                    "txid": (res.get("summary") or {}).get("txid") or "",
-                }
-            )
-            print(
-                f"[chain] {idx}/{len(todo)} {st} {key}",
-                flush=True,
-            )
+            skip = str(res.get("skipped") or "")
+            if skip:
+                counts[skip] = counts.get(skip, 0) + 1
+                results.append({"source_key": key, "skipped": skip})
+                print(f"[chain] {idx}/{len(todo)} skipped:{skip} {key}", flush=True)
+            else:
+                st = str((res.get("summary") or {}).get("tx_status") or "unknown")
+                counts[st] = counts.get(st, 0) + 1
+                results.append(
+                    {
+                        "source_key": key,
+                        "tx_status": st,
+                        "txid": (res.get("summary") or {}).get("txid") or "",
+                    }
+                )
+                print(
+                    f"[chain] {idx}/{len(todo)} {st} {key}",
+                    flush=True,
+                )
         except Exception as e:  # noqa: BLE001
             counts["error"] = counts.get("error", 0) + 1
             results.append({"source_key": key, "error": str(e)[:200]})
@@ -1838,6 +1874,7 @@ def status() -> dict:
         "api_base": TRONSCAN_BASE,
         "api_key": bool(TRONSCAN_API_KEY),
         "api_ok": fails < 10 and not paused,
+        "api_ready": api_ready(),
         "api_last_ok_utc": last_ok,
         "api_last_error": last_error,
         "rate_per_sec": RATE_PER_SEC,
