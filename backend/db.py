@@ -154,12 +154,12 @@ def connect() -> sqlite3.Connection:
     if conn is None:
         config.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(
-            str(config.DB_PATH), timeout=30.0, factory=_SafeConnection
+            str(config.DB_PATH), timeout=120.0, factory=_SafeConnection
         )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA busy_timeout=120000")
         # Read-heavy 1M+ row dashboard on a 16GB host: keep hot index/B-tree
         # pages in RAM instead of re-reading them per navigation (2026-09-03).
         conn.execute("PRAGMA cache_size=-262144")  # 256MB page cache
@@ -172,8 +172,20 @@ def connect() -> sqlite3.Connection:
             conn.execute("PRAGMA journal_size_limit=134217728")  # 128MB
         except Exception:
             pass
-        conn.executescript(SCHEMA)
-        _migrate(conn)
+        # One-time schema/migration writes are serialized across uvicorn
+        # workers and the sync container (same data dir, same flock). On a
+        # large live DB a concurrent bulk writer can hold SQLite's write lock
+        # past the busy timeout; retry instead of failing app startup.
+        with _writer_lock:
+            for attempt in range(8):
+                try:
+                    conn.executescript(SCHEMA)
+                    _migrate(conn)
+                    break
+                except sqlite3.OperationalError as e:
+                    if "locked" not in str(e).lower() or attempt == 7:
+                        raise
+                    time.sleep(2 + attempt * 2)
         _local.conn = conn
     return conn
 
