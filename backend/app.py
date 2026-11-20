@@ -2503,6 +2503,7 @@ def chain_verify_api(
     dry_run: bool = False,
     background: bool = True,
     pending_only: bool = False,
+    recheck: bool = False,
     _=Depends(auth),
 ):
     """Backfill canonical wallet addresses + verified transaction hashes.
@@ -2511,6 +2512,8 @@ def chain_verify_api(
     job counters. dry_run resolves without writing (audit before a backfill).
     pending_only skips sources already checked, so repeated calls advance
     through the unchecked backlog instead of redoing the newest rows.
+    recheck retries only sources that never produced a transaction (after a
+    resolver fix or a transient Tronscan failure).
     """
     if background:
         return chain.start_backfill(
@@ -2519,6 +2522,7 @@ def chain_verify_api(
             limit=limit,
             dry_run=dry_run,
             pending_only=pending_only,
+            recheck=recheck,
         )
     return chain.backfill(
         since=since,
@@ -2526,6 +2530,7 @@ def chain_verify_api(
         limit=limit,
         dry_run=dry_run,
         pending_only=pending_only,
+        recheck=recheck,
     )
 
 

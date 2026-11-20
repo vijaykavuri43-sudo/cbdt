@@ -6410,6 +6410,48 @@ def chain_backfill_sources(
     return out[:limit]
 
 
+def chain_recheck_sources(limit: int = 500) -> list[str]:
+    """Crypto sources whose previous chain result was not a transaction.
+
+    Used after resolver/OCR fixes and for transient Tronscan failures: a
+    checked source that stayed ``unresolved``/``ambiguous`` is retried without
+    redoing every verified row.
+    """
+    limit = max(1, min(int(limit), 100000))
+    rows = (
+        connect()
+        .execute(
+            "SELECT source_key FROM payment_transactions"
+            " WHERE rail_type='crypto_wallet' AND source_key NOT LIKE 'reference:%'"
+            " AND (tx_status IN ('unresolved','ambiguous')"
+            "      OR (tx_status='' AND chain_checked_utc!=''))"
+            " GROUP BY source_key ORDER BY MAX(last_modified) DESC LIMIT ?",
+            (limit,),
+        )
+        .fetchall()
+    )
+    return [r["source_key"] for r in rows]
+
+
+def chain_recheck_queue_keys(limit: int = 500) -> list[str]:
+    """Checked queue objects that never produced a transaction row."""
+    limit = max(1, min(int(limit), 100000))
+    rows = (
+        connect()
+        .execute(
+            "SELECT q.key FROM chain_source_queue q"
+            " WHERE q.checked_utc!='' AND NOT EXISTS ("
+            "   SELECT 1 FROM payment_transactions p"
+            "   WHERE p.source_key=q.key AND p.rail_type='crypto_wallet'"
+            "   AND p.txid!='')"
+            " ORDER BY q.queued_utc DESC LIMIT ?",
+            (limit,),
+        )
+        .fetchall()
+    )
+    return [r["key"] for r in rows]
+
+
 def chain_status_counts() -> dict:
     """Coverage counters for /api/chain/status and the dashboard badge."""
     c = connect()

@@ -296,6 +296,14 @@ _LABELED_PREFIX_RE = re.compile(
 _SPLIT_RUN_RE = re.compile(
     rf"([0-9a-fA-F]{{20,}})\s*(?:\.{{2,}}|…|\s+)\s*([0-9a-fA-F]{{8,}})"
 )
+# The whole hash line after a label, including OCR whitespace inside the hex
+# run ("833f...419 1f20...e4", "957449 1d3c...f50d8"). Scanned separately so
+# a wrapped hash is joined instead of being lost.
+_LABELED_WINDOW_RE = re.compile(
+    rf"(?:hash|tx\.?\s*id|txid|transaction\s*(?:hash|id))\s*[:#]?\s*"
+    rf"([{_HEXISH}\s.…]{{10,160}})",
+    re.IGNORECASE,
+)
 _HEX_FIX = str.maketrans(
     {
         "l": "1",
@@ -364,6 +372,34 @@ def extract_txid_candidates(text: str) -> list[dict]:
         if len(h) == 64:
             add(full=h, raw=m.group(0), kind="full_ocr")
 
+    # 2b) Wrapped labeled hash lines: OCR splits the 64-hex string with
+    # spaces ("833f...419 1f20...e4", "957449 1d3c...f50d8"). Join the run
+    # before fragment parsing so the hash is not lost.
+    for m in _LABELED_WINDOW_RE.finditer(text):
+        body = m.group(1)
+        if "..." in body or "…" in body:
+            parts = re.split(r"(?:\.{2,}|…)", body, maxsplit=1)
+            prefix = _norm_hex(parts[0])
+            tail = parts[1].strip() if len(parts) > 1 else ""
+            # The hash tail is the first token after the ellipsis; later
+            # hexish-looking words ("D", "Block") are page text, not hash.
+            suffix = _norm_hex(tail.split()[0]) if tail else ""
+            if len(prefix) + len(suffix) == 64:
+                add(full=prefix + suffix, raw=m.group(0), kind="full_wrapped")
+            elif len(prefix) >= 10:
+                add(
+                    prefix=prefix,
+                    suffix=suffix,
+                    raw=m.group(0),
+                    kind="fragment_wrapped",
+                )
+        else:
+            h = _norm_hex(body)
+            if len(h) >= 64:
+                add(full=h[:64], raw=m.group(0), kind="full_wrapped")
+            elif len(h) >= 10:
+                add(prefix=h, raw=m.group(0), kind="prefix_wrapped")
+
     # 3) Labeled fragments: "Hash: 00d1f557c42111f9...34b31".
     for m in _FRAG_RE.finditer(text):
         prefix = _norm_hex(m.group(1))
@@ -388,7 +424,9 @@ def extract_txid_candidates(text: str) -> list[dict]:
     for m in _SPLIT_RUN_RE.finditer(text):
         prefix = _norm_hex(m.group(1))
         suffix = _norm_hex(m.group(2))
-        if len(prefix) >= 20:
+        if len(prefix) + len(suffix) == 64:
+            add(full=prefix + suffix, raw=m.group(0), kind="wrapped_full")
+        elif len(prefix) >= 20:
             add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="wrapped")
 
     return out
@@ -414,6 +452,10 @@ def extract_block_number(text: str) -> Optional[int]:
     return n if 1_000_000 <= n <= 999_999_999 else None
 
 
+_block_cache: dict[tuple[int, str], tuple[float, list[str]]] = {}
+_block_cache_lock = threading.Lock()
+
+
 def block_txids(block: int, max_pages: int = 12, stop_prefix: str = "") -> list[str]:
     """Every transaction hash in one block (deterministic fragment anchor).
 
@@ -423,6 +465,11 @@ def block_txids(block: int, max_pages: int = 12, stop_prefix: str = "") -> list[
     prefix is unique inside a block, so the remaining pages add nothing.
     """
     stop_prefix = (stop_prefix or "").lower()
+    cache_key = (int(block), stop_prefix[:14])
+    with _block_cache_lock:
+        hit = _block_cache.get(cache_key)
+        if hit and time.time() - hit[0] < 21600:
+            return hit[1]
     out: list[str] = []
     for page in range(max(1, max_pages)):
         data = _api_get(
@@ -442,6 +489,8 @@ def block_txids(block: int, max_pages: int = 12, stop_prefix: str = "") -> list[
             if _is_full_hex(h) and h not in out:
                 out.append(h)
                 if len(stop_prefix) >= 10 and h.startswith(stop_prefix):
+                    with _block_cache_lock:
+                        _block_cache[cache_key] = (time.time(), [h])
                     return [h]
         if len(items) < PAGE_SIZE:
             break
@@ -451,6 +500,8 @@ def block_txids(block: int, max_pages: int = 12, stop_prefix: str = "") -> list[
             total = 0
         if total and len(out) >= total:
             break
+    with _block_cache_lock:
+        _block_cache[cache_key] = (time.time(), out)
     return out
 
 
@@ -1627,7 +1678,12 @@ def _worker_loop():
 
 
 def _run_backfill(
-    since: str, until: str, limit: int, dry_run: bool, pending_only: bool = False
+    since: str,
+    until: str,
+    limit: int,
+    dry_run: bool,
+    pending_only: bool = False,
+    recheck: bool = False,
 ) -> dict:
     known = db.chain_known_addresses()
     queue_scan = {"queued": 0, "scanned": 0, "done": False}
@@ -1638,10 +1694,17 @@ def _run_backfill(
             batch=5000,
             max_batches=int(os.environ.get("S3LM_CHAIN_OBJECT_BATCHES", "10") or 10),
         )
-    keys = db.chain_backfill_sources(
-        since=since, until=until, limit=limit, pending_only=pending_only
-    )
+    if recheck:
+        # Focused pass after a resolver/OCR fix or a transient Tronscan error:
+        # retry only sources that never produced a transaction.
+        keys = db.chain_recheck_sources(limit=limit)
+    else:
+        keys = db.chain_backfill_sources(
+            since=since, until=until, limit=limit, pending_only=pending_only
+        )
     queue_keys = db.chain_pending_queue_keys(limit=limit)
+    if recheck:
+        queue_keys = db.chain_recheck_queue_keys(limit=limit) + queue_keys
     wallet_keys = db.chain_pending_wallet_keys(limit=limit)
     seen: set[str] = set()
     results = []
@@ -1690,6 +1753,7 @@ def _run_backfill(
         "ok": True,
         "dry_run": bool(dry_run),
         "pending_only": bool(pending_only),
+        "recheck": bool(recheck),
         "since": since,
         "until": until,
         "limit": limit,
@@ -1707,8 +1771,9 @@ def backfill(
     limit: int = 500,
     dry_run: bool = True,
     pending_only: bool = False,
+    recheck: bool = False,
 ) -> dict:
-    return _run_backfill(since, until, limit, dry_run, pending_only)
+    return _run_backfill(since, until, limit, dry_run, pending_only, recheck)
 
 
 def start_backfill(
@@ -1717,6 +1782,7 @@ def start_backfill(
     limit: int = 500,
     dry_run: bool = True,
     pending_only: bool = False,
+    recheck: bool = False,
 ) -> dict:
     global _job
     with _job_lock:
@@ -1730,6 +1796,7 @@ def start_backfill(
             "limit": limit,
             "dry_run": bool(dry_run),
             "pending_only": bool(pending_only),
+            "recheck": bool(recheck),
             "checked": 0,
             "counts": {},
         }
@@ -1737,7 +1804,7 @@ def start_backfill(
     def _run():
         global _job
         try:
-            res = _run_backfill(since, until, limit, dry_run, pending_only)
+            res = _run_backfill(since, until, limit, dry_run, pending_only, recheck)
             with _job_lock:
                 _job.update(
                     {
