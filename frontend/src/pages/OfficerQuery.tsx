@@ -1,12 +1,13 @@
 import { Fragment, useEffect, useState } from 'react'
 import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl, saveCsvFromUrl } from '../lib/api'
-import { arkhamAddressUrl, bestTronscanUrl, traceDeskAddressUrl } from '../lib/explorers'
+import { arkhamAddressUrl, bestTronscanUrl, firstTxid, traceDeskAddressUrl, tronscanTxUrl } from '../lib/explorers'
 import { fmtINR, fmtIST, fmtTime, previewJoined, shortKey } from '../lib/format'
 
 type Folder = 'all' | 'deposit' | 'withdrawal' | 'bankingqr' | 'other'
 type RailType = 'upi' | 'bank_account' | 'crypto_wallet'
 type View = 'slips' | 'unique'
 type Side = 'both' | 'deposit' | 'withdrawal'
+type ChainFilter = '' | 'verified' | 'derived' | 'ambiguous' | 'unresolved' | 'unchecked'
 
 interface SlipRow {
   source_key: string
@@ -16,6 +17,18 @@ interface SlipRow {
   utr: string
   rail_type: string
   rail_id: string
+  rail_id_raw?: string
+  wallet_status?: string
+  txid?: string
+  txids?: string[] | string
+  tx_status?: string
+  tx_method?: string
+  tx_confidence?: string
+  tx_time?: string
+  tx_amount?: number | null
+  tx_token?: string
+  tx_contract_ret?: string
+  chain_checked_utc?: string
   account_holder: string
   ifsc: string
   network: string
@@ -27,6 +40,17 @@ interface SlipRow {
 interface UniqueRow {
   rail_type: string
   rail_id: string
+  rail_id_raw?: string
+  wallet_status?: string
+  txid?: string
+  txids?: string[] | string
+  tx_status?: string
+  tx_method?: string
+  tx_confidence?: string
+  tx_time?: string
+  tx_amount?: number | null
+  tx_token?: string
+  chain_checked_utc?: string
   rail_quality?: string
   account_holder: string
   ifsc: string
@@ -170,9 +194,126 @@ function railFileTag(rail: RailType): string {
   return 'upi'
 }
 
-function uniqueColSpan(rail: RailType): number {
-  if (rail === 'bank_account') return 8
-  return 7
+const CHAIN_FILTERS: { id: ChainFilter; label: string }[] = [
+  { id: '', label: 'All chain states' },
+  { id: 'verified', label: 'Verified tx' },
+  { id: 'derived', label: 'Derived tx' },
+  { id: 'ambiguous', label: 'Ambiguous' },
+  { id: 'unresolved', label: 'Unresolved' },
+  { id: 'unchecked', label: 'Not checked' },
+]
+
+function txidList(value: string[] | string | undefined | null): string[] {
+  if (!value) return []
+  let items: unknown[] = []
+  if (Array.isArray(value)) items = value
+  else {
+    const raw = String(value).trim()
+    if (!raw) return []
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      items = Array.isArray(parsed) ? parsed : [parsed]
+    } catch {
+      items = raw.split(/[,\s]+/)
+    }
+  }
+  const out: string[] = []
+  for (const item of items) {
+    const s = String(item ?? '').trim().toLowerCase()
+    if (/^[0-9a-f]{64}$/.test(s) && !out.includes(s)) out.push(s)
+  }
+  return out
+}
+
+function chainLabel(status: string): string {
+  if (status === 'verified') return 'verified'
+  if (status === 'derived') return 'derived'
+  if (status === 'ambiguous') return 'ambiguous'
+  if (status === 'unresolved') return 'unresolved'
+  return 'unchecked'
+}
+
+function chainTitle(row: { tx_status?: string; tx_method?: string; tx_confidence?: string; wallet_status?: string; chain_checked_utc?: string }): string {
+  const st = row.tx_status || 'unchecked'
+  const parts = [
+    st === 'verified'
+      ? 'Full transaction hash read from the slip and confirmed on Tronscan.'
+      : st === 'derived'
+        ? 'Transaction hash reconstructed from the OCR fragment and cross-checked on-chain.'
+        : st === 'ambiguous'
+          ? 'Several on-chain transactions fit; every candidate is listed — not asserted as fact.'
+          : st === 'unresolved'
+            ? 'No unique on-chain transaction could be proven from this slip.'
+            : 'Not yet checked against Tronscan.',
+  ]
+  if (row.tx_method) parts.push(`method: ${row.tx_method}`)
+  if (row.tx_confidence) parts.push(`confidence: ${row.tx_confidence}`)
+  if (row.wallet_status) parts.push(`wallet: ${row.wallet_status}`)
+  if (row.chain_checked_utc) parts.push(`checked: ${fmtTime(row.chain_checked_utc)}`)
+  return parts.join(' · ')
+}
+
+function ChainCell({ row }: { row: {
+  txid?: string
+  txids?: string[] | string
+  tx_status?: string
+  tx_method?: string
+  tx_confidence?: string
+  tx_time?: string
+  tx_amount?: number | null
+  tx_token?: string
+  wallet_status?: string
+  chain_checked_utc?: string
+} }) {
+  const status = (row.tx_status || '').toLowerCase()
+  const candidates = txidList(row.txids)
+  const tx = firstTxid(row.txid) || firstTxid(row.txids)
+  if (status === 'ambiguous' && candidates.length > 0) {
+    return (
+      <div className="oq-tx-cell">
+        <span className="chain-badge chain-ambiguous" title={chainTitle(row)}>ambiguous</span>
+        <details className="oq-tx-candidates">
+          <summary>{candidates.length} candidate{candidates.length === 1 ? '' : 's'}</summary>
+          <ul>
+            {candidates.slice(0, 8).map((c) => (
+              <li key={c}>
+                <a className="mono tiny" href={tronscanTxUrl(c)} target="_blank" rel="noreferrer" title={c}>
+                  {c.slice(0, 10)}…{c.slice(-8)}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </details>
+      </div>
+    )
+  }
+  return (
+    <div className="oq-tx-cell">
+      {tx ? (
+        <a className="mono small oq-txid" href={tronscanTxUrl(tx)} target="_blank" rel="noreferrer" title={tx}>
+          {tx.slice(0, 10)}…{tx.slice(-8)}
+        </a>
+      ) : (
+        <span className="tiny dim">no hash</span>
+      )}
+      <span className={`chain-badge chain-${status || 'unchecked'}`} title={chainTitle(row)}>
+        {chainLabel(status)}
+      </span>
+      {row.tx_time ? (
+        <div className="tiny dim">
+          {fmtTime(row.tx_time)}
+          {row.tx_amount != null ? ` · ${row.tx_amount} ${row.tx_token || ''}` : ''}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function uniqueColSpan(): number {
+  // crypto: address, network, tx hash, image hits, slips, first, last, sample
+  // bank:   address, UTR, holder/IFSC, slips, amount, first, last, sample
+  // upi:    address, UTR, network, slips, amount, first, last, sample
+  return 8
 }
 
 function clickOnControl(target: EventTarget | null): boolean {
@@ -199,6 +340,7 @@ export function OfficerQuery() {
   const [folder, setFolder] = useState<Folder>('all')
   const [railType, setRailType] = useState<RailType>('upi')
   const [direction, setDirection] = useState<Side>('both')
+  const [chainFilter, setChainFilter] = useState<ChainFilter>('')
   const [view, setView] = useState<View>('unique')
   const [queryInput, setQueryInput] = useState('')
   const [applied, setApplied] = useState<{
@@ -207,6 +349,7 @@ export function OfficerQuery() {
     folder: Folder
     rail_type: RailType
     direction: Side
+    chain: ChainFilter
     view: View
     q: string
   } | null>(null)
@@ -230,6 +373,7 @@ export function OfficerQuery() {
     folder: next.folder === 'all' ? '' : next.folder,
     source: 'object',
     direction: next.direction,
+    tx_status: next.rail_type === 'crypto_wallet' ? next.chain : '',
   })
 
   async function run(next: NonNullable<typeof applied>, nextPage = 0) {
@@ -294,6 +438,7 @@ export function OfficerQuery() {
       folder,
       rail_type: railType,
       direction,
+      chain: chainFilter,
       view,
       q: queryInput.trim(),
     })
@@ -311,7 +456,13 @@ export function OfficerQuery() {
 
   function pickRail(next: RailType) {
     setRailType(next)
-    if (applied) void run({ ...applied, rail_type: next, ...currentSinceUntil(), q: queryInput.trim() })
+    const chain = next === 'crypto_wallet' ? chainFilter : ''
+    if (applied) void run({ ...applied, rail_type: next, chain, ...currentSinceUntil(), q: queryInput.trim() })
+  }
+
+  function pickChain(next: ChainFilter) {
+    setChainFilter(next)
+    if (applied) void run({ ...applied, chain: next, ...currentSinceUntil(), q: queryInput.trim() })
   }
 
   function pickView(next: View) {
@@ -403,7 +554,7 @@ export function OfficerQuery() {
   const data = view === 'unique' ? uniques : slips
   const total = data?.rows_total ?? 0
   const folderHint = FOLDERS.find((f) => f.id === (applied?.folder ?? folder))?.hint ?? ''
-  const span = applied ? uniqueColSpan(applied.rail_type) : 7
+  const span = applied ? uniqueColSpan() : 7
 
   return (
     <>
@@ -531,6 +682,21 @@ export function OfficerQuery() {
             ))}
           </div>
         </div>
+
+        {railType === 'crypto_wallet' && (
+          <label className="oq-field oq-chain-filter">
+            <span className="tiny dim">Tronscan status</span>
+            <select
+              value={chainFilter}
+              onChange={(e) => pickChain(e.target.value as ChainFilter)}
+              title="Filter wallets by on-chain transaction verification state"
+            >
+              {CHAIN_FILTERS.map((c) => (
+                <option key={c.id} value={c.id}>{c.label}</option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <label className="oq-field" style={{ marginTop: 10 }}>
           <span className="tiny dim">Optional search</span>
@@ -662,6 +828,7 @@ export function OfficerQuery() {
                       <th>{railColLabel(applied.rail_type)}</th>
                       {applied.rail_type !== 'crypto_wallet' && <th>UTR</th>}
                       {applied.rail_type !== 'upi' && <th>{applied.rail_type === 'bank_account' ? 'Holder / IFSC' : 'Network'}</th>}
+                      {applied.rail_type === 'crypto_wallet' && <th>Transaction hash</th>}
                       {applied.rail_type === 'crypto_wallet' && <th className="num">Image hits</th>}
                       <th className="num">{applied.rail_type === 'crypto_wallet' ? 'OCR slips' : 'Slips'}</th>
                       {applied.rail_type !== 'crypto_wallet' && <th className="num">Amount</th>}
@@ -729,6 +896,9 @@ export function OfficerQuery() {
                               </>
                             )}
                           </td>
+                        )}
+                        {applied.rail_type === 'crypto_wallet' && (
+                          <td><ChainCell row={r} /></td>
                         )}
                         {applied.rail_type === 'crypto_wallet' && (
                           <td className="num">{(r.image_hits ?? 0).toLocaleString()}</td>
@@ -823,6 +993,7 @@ export function OfficerQuery() {
                       <th className="num">Amount</th>
                       <th>UTR</th>
                       <th>{railColLabel(applied.rail_type)}</th>
+                      {applied.rail_type === 'crypto_wallet' && <th>Transaction hash</th>}
                       {applied.rail_type !== 'upi' && <th>{applied.rail_type === 'bank_account' ? 'Holder / IFSC' : 'Network'}</th>}
                       <th>Source object</th>
                     </tr>
@@ -834,7 +1005,17 @@ export function OfficerQuery() {
                         <td className="small dim" title={r.seen_utc || ''}>{r.seen_utc ? fmtTime(r.seen_utc) : '—'}</td>
                         <td className="num money">{r.amount_inr != null ? fmtINR(r.amount_inr) : '—'}</td>
                         <td className="mono small">{r.utr || '—'}</td>
-                        <td className="mono money-rail">{r.rail_id || 'unresolved'}</td>
+                        <td className="mono money-rail">
+                          {r.rail_id || 'unresolved'}
+                          {r.rail_id_raw && r.rail_id_raw !== r.rail_id && (
+                            <div className="tiny dim mono" title="Raw OCR value (preserved as evidence)">
+                              OCR: {r.rail_id_raw}
+                            </div>
+                          )}
+                        </td>
+                        {applied.rail_type === 'crypto_wallet' && (
+                          <td><ChainCell row={r} /></td>
+                        )}
                         {applied.rail_type !== 'upi' && (
                           <td>
                             <div>{r.account_holder || '—'}</div>

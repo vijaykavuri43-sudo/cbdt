@@ -3,6 +3,7 @@
 import json
 import csv
 import fcntl
+import hashlib
 import math
 import os
 import re
@@ -223,9 +224,62 @@ def _migrate(conn: sqlite3.Connection):
     for name, ddl in (
         ("rail_role", "TEXT NOT NULL DEFAULT 'unknown'"),
         ("role_confidence", "TEXT NOT NULL DEFAULT 'low'"),
+        # Tronscan verification (2026-11-20): canonical wallet + on-chain tx.
+        ("rail_id_raw", "TEXT NOT NULL DEFAULT ''"),
+        ("wallet_status", "TEXT NOT NULL DEFAULT ''"),
+        ("txid", "TEXT NOT NULL DEFAULT ''"),
+        ("txids", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_status", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_method", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_confidence", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_time", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_from", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_to", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_amount", "REAL"),
+        ("tx_token", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_contract_ret", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_candidates", "TEXT NOT NULL DEFAULT ''"),
+        ("chain_checked_utc", "TEXT NOT NULL DEFAULT ''"),
     ):
         if name not in payment_cols:
             conn.execute(f"ALTER TABLE payment_transactions ADD COLUMN {name} {ddl}")
+    wallet_cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info(wallet_hits)").fetchall()
+    }
+    for name, ddl in (
+        ("raw_address", "TEXT NOT NULL DEFAULT ''"),
+        ("wallet_status", "TEXT NOT NULL DEFAULT ''"),
+        ("txid", "TEXT NOT NULL DEFAULT ''"),
+        ("tx_status", "TEXT NOT NULL DEFAULT ''"),
+        ("chain_checked_utc", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if name not in wallet_cols:
+            conn.execute(f"ALTER TABLE wallet_hits ADD COLUMN {name} {ddl}")
+    try:
+        wr_cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(wallet_resolutions)").fetchall()
+        }
+        if "status" not in wr_cols:
+            conn.execute(
+                "ALTER TABLE wallet_resolutions ADD COLUMN status TEXT NOT NULL DEFAULT ''"
+            )
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pay_txid ON payment_transactions(txid)"
+            " WHERE txid != ''"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_pay_txstatus ON payment_transactions(tx_status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_wh_txid ON wallet_hits(txid)"
+            " WHERE txid != ''"
+        )
+    except sqlite3.OperationalError:
+        pass
     try:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_obj_ext ON objects(ext) WHERE ext != ''"
@@ -339,6 +393,66 @@ CREATE TABLE IF NOT EXISTS wallet_hits(
 );
 CREATE INDEX IF NOT EXISTS idx_wh_lm ON wallet_hits(last_modified DESC);
 CREATE INDEX IF NOT EXISTS idx_wh_addr_lm ON wallet_hits(address, last_modified DESC);
+-- Tronscan verification (2026-11-20): raw OCR address -> canonical address,
+-- one row per distinct raw string. Never overwrites the source evidence.
+CREATE TABLE IF NOT EXISTS wallet_resolutions(
+  raw_address TEXT PRIMARY KEY,
+  resolved_address TEXT NOT NULL DEFAULT '',
+  network TEXT NOT NULL DEFAULT 'TRON',
+  method TEXT NOT NULL DEFAULT '',
+  confidence TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '',
+  tronscan_exists INTEGER NOT NULL DEFAULT 0,
+  first_seen_utc TEXT NOT NULL DEFAULT '',
+  checked_utc TEXT NOT NULL DEFAULT ''
+);
+-- Cached Tronscan transaction details (immutable; status may be refreshed).
+CREATE TABLE IF NOT EXISTS chain_tx_cache(
+  txid TEXT PRIMARY KEY,
+  network TEXT NOT NULL DEFAULT 'TRON',
+  from_address TEXT NOT NULL DEFAULT '',
+  to_address TEXT NOT NULL DEFAULT '',
+  amount REAL,
+  token TEXT NOT NULL DEFAULT '',
+  token_contract TEXT NOT NULL DEFAULT '',
+  block_ts TEXT NOT NULL DEFAULT '',
+  contract_ret TEXT NOT NULL DEFAULT '',
+  confirmed INTEGER NOT NULL DEFAULT 0,
+  raw_json TEXT NOT NULL DEFAULT '',
+  response_sha256 TEXT NOT NULL DEFAULT '',
+  fetched_utc TEXT NOT NULL DEFAULT ''
+);
+-- Audit trail: every txid candidate considered for a slip, not just the winner.
+CREATE TABLE IF NOT EXISTS chain_links(
+  source_key TEXT NOT NULL,
+  rail_id TEXT NOT NULL,
+  txid TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT '',
+  method TEXT NOT NULL DEFAULT '',
+  confidence TEXT NOT NULL DEFAULT '',
+  match_score REAL NOT NULL DEFAULT 0,
+  from_address TEXT NOT NULL DEFAULT '',
+  to_address TEXT NOT NULL DEFAULT '',
+  amount REAL,
+  token TEXT NOT NULL DEFAULT '',
+  block_ts TEXT NOT NULL DEFAULT '',
+  contract_ret TEXT NOT NULL DEFAULT '',
+  candidates_json TEXT NOT NULL DEFAULT '',
+  checked_utc TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(source_key, rail_id, txid)
+);
+CREATE INDEX IF NOT EXISTS idx_chain_links_key ON chain_links(source_key);
+-- Object-level discovery queue: enriched objects whose OCR text mentions a
+-- Tronscan transaction/hash but which never became a payment row or wallet
+-- hit (truncated address, chat screenshot, …). Scanned once by rowid cursor.
+CREATE TABLE IF NOT EXISTS chain_source_queue(
+  key TEXT PRIMARY KEY,
+  reason TEXT NOT NULL DEFAULT '',
+  queued_utc TEXT NOT NULL DEFAULT '',
+  checked_utc TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_chain_queue_pending
+  ON chain_source_queue(checked_utc, queued_utc);
 CREATE TABLE IF NOT EXISTS upi_hits(
   key TEXT PRIMARY KEY,
   vpa TEXT NOT NULL,
@@ -1006,13 +1120,114 @@ def get_object_sizes(keys: list[str]) -> dict[str, dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Tronscan chain verification helpers (2026-11-20)
+# ---------------------------------------------------------------------------
+
+_canon_lock = threading.Lock()
+_canon_cache: dict[tuple[str, str], dict] = {}
+
+
+def _canonical_wallet(raw: Any, network: str = "TRON") -> dict:
+    """Cached no-network TRON address canonicalisation (lazy import: chain→db)."""
+    raw_s = str(raw or "").strip()
+    net = str(network or "TRON").strip()
+    key = (raw_s, net.upper())
+    with _canon_lock:
+        hit = _canon_cache.get(key)
+    if hit is not None:
+        return dict(hit)
+    try:
+        from . import chain
+
+        res = chain.canonicalize_address_light(raw_s, net)
+    except Exception:
+        res = {
+            "raw": raw_s,
+            "address": raw_s,
+            "status": "unresolved",
+            "method": "",
+            "confidence": "",
+        }
+    with _canon_lock:
+        if len(_canon_cache) > 20000:
+            _canon_cache.clear()
+        _canon_cache[key] = dict(res)
+    return res
+
+
+def _wallet_resolution_lookup(
+    c: sqlite3.Connection, raws: Collection[str]
+) -> dict[str, dict]:
+    """Look up previously verified raw→canonical mappings (one query/chunk)."""
+    out: dict[str, dict] = {}
+    clean = [str(r or "").strip() for r in raws]
+    clean = [r for r in dict.fromkeys(clean) if r]
+    for i in range(0, len(clean), 400):
+        chunk = clean[i : i + 400]
+        ph = ",".join("?" * len(chunk))
+        try:
+            rows = c.execute(
+                "SELECT raw_address,resolved_address,network,method,confidence,status"
+                f" FROM wallet_resolutions WHERE raw_address IN ({ph})",
+                chunk,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return out
+        for r in rows:
+            if r["resolved_address"]:
+                out[r["raw_address"]] = {
+                    "raw": r["raw_address"],
+                    "address": r["resolved_address"],
+                    "status": r["status"] or "repaired",
+                    "method": r["method"] or "resolution",
+                    "confidence": r["confidence"] or "",
+                    "network": r["network"] or "TRON",
+                }
+    return out
+
+
+def _full_txid(value: Any) -> str:
+    """First complete 64-hex transaction hash in a list/JSON/comma string."""
+    if not value:
+        return ""
+    items: list = []
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        s = str(value).strip()
+        try:
+            parsed = json.loads(s)
+            items = parsed if isinstance(parsed, list) else [parsed]
+        except Exception:
+            items = re.split(r"[,|\s]+", s)
+    for item in items:
+        h = str(item or "").strip().lower()
+        if re.fullmatch(r"[0-9a-f]{64}", h):
+            return h
+    return ""
+
+
 def _sync_wallet_hits(c: sqlite3.Connection, key: str, payload: dict | None) -> int:
     """Write-through: mirror payload wallets[] into wallet_hits (no clobber issue).
 
     Caller must hold _writer_lock. Deletes this key's rows then re-inserts
     from the current payload, so repairs/drops/recoveries stay in sync.
-    Returns rows inserted.
+    Wallet addresses are canonicalised through wallet_resolutions / Tronscan
+    repair; the raw OCR string is preserved in raw_address and previously
+    verified chain data survives a re-sync. Returns rows inserted.
     """
+    # Preserve chain verification across the delete/re-insert cycle.
+    prior: dict[str, dict] = {}
+    for r in c.execute(
+        "SELECT address,raw_address,txid,tx_status,chain_checked_utc"
+        " FROM wallet_hits WHERE key=?",
+        (key,),
+    ).fetchall():
+        d = dict(r)
+        prior.setdefault(str(r["address"]), d)
+        if r["raw_address"]:
+            prior.setdefault(str(r["raw_address"]), d)
     c.execute("DELETE FROM wallet_hits WHERE key=?", (key,))
     if not isinstance(payload, dict):
         return 0
@@ -1025,28 +1240,40 @@ def _sync_wallet_hits(c: sqlite3.Connection, key: str, payload: dict | None) -> 
     lm = (meta["last_modified"] if meta else "") or ""
     seen = (meta["seen_utc"] if meta else "") or ""
     kind = str(payload.get("kind") or "")
+    payload_txid = _full_txid(payload.get("txids"))
+    resolved = _wallet_resolution_lookup(
+        c, [str(w.get("address") or "") for w in wallets if isinstance(w, dict)]
+    )
     seen_addrs: set[str] = set()
+    inserted = 0
     for w in wallets:
         if not isinstance(w, dict) or not w.get("address"):
             continue
-        addr = str(w["address"])
-        if addr in seen_addrs:
+        raw_addr = str(w["address"]).strip()
+        net = str(w.get("network") or w.get("standard") or "TRON")
+        res = resolved.get(raw_addr) or _canonical_wallet(raw_addr, net)
+        addr = str(res.get("address") or raw_addr).strip()
+        if not addr or addr in seen_addrs:
             continue
         seen_addrs.add(addr)
         txids = w.get("txids", payload.get("txids"))
         if isinstance(txids, list):
             txids = json.dumps(txids)
+        old = prior.get(addr) or prior.get(raw_addr) or {}
+        txid = _full_txid(txids) or str(old.get("txid") or "") or payload_txid
         try:
             c.execute(
                 "INSERT OR REPLACE INTO wallet_hits(address,key,last_modified,"
                 "seen_utc,network,standard,confidence,checksum,kind,amount_inr,"
-                "amount_value,amount_currency,txids) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "amount_value,amount_currency,txids,raw_address,wallet_status,"
+                "txid,tx_status,chain_checked_utc)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     addr,
                     key,
                     lm,
                     seen,
-                    str(w.get("network") or ""),
+                    net,
                     str(w.get("standard") or ""),
                     str(w.get("confidence") or ""),
                     str(w.get("checksum") or ""),
@@ -1055,11 +1282,17 @@ def _sync_wallet_hits(c: sqlite3.Connection, key: str, payload: dict | None) -> 
                     payload.get("amount_value"),
                     str(payload.get("amount_currency") or ""),
                     str(txids or ""),
+                    raw_addr,
+                    str(res.get("status") or ""),
+                    txid,
+                    str(old.get("tx_status") or ""),
+                    str(old.get("chain_checked_utc") or ""),
                 ),
             )
+            inserted += 1
         except Exception:
             continue
-    return len(seen_addrs)
+    return inserted
 
 
 def _sync_upi_hits(
@@ -1978,21 +2211,45 @@ def _replace_payment_rows(c: sqlite3.Connection, key: str, payload: dict):
                     "role_confidence": account.get("role_confidence", "low"),
                 }
             )
-    for wallet in relevant(payload.get("wallets") or []):
-        rail_id = str(wallet.get("address") or "").strip()
+    wallet_items = relevant(payload.get("wallets") or [])
+    resolved = _wallet_resolution_lookup(
+        c,
+        [str(w.get("address") or "") for w in wallet_items if isinstance(w, dict)],
+    )
+    for wallet in wallet_items:
+        if not isinstance(wallet, dict):
+            continue
+        rail_raw = str(wallet.get("address") or "").strip()
+        if not rail_raw:
+            continue
+        net = str(wallet.get("network") or wallet.get("standard") or "TRON")
+        res = resolved.get(rail_raw) or _canonical_wallet(rail_raw, net)
+        rail_id = str(res.get("address") or rail_raw).strip()
         if rail_id:
             rails.append(
                 {
                     "rail_type": _canonical_rail_type("crypto_wallet", rail_id),
                     "rail_id": rail_id,
-                    "network": str(
-                        wallet.get("network") or wallet.get("standard") or ""
-                    ),
+                    "rail_id_raw": rail_raw,
+                    "wallet_status": str(res.get("status") or ""),
+                    "network": net,
                     "account_holder": holder,
                     "rail_role": wallet.get("role", "unknown"),
                     "role_confidence": wallet.get("role_confidence", "low"),
                 }
             )
+    # Canonicalisation can collapse OCR variants (TB4…gyE / TB4…gyF) into one
+    # on-chain address; payment_transactions is unique per source+rail, so
+    # keep the first (strongest) variant rather than INSERT OR REPLACE churn.
+    deduped: list[dict] = []
+    seen_rails: set[tuple[str, str]] = set()
+    for rail in rails:
+        k = (str(rail.get("rail_type") or ""), str(rail.get("rail_id") or ""))
+        if k in seen_rails:
+            continue
+        seen_rails.add(k)
+        deduped.append(rail)
+    rails = deduped
     if not rails:
         rails = [
             {
@@ -2004,13 +2261,43 @@ def _replace_payment_rows(c: sqlite3.Connection, key: str, payload: dict):
             }
         ]
 
+    # Preserve Tronscan verification across a rebuild: payment rows are
+    # delete/re-inserted, but the chain result is immutable evidence.
+    prior_chain: dict[tuple[str, str], dict] = {}
+    for pr in c.execute(
+        "SELECT rail_type,rail_id,rail_id_raw,wallet_status,txid,txids,"
+        "tx_status,tx_method,tx_confidence,tx_time,tx_from,tx_to,tx_amount,"
+        "tx_token,tx_contract_ret,tx_candidates,chain_checked_utc"
+        " FROM payment_transactions WHERE source_key=?",
+        (key,),
+    ).fetchall():
+        d = dict(pr)
+        prior_chain.setdefault((str(d["rail_type"]), str(d["rail_id"])), d)
+        if d.get("rail_id_raw"):
+            prior_chain.setdefault(
+                (str(d["rail_type"]), str(d["rail_id_raw"])), d
+            )
+
     c.execute("DELETE FROM payment_transactions WHERE source_key=?", (key,))
     evidence_json = json.dumps(payload, ensure_ascii=False)
     for rail in rails:
+        chain: dict = {}
+        if rail["rail_type"] == "crypto_wallet":
+            chain = (
+                prior_chain.get((rail["rail_type"], rail["rail_id"]))
+                or prior_chain.get(
+                    (rail["rail_type"], rail.get("rail_id_raw") or "")
+                )
+                or {}
+            )
         c.execute(
             "INSERT OR REPLACE INTO payment_transactions("
-            "source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified,evidence_json"
-            ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
+            "rail_id_raw,account_holder,ifsc,network,confidence,rail_role,"
+            "role_confidence,last_modified,evidence_json,wallet_status,txid,"
+            "txids,tx_status,tx_method,tx_confidence,tx_time,tx_from,tx_to,"
+            "tx_amount,tx_token,tx_contract_ret,tx_candidates,chain_checked_utc"
+            ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 key,
                 direction,
@@ -2019,6 +2306,7 @@ def _replace_payment_rows(c: sqlite3.Connection, key: str, payload: dict):
                 utr,
                 rail["rail_type"],
                 rail["rail_id"],
+                rail.get("rail_id_raw", ""),
                 rail.get("account_holder", ""),
                 rail.get("ifsc", ""),
                 rail.get("network", ""),
@@ -2027,6 +2315,21 @@ def _replace_payment_rows(c: sqlite3.Connection, key: str, payload: dict):
                 rail.get("role_confidence", "low"),
                 last_modified,
                 evidence_json,
+                rail.get("wallet_status", "")
+                or str(chain.get("wallet_status") or ""),
+                str(chain.get("txid") or ""),
+                str(chain.get("txids") or ""),
+                str(chain.get("tx_status") or ""),
+                str(chain.get("tx_method") or ""),
+                str(chain.get("tx_confidence") or ""),
+                str(chain.get("tx_time") or ""),
+                str(chain.get("tx_from") or ""),
+                str(chain.get("tx_to") or ""),
+                chain.get("tx_amount"),
+                str(chain.get("tx_token") or ""),
+                str(chain.get("tx_contract_ret") or ""),
+                str(chain.get("tx_candidates") or ""),
+                str(chain.get("chain_checked_utc") or ""),
             ),
         )
 
@@ -2767,6 +3070,7 @@ def repair_txid_wallets(
                     "UPDATE objects SET extract_json=? WHERE key=?",
                     (json.dumps(p, ensure_ascii=False), key),
                 )
+                _replace_payment_rows(wc, key, p)
                 _sync_wallet_hits(wc, key, p)
                 _sync_upi_hits(wc, key, p)
             wc.commit()
@@ -2978,6 +3282,7 @@ def apply_source_wallet_reads(corrections: list[dict], dry_run: bool = True) -> 
                     "UPDATE objects SET extract_json=? WHERE key=?",
                     (json.dumps(p, ensure_ascii=False), key),
                 )
+                _replace_payment_rows(wc, key, p)
                 _sync_wallet_hits(wc, key, p)
                 _sync_upi_hits(wc, key, p)
             wc.commit()
@@ -3283,8 +3588,11 @@ def _wallet_hit_window_filters(
         args.append(until_n)
     if q:
         like = "%" + q.replace("%", r"\%").replace("_", r"\_") + "%"
-        conds.append("(address LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')")
-        args.extend([like, like])
+        conds.append(
+            "(address LIKE ? ESCAPE '\\' OR raw_address LIKE ? ESCAPE '\\'"
+            " OR key LIKE ? ESCAPE '\\')"
+        )
+        args.extend([like, like, like])
     return " AND ".join(conds), args
 
 
@@ -3300,6 +3608,18 @@ def _pipe_join_csv(raw: str) -> str:
     return " | ".join(seen)
 
 
+def _tx_status_filter(tx_status: str) -> tuple[str, list]:
+    """Chain-verification filter shared by flow/unique/export queries."""
+    s = (tx_status or "").strip().lower()
+    if not s:
+        return "", []
+    if s == "unchecked":
+        return "tx_status=''", []
+    if s in ("verified", "derived", "ambiguous", "unresolved"):
+        return "tx_status=?", [s]
+    return "", []
+
+
 def _money_flow_filters(
     direction: str = "deposit",
     rail_type: str = "",
@@ -3308,6 +3628,7 @@ def _money_flow_filters(
     since: str = "",
     until: str = "",
     folder: str = "",
+    tx_status: str = "",
 ) -> tuple[str, list]:
     """Shared WHERE for money_flows browse + officer CSV export."""
     conds: list[str] = []
@@ -3329,6 +3650,10 @@ def _money_flow_filters(
         shape = _rail_id_shape_sql(rail_type)
         if shape:
             conds.append(shape)
+    chain_sql, chain_args = _tx_status_filter(tx_status)
+    if chain_sql:
+        conds.append(chain_sql)
+        args.extend(chain_args)
     if source == "object":
         conds.append("source_key NOT LIKE 'reference:%'")
     elif source == "reference":
@@ -3409,6 +3734,7 @@ def money_flows(
     since: str = "",
     until: str = "",
     folder: str = "",
+    tx_status: str = "",
 ) -> dict:
     direction = (direction or "deposit").strip().lower()
     where, args = _money_flow_filters(
@@ -3419,6 +3745,7 @@ def money_flows(
         since=since,
         until=until,
         folder=folder,
+        tx_status=tx_status,
     )
     c = connect()
     materialized = None
@@ -3463,7 +3790,11 @@ def money_flows(
             args,
         ).fetchall()
     rows = c.execute(
-        f"SELECT source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified,evidence_json "
+        f"SELECT source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
+        f"rail_id_raw,account_holder,ifsc,network,confidence,rail_role,role_confidence,"
+        f"wallet_status,txid,txids,tx_status,tx_method,tx_confidence,tx_time,"
+        f"tx_from,tx_to,tx_amount,tx_token,tx_contract_ret,tx_candidates,"
+        f"chain_checked_utc,last_modified,evidence_json "
         f"FROM payment_transactions WHERE {where} ORDER BY last_modified DESC,id DESC LIMIT ? OFFSET ?",
         args + [limit, offset],
     ).fetchall()
@@ -3545,6 +3876,7 @@ def money_flows_export_rows(
     until: str = "",
     folder: str = "",
     max_rows: int = 200000,
+    tx_status: str = "",
 ) -> list[dict]:
     """All matching payment rows for officer CSV (Excel-openable), capped."""
     where, args = _money_flow_filters(
@@ -3555,11 +3887,15 @@ def money_flows_export_rows(
         since=since,
         until=until,
         folder=folder,
+        tx_status=tx_status,
     )
     c = connect()
     rows = c.execute(
         f"SELECT source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
-        f"account_holder,ifsc,network,confidence,rail_role,role_confidence,last_modified "
+        f"rail_id_raw,account_holder,ifsc,network,confidence,rail_role,role_confidence,"
+        f"wallet_status,txid,txids,tx_status,tx_method,tx_confidence,tx_time,"
+        f"tx_from,tx_to,tx_amount,tx_token,tx_contract_ret,tx_candidates,"
+        f"chain_checked_utc,last_modified "
         f"FROM payment_transactions WHERE {where} "
         f"ORDER BY last_modified DESC,id DESC LIMIT ?",
         args + [max_rows],
@@ -3581,6 +3917,7 @@ def money_flows_unique(
     direction: str = "both",
     limit: int = 200,
     offset: int = 0,
+    tx_status: str = "",
 ) -> dict:
     """One row per UPI/VPA, bank account, or wallet in the date+folder window."""
     if (rail_type or "").strip().lower() == "crypto_wallet":
@@ -3593,6 +3930,7 @@ def money_flows_unique(
             direction=direction,
             limit=limit,
             offset=offset,
+            tx_status=tx_status,
         )
     where, args = _money_flow_filters(
         direction=direction,
@@ -3602,6 +3940,7 @@ def money_flows_unique(
         since=since,
         until=until,
         folder=folder,
+        tx_status=tx_status,
     )
     where = f"{where} AND rail_id!=''"
     # Parity with mule_rails(): OCR template junk (receipt boilerplate
@@ -3728,6 +4067,7 @@ def _money_flows_unique_crypto(
     direction: str = "both",
     limit: int = 200,
     offset: int = 0,
+    tx_status: str = "",
 ) -> dict:
     """Unique crypto freeze list = decoded image wallets ∪ OCR payment rails.
 
@@ -3747,6 +4087,10 @@ def _money_flows_unique_crypto(
     wh_where, wh_args = _wallet_hit_window_filters(
         q=q, since=since, until=until, folder=folder
     )
+    chain_sql, chain_args = _tx_status_filter(tx_status)
+    if chain_sql:
+        wh_where = f"{wh_where} AND {chain_sql}"
+        wh_args = wh_args + list(chain_args)
     if (direction or "both").strip().lower() in _SIDE_FOLDERS:
         prefixes = _SIDE_FOLDERS[(direction or "both").strip().lower()]
         wh_where = (
@@ -3761,6 +4105,7 @@ def _money_flows_unique_crypto(
         since=since,
         until=until,
         folder=folder,
+        tx_status=tx_status,
     )
     pt_where = f"{pt_where} AND rail_id!=''"
     union_sql = (
@@ -3791,18 +4136,37 @@ def _money_flows_unique_crypto(
         f"w.network network,"
         f"COALESCE(w.first_wh, p.first_pt) first_seen,"
         f"CASE WHEN IFNULL(w.last_wh,'') >= IFNULL(p.last_pt,'') THEN w.last_wh ELSE p.last_pt END last_seen,"
-        f"COALESCE(w.sample_wh, p.sample_pt) sample_key "
+        f"COALESCE(w.sample_wh, p.sample_pt) sample_key,"
+        f"COALESCE(p.rail_ids_raw, w.raw_address, '') rail_id_raw,"
+        f"COALESCE(p.wallet_status, w.wallet_status, '') wallet_status,"
+        f"COALESCE(p.txid, w.txid, '') txid,"
+        f"COALESCE(p.txids, '') txids,"
+        f"COALESCE(p.tx_status, w.tx_status, '') tx_status,"
+        f"COALESCE(p.tx_method, '') tx_method,"
+        f"COALESCE(p.tx_confidence, '') tx_confidence,"
+        f"COALESCE(p.tx_time, '') tx_time,"
+        f"COALESCE(p.tx_amount, NULL) tx_amount,"
+        f"COALESCE(p.tx_token, '') tx_token,"
+        f"COALESCE(p.chain_checked_utc, w.chain_checked_utc, '') chain_checked_utc "
         f"FROM ({union_sql}) u "
         f"LEFT JOIN ("
         f" SELECT address, COUNT(*) hits, MIN(last_modified) first_wh, MAX(last_modified) last_wh,"
         f" GROUP_CONCAT(DISTINCT NULLIF(network,'')) network,"
-        f" MAX(key) sample_wh "
+        f" MAX(key) sample_wh, MAX(NULLIF(raw_address,'')) raw_address,"
+        f" MAX(NULLIF(wallet_status,'')) wallet_status, MAX(NULLIF(txid,'')) txid,"
+        f" MAX(NULLIF(tx_status,'')) tx_status, MAX(NULLIF(chain_checked_utc,'')) chain_checked_utc "
         f" FROM wallet_hits WHERE {wh_where} GROUP BY address"
         f") w ON w.address=u.rail_id "
         f"LEFT JOIN ("
         f" SELECT rail_id, COUNT(DISTINCT source_key) slips, COALESCE(SUM(amount_inr),0) amount_inr,"
         f" GROUP_CONCAT(DISTINCT NULLIF(utr,'')) utrs, COUNT(DISTINCT NULLIF(utr,'')) utr_count,"
-        f" MIN(source_key) sample_pt, MIN(last_modified) first_pt, MAX(last_modified) last_pt "
+        f" MIN(source_key) sample_pt, MIN(last_modified) first_pt, MAX(last_modified) last_pt,"
+        f" GROUP_CONCAT(DISTINCT NULLIF(rail_id_raw,'')) rail_ids_raw,"
+        f" MAX(NULLIF(wallet_status,'')) wallet_status, MAX(NULLIF(txid,'')) txid,"
+        f" GROUP_CONCAT(DISTINCT NULLIF(txids,'')) txids, MAX(NULLIF(tx_status,'')) tx_status,"
+        f" MAX(NULLIF(tx_method,'')) tx_method, MAX(NULLIF(tx_confidence,'')) tx_confidence,"
+        f" MAX(NULLIF(tx_time,'')) tx_time, MAX(tx_amount) tx_amount, MAX(NULLIF(tx_token,'')) tx_token,"
+        f" MAX(NULLIF(chain_checked_utc,'')) chain_checked_utc "
         f" FROM payment_transactions WHERE {pt_where} GROUP BY rail_id"
         f") p ON p.rail_id=u.rail_id "
         f"ORDER BY (COALESCE(w.hits,0)+COALESCE(p.slips,0)) DESC, u.rail_id "
@@ -3819,6 +4183,7 @@ def _money_flows_unique_crypto(
         it["utr_count"] = int(it.get("utr_count") or 0)
         it["image_hits"] = int(it.get("image_hits") or 0)
         it["slips"] = int(it.get("slips") or 0)
+        it["txids"] = _txids_of(it.get("txids"))
         it["has_object"] = not str(it.get("sample_key") or "").startswith("reference:")
         it["rail_quality"] = rail_quality(
             it.get("rail_type") or "", it.get("rail_id") or ""
@@ -3848,6 +4213,7 @@ def money_flows_unique_export_rows(
     folder: str = "",
     direction: str = "both",
     max_rows: int = 200000,
+    tx_status: str = "",
 ) -> list[dict]:
     out = money_flows_unique(
         rail_type=rail_type,
@@ -3859,6 +4225,7 @@ def money_flows_unique_export_rows(
         direction=direction,
         limit=max_rows,
         offset=0,
+        tx_status=tx_status,
     )
     return out["items"]
 
@@ -3925,7 +4292,9 @@ def money_flows_unique_hits(
     pt_args = list(args) + [rail_id]
     for r in c.execute(
         "SELECT source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
-        "account_holder,ifsc,network,last_modified "
+        "rail_id_raw,account_holder,ifsc,network,wallet_status,txid,txids,"
+        "tx_status,tx_method,tx_confidence,tx_time,tx_amount,tx_token,"
+        "tx_contract_ret,chain_checked_utc,last_modified "
         f"FROM payment_transactions WHERE {where} "
         "ORDER BY last_modified DESC, id DESC",
         pt_args,
@@ -3940,6 +4309,14 @@ def money_flows_unique_hits(
                 existing["utr"] = r["utr"]
             if existing.get("amount_inr") is None and r["amount_inr"] is not None:
                 existing["amount_inr"] = r["amount_inr"]
+            if not existing.get("txid") and r["txid"]:
+                existing["txid"] = r["txid"]
+                existing["tx_status"] = r["tx_status"] or ""
+                existing["tx_method"] = r["tx_method"] or ""
+                existing["tx_confidence"] = r["tx_confidence"] or ""
+                existing["tx_time"] = r["tx_time"] or ""
+                existing["tx_amount"] = r["tx_amount"]
+                existing["tx_token"] = r["tx_token"] or ""
             continue
         by_key[key] = {
             "source_key": key,
@@ -3949,9 +4326,21 @@ def money_flows_unique_hits(
             "utr": r["utr"] or "",
             "rail_type": r["rail_type"] or rail_type,
             "rail_id": r["rail_id"] or rail_id,
+            "rail_id_raw": r["rail_id_raw"] or "",
             "account_holder": r["account_holder"] or "",
             "ifsc": r["ifsc"] or "",
             "network": r["network"] or "",
+            "wallet_status": r["wallet_status"] or "",
+            "txid": r["txid"] or "",
+            "txids": r["txids"] or "",
+            "tx_status": r["tx_status"] or "",
+            "tx_method": r["tx_method"] or "",
+            "tx_confidence": r["tx_confidence"] or "",
+            "tx_time": r["tx_time"] or "",
+            "tx_amount": r["tx_amount"],
+            "tx_token": r["tx_token"] or "",
+            "tx_contract_ret": r["tx_contract_ret"] or "",
+            "chain_checked_utc": r["chain_checked_utc"] or "",
             "last_modified": r["last_modified"] or "",
             "origins": {"ocr_slip"},
             "has_object": not str(key).startswith("reference:"),
@@ -3963,7 +4352,8 @@ def money_flows_unique_hits(
         )
         wh_where = f"{wh_where} AND address=?"
         for r in c.execute(
-            "SELECT address,key,last_modified,seen_utc,network,kind "
+            "SELECT address,key,last_modified,seen_utc,network,kind,"
+            "raw_address,wallet_status,txid,tx_status,chain_checked_utc "
             f"FROM wallet_hits WHERE {wh_where} ORDER BY last_modified DESC",
             list(wh_args) + [rail_id],
         ):
@@ -3977,6 +4367,9 @@ def money_flows_unique_hits(
                     existing["network"] = r["network"]
                 if not existing.get("last_modified") and r["last_modified"]:
                     existing["last_modified"] = r["last_modified"]
+                if not existing.get("txid") and r["txid"]:
+                    existing["txid"] = r["txid"]
+                    existing["tx_status"] = r["tx_status"] or ""
                 continue
             by_key[key] = {
                 "source_key": key,
@@ -3986,9 +4379,14 @@ def money_flows_unique_hits(
                 "utr": "",
                 "rail_type": "crypto_wallet",
                 "rail_id": rail_id,
+                "rail_id_raw": r["raw_address"] or "",
                 "account_holder": "",
                 "ifsc": "",
                 "network": r["network"] or "",
+                "wallet_status": r["wallet_status"] or "",
+                "txid": r["txid"] or "",
+                "tx_status": r["tx_status"] or "",
+                "chain_checked_utc": r["chain_checked_utc"] or "",
                 "last_modified": r["last_modified"] or "",
                 "seen_utc": r["seen_utc"] or "",
                 "origins": {"image_hit"},
@@ -4614,8 +5012,11 @@ def _wallet_filter_clause(q: str = "", network: str = "") -> tuple[str, list]:
         like = (
             "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         )
-        clauses.append("(address LIKE ? ESCAPE '\\' OR key LIKE ? ESCAPE '\\')")
-        args += [like, like]
+        clauses.append(
+            "(address LIKE ? ESCAPE '\\' OR raw_address LIKE ? ESCAPE '\\'"
+            " OR key LIKE ? ESCAPE '\\')"
+        )
+        args += [like, like, like]
     network = (network or "").strip()
     if network:
         clauses.append("network = ?")
@@ -4644,7 +5045,8 @@ def wallet_feed(
         connect()
         .execute(
             "SELECT address,key,last_modified,seen_utc,kind,network,standard,"
-            "confidence,checksum,amount_inr,amount_value,amount_currency,txids"
+            "confidence,checksum,amount_inr,amount_value,amount_currency,txids,"
+            "raw_address,wallet_status,txid,tx_status,chain_checked_utc"
             " FROM wallet_hits WHERE 1=1"
             + fclause
             + " ORDER BY last_modified DESC LIMIT ? OFFSET ?",
@@ -4659,6 +5061,8 @@ def wallet_feed(
             "seen_utc": r["seen_utc"],
             "kind": r["kind"],
             "address": r["address"],
+            "raw_address": r["raw_address"] or "",
+            "wallet_status": r["wallet_status"] or "",
             "network": r["network"],
             "standard": r["standard"],
             "confidence": r["confidence"],
@@ -4667,6 +5071,9 @@ def wallet_feed(
             "amount_value": r["amount_value"],
             "amount_currency": r["amount_currency"],
             "txids": _txids_of(r["txids"]),
+            "txid": r["txid"] or "",
+            "tx_status": r["tx_status"] or "",
+            "chain_checked_utc": r["chain_checked_utc"] or "",
         }
         for r in rows
     ]
@@ -4729,9 +5136,18 @@ def wallet_stats() -> dict:
         "SELECT network net, COUNT(*) n FROM wallet_hits"
         " GROUP BY network ORDER BY n DESC"
     ).fetchall()
+    chain = c.execute(
+        "SELECT SUM(CASE WHEN txid!='' THEN 1 ELSE 0 END) with_tx,"
+        " SUM(CASE WHEN chain_checked_utc!='' THEN 1 ELSE 0 END) checked,"
+        " SUM(CASE WHEN wallet_status IN ('valid','repaired') THEN 1 ELSE 0 END) verified"
+        " FROM wallet_hits"
+    ).fetchone()
     return {
         "wallet_hits": row["n"] or 0,
         "distinct_wallets": row["d"] or 0,
+        "wallets_with_tx": int(chain["with_tx"] or 0),
+        "wallets_checked": int(chain["checked"] or 0),
+        "wallets_verified": int(chain["verified"] or 0),
         "by_network": [{"network": r["net"], "count": r["n"]} for r in by_net],
     }
 
@@ -4799,10 +5215,12 @@ def wallet_distinct(
     rows = c.execute(
         "SELECT address, hits, first_seen, last_seen,"
         " key, network, standard, confidence, checksum, kind, last_modified,"
-        " amount_inr, amount_value, amount_currency, txids"
+        " amount_inr, amount_value, amount_currency, txids, raw_address,"
+        " wallet_status, txid, tx_status, chain_checked_utc"
         " FROM ("
         " SELECT address, key, last_modified, network, standard, confidence,"
         " checksum, kind, amount_inr, amount_value, amount_currency, txids,"
+        " raw_address, wallet_status, txid, tx_status, chain_checked_utc,"
         " ROW_NUMBER() OVER ("
         " PARTITION BY address ORDER BY last_modified DESC) AS rn,"
         " COUNT(*) OVER (PARTITION BY address) AS hits,"
@@ -4829,6 +5247,11 @@ def wallet_distinct(
             "amount_value": r["amount_value"],
             "amount_currency": r["amount_currency"],
             "txids": _txids_of(r["txids"]),
+            "raw_address": r["raw_address"] or "",
+            "wallet_status": r["wallet_status"] or "",
+            "txid": r["txid"] or "",
+            "tx_status": r["tx_status"] or "",
+            "chain_checked_utc": r["chain_checked_utc"] or "",
         }
         for r in rows
     ]
@@ -5031,6 +5454,7 @@ def merge_object_wallets(key: str, wallets: list[dict], kind: str) -> int:
                 " enrich_error=NULL, enrich_retry_utc=NULL WHERE key=?",
                 (json.dumps(payload, ensure_ascii=False), now, key),
             )
+            _replace_payment_rows(c, key, payload)
             _sync_wallet_hits(c, key, payload)
             _sync_upi_hits(c, key, payload)
             c.commit()
@@ -5261,4 +5685,759 @@ def agent_network(limit: int = 200, offset: int = 0) -> dict:
         "unmined_corpora": findings.get("unmined_corpora") or [],
         "items": ranked_agents[offset : offset + limit],
         "total": len(ranked_agents),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tronscan chain verification: persistence + work queues (2026-11-20)
+# ---------------------------------------------------------------------------
+
+def chain_tx_cache_get(txid: str) -> Optional[dict]:
+    """Cached Tronscan transaction, normalised for chain.resolve_source."""
+    h = str(txid or "").strip().lower()
+    if not h:
+        return None
+    r = (
+        connect()
+        .execute("SELECT * FROM chain_tx_cache WHERE txid=?", (h,))
+        .fetchone()
+    )
+    if not r:
+        return None
+    try:
+        raw = json.loads(r["raw_json"] or "{}")
+    except Exception:
+        raw = {}
+    return {
+        "txid": r["txid"],
+        "network": r["network"] or "TRON",
+        "from": r["from_address"] or "",
+        "to": r["to_address"] or "",
+        "amount": r["amount"],
+        "token": r["token"] or "",
+        "token_contract": r["token_contract"] or "",
+        "block_ts": r["block_ts"] or "",
+        "contract_ret": r["contract_ret"] or "",
+        "confirmed": bool(r["confirmed"]),
+        "raw": raw,
+    }
+
+
+def chain_tx_cache_put(info: dict) -> None:
+    """Persist an immutable Tronscan response (raw JSON + response hash)."""
+    if not isinstance(info, dict) or not info.get("txid"):
+        return
+    txid = str(info["txid"]).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", txid):
+        return
+    raw = info.get("raw") or {}
+    raw_json = json.dumps(raw, ensure_ascii=False, sort_keys=True)
+    digest = hashlib.sha256(raw_json.encode("utf-8", "replace")).hexdigest()
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    try:
+        with _writer_lock:
+            c = connect()
+            c.execute(
+                "INSERT INTO chain_tx_cache(txid,network,from_address,to_address,"
+                "amount,token,token_contract,block_ts,contract_ret,confirmed,"
+                "raw_json,response_sha256,fetched_utc)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(txid) DO UPDATE SET"
+                " from_address=excluded.from_address,to_address=excluded.to_address,"
+                " amount=excluded.amount,token=excluded.token,"
+                " token_contract=excluded.token_contract,block_ts=excluded.block_ts,"
+                " contract_ret=excluded.contract_ret,confirmed=excluded.confirmed,"
+                " raw_json=excluded.raw_json,response_sha256=excluded.response_sha256,"
+                " fetched_utc=excluded.fetched_utc",
+                (
+                    txid,
+                    str(info.get("network") or "TRON"),
+                    str(info.get("from") or ""),
+                    str(info.get("to") or ""),
+                    info.get("amount"),
+                    str(info.get("token") or ""),
+                    str(info.get("token_contract") or ""),
+                    str(info.get("block_ts") or ""),
+                    str(info.get("contract_ret") or ""),
+                    1 if info.get("confirmed") else 0,
+                    raw_json,
+                    digest,
+                    now,
+                ),
+            )
+            c.commit()
+    except Exception:
+        return
+
+
+def chain_known_addresses(limit: int = 20000) -> list[str]:
+    """Every case address already known from wallets, rails, or resolutions.
+
+    Used only for deterministic truncated-address recovery (unique prefix /
+    suffix match); the caller still verifies checksums before accepting.
+    """
+    limit = max(1, min(int(limit), 100000))
+    c = connect()
+    rows = c.execute(
+        "SELECT address FROM wallet_hits WHERE address!=''"
+        " UNION SELECT resolved_address FROM wallet_resolutions WHERE resolved_address!=''"
+        " UNION SELECT rail_id FROM payment_transactions"
+        "  WHERE rail_type='crypto_wallet' AND rail_id!=''"
+        " LIMIT ?",
+        (limit,),
+    ).fetchall()
+    out: list[str] = []
+    seen: set[str] = set()
+    for r in rows:
+        a = str(r["address"] if "address" in r.keys() else r[0]).strip()
+        if a and a not in seen:
+            seen.add(a)
+            out.append(a)
+    return out
+
+
+def chain_source_bundle(key: str) -> Optional[dict]:
+    """Object payload + crypto payment rows for one source key."""
+    key = str(key or "").strip()
+    if not key:
+        return None
+    c = connect()
+    obj = c.execute(
+        "SELECT extract_json,last_modified FROM objects WHERE key=?", (key,)
+    ).fetchone()
+    rows = [
+        dict(r)
+        for r in c.execute(
+            "SELECT id,rail_type,rail_id,rail_id_raw,network,direction,"
+            "last_modified,evidence_json FROM payment_transactions"
+            " WHERE source_key=?",
+            (key,),
+        ).fetchall()
+    ]
+    payload: dict = {}
+    if obj and obj["extract_json"]:
+        try:
+            parsed = json.loads(obj["extract_json"])
+            if isinstance(parsed, dict):
+                payload = parsed
+        except Exception:
+            payload = {}
+    if not payload and rows:
+        try:
+            parsed = json.loads(rows[0].get("evidence_json") or "{}")
+            if isinstance(parsed, dict):
+                payload = parsed
+        except Exception:
+            payload = {}
+    if not payload and not rows:
+        return None
+    if obj and obj["last_modified"]:
+        payload.setdefault("_last_modified", obj["last_modified"])
+    if rows:
+        payload.setdefault("_last_modified", rows[0].get("last_modified") or "")
+    return {"payload": payload, "rows": rows}
+
+
+def _chain_row_values(r: dict, checked: str) -> tuple:
+    return (
+        str(r.get("rail_id") or ""),
+        str(r.get("rail_id_raw") or ""),
+        str(r.get("wallet_status") or ""),
+        str(r.get("txid") or ""),
+        str(r.get("txids") or ""),
+        str(r.get("tx_status") or ""),
+        str(r.get("tx_method") or ""),
+        str(r.get("tx_confidence") or ""),
+        str(r.get("tx_time") or ""),
+        str(r.get("tx_from") or ""),
+        str(r.get("tx_to") or ""),
+        r.get("tx_amount"),
+        str(r.get("tx_token") or ""),
+        str(r.get("tx_contract_ret") or ""),
+        str(r.get("tx_candidates") or ""),
+        checked,
+    )
+
+
+def chain_apply_source_result(source_key: str, result: dict) -> dict:
+    """Persist a resolver result: canonical rail, tx details, wallet mapping.
+
+    Additive and idempotent. The original OCR string stays in rail_id_raw /
+    wallet_resolutions.raw_address; only the canonical rail_id is rewritten.
+    """
+    key = str(source_key or "").strip()
+    if not key or not isinstance(result, dict):
+        return {"updated": 0}
+    checked = str(result.get("checked_utc") or "")
+    if not checked:
+        checked = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    wallets = [w for w in (result.get("wallets") or []) if isinstance(w, dict)]
+    rows = [r for r in (result.get("rows") or []) if isinstance(r, dict)]
+    links = [x for x in (result.get("links") or []) if isinstance(x, dict)]
+    summary = result.get("summary") or {}
+
+    # Canonical address -> row result, for attaching the right tx per wallet.
+    row_by_addr = {
+        str(r.get("rail_id") or ""): r for r in rows if r.get("rail_id")
+    }
+    primary_rail = next(
+        (str(r.get("rail_id")) for r in rows if r.get("txid")),
+        str((rows[0].get("rail_id") if rows else "") or ""),
+    )
+    tx_addresses = {
+        str(r.get("rail_id") or "")
+        for r in rows
+        if r.get("txid") and r.get("rail_id")
+    }
+
+    updated = 0
+    with _writer_lock:
+        c = connect()
+        # 1) Persist raw -> canonical mapping (never deletes evidence).
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        for w in wallets:
+            raw = str(w.get("raw") or "").strip()
+            addr = str(w.get("address") or "").strip()
+            if not raw:
+                continue
+            status = str(w.get("status") or "")
+            resolved_addr = addr if status in ("valid", "repaired", "tronscan_confirmed") else ""
+            exists = 1 if (addr and addr in tx_addresses) else 0
+            c.execute(
+                "INSERT INTO wallet_resolutions(raw_address,resolved_address,"
+                "network,method,confidence,status,tronscan_exists,first_seen_utc,checked_utc)"
+                " VALUES(?,?,?,?,?,?,?,?,?)"
+                " ON CONFLICT(raw_address) DO UPDATE SET"
+                " resolved_address=excluded.resolved_address,"
+                " network=excluded.network,method=excluded.method,"
+                " confidence=excluded.confidence,status=excluded.status,"
+                " tronscan_exists=MAX(wallet_resolutions.tronscan_exists,excluded.tronscan_exists),"
+                " checked_utc=excluded.checked_utc",
+                (
+                    raw,
+                    resolved_addr,
+                    str(w.get("network") or "TRON"),
+                    str(w.get("method") or ""),
+                    str(w.get("confidence") or ""),
+                    status,
+                    exists,
+                    now,
+                    checked,
+                ),
+            )
+
+        # 2) Canonicalise + stamp each crypto payment row.
+        for r in rows:
+            rid = r.get("id")
+            if rid is None:
+                continue
+            canonical = str(r.get("rail_id") or "").strip()
+            raw = str(r.get("rail_id_raw") or "").strip()
+            if canonical:
+                dup = c.execute(
+                    "SELECT id FROM payment_transactions WHERE source_key=?"
+                    " AND rail_type='crypto_wallet' AND rail_id=? AND id<>?",
+                    (key, canonical, rid),
+                ).fetchone()
+                if dup:
+                    # OCR variants collapsed to one on-chain address: keep the
+                    # canonical row, drop the duplicate, carry the tx onto it.
+                    c.execute(
+                        "DELETE FROM payment_transactions WHERE id=?", (rid,)
+                    )
+                    rid = dup["id"]
+            c.execute(
+                "UPDATE payment_transactions SET rail_id=?,rail_id_raw=?,"
+                "wallet_status=?,txid=?,txids=?,tx_status=?,tx_method=?,"
+                "tx_confidence=?,tx_time=?,tx_from=?,tx_to=?,tx_amount=?,"
+                "tx_token=?,tx_contract_ret=?,tx_candidates=?,chain_checked_utc=?"
+                " WHERE id=?",
+                _chain_row_values(r, checked) + (rid,),
+            )
+            updated += 1
+
+        # 2b) Object-only crypto screenshots (no OCR payment row): create the
+        # exhibit row so the transaction appears in Officer Query and the CSV.
+        created = 0
+        if not rows:
+            summary_txid = str(summary.get("txid") or "")
+            subject = str(summary.get("subject_address") or "")
+            if summary_txid and subject:
+                src = summary.get("source") or {}
+                direction = str(summary.get("direction") or "")
+                if direction not in ("deposit", "withdrawal"):
+                    direction = (
+                        "deposit"
+                        if subject == str(summary.get("tx_to") or "")
+                        else "withdrawal"
+                    )
+                raw_subject = str(summary.get("subject_raw") or subject)
+                wallet_status = str(
+                    summary.get("subject_status") or "tronscan_confirmed"
+                )
+                tx_status = str(summary.get("tx_status") or "")
+                method = str(summary.get("tx_method") or "")
+                conf = str(summary.get("tx_confidence") or "")
+                token = str(summary.get("tx_token") or "")
+                amount = summary.get("tx_amount")
+                tx_time = str(summary.get("tx_time") or "")
+                tx_from = str(summary.get("tx_from") or "")
+                tx_to = str(summary.get("tx_to") or "")
+                contract_ret = str(summary.get("tx_contract_ret") or "")
+                last_modified = str(src.get("last_modified") or "")
+                evidence = {
+                    "text_sample": src.get("text_sample") or "",
+                    "amount_value": src.get("amount_value"),
+                    "amount_currency": src.get("amount_currency") or "",
+                    "wallets": wallets,
+                    "chain_source": "object_queue",
+                }
+                role = "beneficiary" if direction == "deposit" else "sender"
+                c.execute(
+                    "INSERT OR IGNORE INTO payment_transactions("
+                    "source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,"
+                    "account_holder,ifsc,network,confidence,rail_role,role_confidence,"
+                    "last_modified,evidence_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        key,
+                        direction,
+                        "",
+                        None,
+                        "",
+                        "crypto_wallet",
+                        subject,
+                        "",
+                        "",
+                        "TRON",
+                        f"chain_{tx_status or 'derived'}",
+                        role,
+                        conf or "medium",
+                        last_modified,
+                        json.dumps(evidence),
+                    ),
+                )
+                row = c.execute(
+                    "SELECT id FROM payment_transactions WHERE source_key=?"
+                    " AND rail_type='crypto_wallet' AND rail_id=?",
+                    (key, subject),
+                ).fetchone()
+                if row:
+                    c.execute(
+                        "UPDATE payment_transactions SET rail_id_raw=?,wallet_status=?,"
+                        "txid=?,txids=?,tx_status=?,tx_method=?,tx_confidence=?,"
+                        "tx_time=?,tx_from=?,tx_to=?,tx_amount=?,tx_token=?,"
+                        "tx_contract_ret=?,tx_candidates=?,chain_checked_utc=? WHERE id=?",
+                        (
+                            raw_subject,
+                            wallet_status,
+                            summary_txid,
+                            json.dumps([summary_txid]),
+                            tx_status,
+                            method,
+                            conf,
+                            tx_time,
+                            tx_from,
+                            tx_to,
+                            amount,
+                            token,
+                            contract_ret,
+                            "[]",
+                            checked,
+                            row["id"],
+                        ),
+                    )
+                    created += 1
+                    if not primary_rail:
+                        primary_rail = subject
+                    tx_addresses.add(subject)
+                # Wallets tab: the recovered subject wallet must be visible.
+                c.execute(
+                    "INSERT OR IGNORE INTO wallet_hits(address,key,last_modified,"
+                    "seen_utc,network,standard,confidence,checksum,kind,amount_inr,"
+                    "amount_value,amount_currency,txids,raw_address,wallet_status,"
+                    "txid,tx_status,chain_checked_utc)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        subject,
+                        key,
+                        last_modified,
+                        str(src.get("seen_utc") or ""),
+                        "TRON",
+                        "",
+                        conf or "high",
+                        "",
+                        str(src.get("kind") or ""),
+                        None,
+                        src.get("amount_value"),
+                        str(src.get("amount_currency") or ""),
+                        json.dumps([summary_txid]),
+                        raw_subject,
+                        wallet_status,
+                        summary_txid,
+                        tx_status,
+                        checked,
+                    ),
+                )
+
+        # 3) Mirror canonical address + chain stamp into wallet_hits.
+        wh_rows = c.execute(
+            "SELECT rowid AS rid,address,raw_address FROM wallet_hits WHERE key=?",
+            (key,),
+        ).fetchall()
+        for wh in wh_rows:
+            raw_addr = str(wh["raw_address"] or wh["address"] or "")
+            addr = str(wh["address"] or "")
+            res = next(
+                (
+                    w
+                    for w in wallets
+                    if str(w.get("raw") or "") == raw_addr
+                    or str(w.get("address") or "") == addr
+                ),
+                None,
+            )
+            canonical = str((res or {}).get("address") or addr)
+            if canonical and canonical != addr:
+                dup = c.execute(
+                    "SELECT rowid FROM wallet_hits WHERE key=? AND address=?"
+                    " AND rowid<>?",
+                    (key, canonical, wh["rid"]),
+                ).fetchone()
+                if dup:
+                    c.execute(
+                        "DELETE FROM wallet_hits WHERE rowid=?", (wh["rid"],)
+                    )
+                    continue
+            rr = row_by_addr.get(canonical) or {}
+            if not rr and summary.get("txid"):
+                tx_from = str(summary.get("tx_from") or "")
+                tx_to = str(summary.get("tx_to") or "")
+                if canonical and canonical in (tx_from, tx_to):
+                    rr = {
+                        "txid": summary.get("txid") or "",
+                        "tx_status": summary.get("tx_status") or "",
+                    }
+            c.execute(
+                "UPDATE wallet_hits SET address=?,raw_address=?,wallet_status=?,"
+                "txid=?,tx_status=?,chain_checked_utc=? WHERE rowid=?",
+                (
+                    canonical,
+                    raw_addr,
+                    str((res or {}).get("status") or ""),
+                    str(rr.get("txid") or ""),
+                    str(rr.get("tx_status") or ""),
+                    checked,
+                    wh["rid"],
+                ),
+            )
+
+        # 4) Audit every candidate transaction considered for this source.
+        for link in links:
+            txid = str(link.get("txid") or "").strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", txid):
+                continue
+            c.execute(
+                "INSERT OR REPLACE INTO chain_links(source_key,rail_id,txid,"
+                "status,method,confidence,match_score,from_address,to_address,"
+                "amount,token,block_ts,contract_ret,candidates_json,checked_utc)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    key,
+                    primary_rail,
+                    txid,
+                    str(link.get("status") or ""),
+                    str(link.get("method") or ""),
+                    str(link.get("confidence") or ""),
+                    float(link.get("score") or 0),
+                    str(link.get("from") or ""),
+                    str(link.get("to") or ""),
+                    link.get("amount"),
+                    str(link.get("token") or ""),
+                    str(link.get("block_ts") or ""),
+                    str(link.get("contract_ret") or ""),
+                    str(link.get("candidates_json") or ""),
+                    checked,
+                ),
+            )
+        c.commit()
+    return {
+        "updated": updated,
+        "created": created,
+        "tx_status": summary.get("tx_status") or "",
+    }
+
+
+def chain_pending_sources(limit: int = 8) -> list[str]:
+    """Newest crypto slip sources not yet checked by the chain resolver."""
+    limit = max(1, min(int(limit), 500))
+    rows = (
+        connect()
+        .execute(
+            "SELECT source_key FROM payment_transactions"
+            " WHERE rail_type='crypto_wallet' AND source_key NOT LIKE 'reference:%'"
+            " AND chain_checked_utc=''"
+            " GROUP BY source_key ORDER BY MAX(last_modified) DESC LIMIT ?",
+            (limit,),
+        )
+        .fetchall()
+    )
+    return [r["source_key"] for r in rows]
+
+
+def chain_pending_wallet_keys(limit: int = 8) -> list[str]:
+    """QR/image wallet hits that have no crypto payment row yet."""
+    limit = max(1, min(int(limit), 500))
+    rows = (
+        connect()
+        .execute(
+            "SELECT key FROM wallet_hits"
+            " WHERE address!='' AND chain_checked_utc=''"
+            " AND (UPPER(network) LIKE '%TRON%' OR UPPER(network) IN ('TRC20','TRC-20','TRX') OR network='')"
+            " AND key NOT IN (SELECT source_key FROM payment_transactions"
+            "   WHERE rail_type='crypto_wallet')"
+            " GROUP BY key ORDER BY MAX(last_modified) DESC LIMIT ?",
+            (limit,),
+        )
+        .fetchall()
+    )
+    return [r["key"] for r in rows]
+
+
+# OCR text markers for an on-chain transaction screenshot. Kept deliberately
+# tight: Amazon Pay / UPI receipts also say "Transaction details" and "hash",
+# but they never say TRONSCAN or carry a 64-hex txids field.
+_CHAIN_OBJECT_WHERE = (
+    "extract_json IS NOT NULL AND ("
+    " lower(extract_json) LIKE '%tronscan%'"
+    " OR extract_json LIKE '%\"txids\"%'"
+    " OR (lower(extract_json) LIKE '%hash:%' AND ("
+    "   lower(extract_json) LIKE '%usdt%'"
+    "   OR lower(extract_json) LIKE '%trx%'"
+    "   OR lower(extract_json) LIKE '%tron%'"
+    " ))"
+    ")"
+)
+
+
+def chain_queue_crypto_objects(batch: int = 5000, max_batches: int = 1) -> dict:
+    """Discover crypto-transaction objects that never became payment/wallet rows.
+
+    Scans ``objects.extract_json`` once by rowid cursor and enqueues every
+    Tronscan/hash-bearing image. This is the safety net for slips whose wallet
+    OCR failed completely (no payment row, no wallet_hit) but whose screenshot
+    still shows a transaction hash/block.
+    """
+    batch = max(1, min(int(batch), 50000))
+    max_batches = max(1, min(int(max_batches), 500))
+    cursor = 0
+    try:
+        cursor = int(get_meta("chain_object_cursor", "0") or 0)
+    except (TypeError, ValueError):
+        cursor = 0
+    queued = scanned = 0
+    done = False
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for _ in range(max_batches):
+        with _writer_lock:
+            c = connect()
+            rows = c.execute(
+                "SELECT rowid,key,extract_json FROM objects"
+                f" WHERE rowid>? AND {_CHAIN_OBJECT_WHERE}"
+                " ORDER BY rowid LIMIT ?",
+                (cursor, batch),
+            ).fetchall()
+            if not rows:
+                done = True
+                c.execute(
+                    "INSERT INTO meta(k,v) VALUES('chain_object_cursor',?)"
+                    " ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                    (str(cursor),),
+                )
+                c.commit()
+                break
+            for r in rows:
+                key = str(r["key"] or "")
+                if not key:
+                    continue
+                blob = str(r["extract_json"] or "").lower()
+                reason = (
+                    "tronscan"
+                    if "tronscan" in blob
+                    else "txids"
+                    if '"txids"' in blob
+                    else "hash"
+                )
+                cur = c.execute(
+                    "INSERT OR IGNORE INTO chain_source_queue(key,reason,queued_utc)"
+                    " VALUES(?,?,?)",
+                    (key, reason, now),
+                )
+                if cur.rowcount:
+                    queued += 1
+                scanned += 1
+                cursor = int(r["rowid"])
+            c.execute(
+                "INSERT INTO meta(k,v) VALUES('chain_object_cursor',?)"
+                " ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                (str(cursor),),
+            )
+            c.commit()
+        if len(rows) < batch:
+            done = True
+            break
+    return {
+        "queued": queued,
+        "scanned": scanned,
+        "cursor": cursor,
+        "done": done,
+    }
+
+
+def chain_pending_queue_keys(limit: int = 8) -> list[str]:
+    limit = max(1, min(int(limit), 2000))
+    rows = (
+        connect()
+        .execute(
+            "SELECT key FROM chain_source_queue WHERE checked_utc=''"
+            " ORDER BY queued_utc DESC LIMIT ?",
+            (limit,),
+        )
+        .fetchall()
+    )
+    return [r["key"] for r in rows]
+
+
+def chain_queue_mark_checked(key: str) -> None:
+    k = str(key or "").strip()
+    if not k:
+        return
+    with _writer_lock:
+        c = connect()
+        c.execute(
+            "UPDATE chain_source_queue SET checked_utc=? WHERE key=?",
+            (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), k),
+        )
+        c.commit()
+
+
+def chain_queue_status() -> dict:
+    c = connect()
+    row = c.execute(
+        "SELECT COUNT(*) total,"
+        " SUM(CASE WHEN checked_utc='' THEN 1 ELSE 0 END) pending"
+        " FROM chain_source_queue"
+    ).fetchone()
+    return {
+        "total": int(row["total"] or 0),
+        "pending": int(row["pending"] or 0),
+        "cursor": get_meta("chain_object_cursor", "0"),
+    }
+
+
+def chain_backfill_sources(
+    since: str = "", until: str = "", limit: int = 500, pending_only: bool = False
+) -> list[str]:
+    """All crypto sources in a window (checked or not) for a full backfill."""
+    limit = max(1, min(int(limit), 100000))
+    since_n = _bound_ts(since, end=False)
+    until_n = _bound_ts(until, end=True)
+    conds = ["source_key NOT LIKE 'reference:%'"]
+    args: list = []
+    if pending_only:
+        conds.append("chain_checked_utc=''")
+    if since_n:
+        conds.append("last_modified>=?")
+        args.append(since_n)
+    if until_n:
+        conds.append("last_modified<=?")
+        args.append(until_n)
+    where = " AND ".join(conds)
+    args.append(limit)
+    c = connect()
+    rows = c.execute(
+        "SELECT source_key FROM payment_transactions"
+        " WHERE rail_type='crypto_wallet' AND " + where +
+        " GROUP BY source_key ORDER BY MAX(last_modified) DESC LIMIT ?",
+        args,
+    ).fetchall()
+    out = [r["source_key"] for r in rows]
+    seen = set(out)
+    # Wallet-only sources (decoded QR images with no OCR payment row).
+    wconds = ["address!=''"]
+    wargs: list = []
+    if pending_only:
+        wconds.append("chain_checked_utc=''")
+    if since_n:
+        wconds.append("last_modified>=?")
+        wargs.append(since_n)
+    if until_n:
+        wconds.append("last_modified<=?")
+        wargs.append(until_n)
+    wargs.append(limit)
+    for r in c.execute(
+        "SELECT key FROM wallet_hits WHERE " + " AND ".join(wconds) +
+        " AND (UPPER(network) LIKE '%TRON%' OR UPPER(network) IN ('TRC20','TRC-20','TRX') OR network='')"
+        " GROUP BY key ORDER BY MAX(last_modified) DESC LIMIT ?",
+        wargs,
+    ).fetchall():
+        k = r["key"]
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out[:limit]
+
+
+def chain_status_counts() -> dict:
+    """Coverage counters for /api/chain/status and the dashboard badge."""
+    c = connect()
+    pay = c.execute(
+        "SELECT COUNT(*) total,"
+        " SUM(CASE WHEN chain_checked_utc!='' THEN 1 ELSE 0 END) checked,"
+        " SUM(CASE WHEN txid!='' THEN 1 ELSE 0 END) with_tx,"
+        " SUM(CASE WHEN wallet_status IN ('valid','repaired') THEN 1 ELSE 0 END) valid_wallet"
+        " FROM payment_transactions WHERE rail_type='crypto_wallet'"
+    ).fetchone()
+    by_status = {
+        str(r["tx_status"] or "unchecked"): int(r["n"] or 0)
+        for r in c.execute(
+            "SELECT tx_status,COUNT(*) n FROM payment_transactions"
+            " WHERE rail_type='crypto_wallet' GROUP BY tx_status"
+        ).fetchall()
+    }
+    wh = c.execute(
+        "SELECT COUNT(*) total,"
+        " SUM(CASE WHEN chain_checked_utc!='' THEN 1 ELSE 0 END) checked,"
+        " SUM(CASE WHEN txid!='' THEN 1 ELSE 0 END) with_tx"
+        " FROM wallet_hits"
+    ).fetchone()
+    res = c.execute(
+        "SELECT COUNT(*) total,"
+        " SUM(CASE WHEN resolved_address!='' AND resolved_address!=raw_address"
+        " THEN 1 ELSE 0 END) repaired,"
+        " SUM(CASE WHEN tronscan_exists=1 THEN 1 ELSE 0 END) onchain"
+        " FROM wallet_resolutions"
+    ).fetchone()
+    cached = c.execute("SELECT COUNT(*) n FROM chain_tx_cache").fetchone()
+    links = c.execute("SELECT COUNT(*) n FROM chain_links").fetchone()
+    try:
+        queue = chain_queue_status()
+    except Exception:
+        queue = {"total": 0, "pending": 0, "cursor": "0"}
+    return {
+        "crypto_rows": int(pay["total"] or 0),
+        "crypto_checked": int(pay["checked"] or 0),
+        "crypto_with_tx": int(pay["with_tx"] or 0),
+        "crypto_valid_wallet": int(pay["valid_wallet"] or 0),
+        "by_tx_status": by_status,
+        "wallet_hits": int(wh["total"] or 0),
+        "wallet_hits_checked": int(wh["checked"] or 0),
+        "wallet_hits_with_tx": int(wh["with_tx"] or 0),
+        "resolutions": int(res["total"] or 0),
+        "resolutions_repaired": int(res["repaired"] or 0),
+        "resolutions_onchain": int(res["onchain"] or 0),
+        "cached_transactions": int(cached["n"] or 0),
+        "audit_links": int(links["n"] or 0),
+        "object_queue_total": int(queue.get("total") or 0),
+        "object_queue_pending": int(queue.get("pending") or 0),
+        "object_scan_cursor": queue.get("cursor") or "0",
     }

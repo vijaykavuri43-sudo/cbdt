@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, createRefreshGuard, eventsUrl, exportWalletsUrl, objectUrl, post, saveCsvFromUrl, tabHidden } from '../lib/api'
-import { arkhamAddressUrl, bestTronscanUrl, traceDeskAddressUrl, tronscanLabel } from '../lib/explorers'
+import { arkhamAddressUrl, bestTronscanUrl, firstTxid, traceDeskAddressUrl, tronscanLabel, tronscanTxUrl } from '../lib/explorers'
 import { fmtIST, fmtMoney } from '../lib/format'
 
 // Every row is one address decoded from a live bucket image (QR / slip /
@@ -10,6 +10,8 @@ interface WalletRow {
   key: string
   last_modified: string
   address?: string
+  raw_address?: string
+  wallet_status?: string
   network?: string
   standard?: string
   confidence?: string
@@ -21,6 +23,9 @@ interface WalletRow {
   amount_value?: number | null
   amount_currency?: string | null
   txids?: string[] | string | null
+  txid?: string
+  tx_status?: string
+  chain_checked_utc?: string
   kind?: string | null
   hits?: number
   first_seen?: string
@@ -79,6 +84,39 @@ function originShort(key: string): string {
   const parts = (key || '').split('/').filter(Boolean)
   if (parts.length <= 1) return key || '—'
   return `${parts[0]}/${parts[parts.length - 1]}`
+}
+
+// On-chain transaction attached to this wallet hit by the Tronscan verifier.
+// "derived" means the hash was reconstructed from an OCR fragment and then
+// confirmed on-chain; "ambiguous" keeps every candidate as a lead, not a fact.
+function WalletTxCell({ row }: { row: WalletRow }) {
+  const status = (row.tx_status || '').toLowerCase()
+  const tx = firstTxid(row.txid) || firstTxid(row.txids)
+  const label = status || 'unchecked'
+  const title =
+    status === 'verified'
+      ? 'Full transaction hash read from the slip and confirmed on Tronscan.'
+      : status === 'derived'
+        ? 'Transaction hash reconstructed from the OCR fragment and confirmed on-chain.'
+        : status === 'ambiguous'
+          ? 'Several on-chain transactions fit this slip; candidates are leads, not facts.'
+          : status === 'unresolved'
+            ? 'No unique on-chain transaction could be proven from this image.'
+            : 'Not yet checked against Tronscan.'
+  return (
+    <div className="oq-tx-cell">
+      {tx ? (
+        <a className="mono small oq-txid" href={tronscanTxUrl(tx)} target="_blank" rel="noreferrer" title={tx}>
+          {tx.slice(0, 10)}…{tx.slice(-8)}
+        </a>
+      ) : (
+        <span className="tiny dim">no hash</span>
+      )}
+      <span className={`chain-badge chain-${status || 'unchecked'}`} title={title}>
+        {label}
+      </span>
+    </div>
+  )
 }
 interface FullScanStatus {
   running: boolean
@@ -356,6 +394,7 @@ export function Wallets() {
               <tr>
                 <th>Address</th>
                 <th>Network</th>
+                <th>Tx hash</th>
                 <th>Label</th>
                 <th>Source</th>
                 <th>{distinct ? 'First seen' : 'Object time'}</th>
@@ -367,8 +406,13 @@ export function Wallets() {
           <tbody>
             {rows.map((r: any) => (
               <tr key={r.key + (r.address ?? '')}>
-                <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>{r.address}{r.checksum === 'invalid' && <span title="On-chain checksum failed — OCR-degraded read, treat as unverified"> ⚠</span>}</td>
+                <td className="mono" style={{ fontWeight: 700, wordBreak: 'break-all' }}>{r.address}{r.checksum === 'invalid' && <span title="On-chain checksum failed — OCR-degraded read, treat as unverified"> ⚠</span>}
+                  {r.raw_address && r.raw_address !== r.address && (
+                    <div className="tiny dim mono" title="Raw OCR value (preserved as evidence)">OCR: {r.raw_address}</div>
+                  )}
+                </td>
                 <td>{r.network ?? '—'}</td>
+                <td><WalletTxCell row={r} /></td>
                 <td className="small">{r.standard ?? '—'}</td>
                 <td className="small dim mono" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.key || ''}>
                   {originShort(r.key ?? '')}
@@ -395,7 +439,7 @@ export function Wallets() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="dp-empty">
+                <td colSpan={9} className="dp-empty">
                   <div className="dp-empty-icon">₿</div>
                   <div style={{ fontWeight: 700, marginBottom: 4 }}>No wallets yet on this monitor host</div>
                   <div className="small dim" style={{ maxWidth: 720, margin: '0 auto', lineHeight: 1.5 }}>

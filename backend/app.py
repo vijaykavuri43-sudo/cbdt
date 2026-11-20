@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from typing import Any
 
 from . import config, db
+from . import chain
 from .collector import Collector, bus, collector_holder
 from .evidence import DownloadManager, append_collection_log
 from .s3client import S3PublicClient
@@ -417,6 +418,12 @@ def startup():
     # /api/types answer instantly after a deploy and rebuild in background.
     _load_all_cache_from_disk()
     db.connect()
+    # Tronscan verification worker: one leader per deployment (file lock), so
+    # 2 uvicorn workers never double-hit the public API or race on the queue.
+    try:
+        chain.start_worker()
+    except Exception as e:
+        print(f"[chain] worker start failed: {e}", flush=True)
     # Stack dump on demand: `docker exec s3lm kill -USR1 <worker-pid>` writes
     # every thread's stack to the log. The 2026-11-08 stall (drains=0 while the
     # owner burned CPU) was invisible without it.
@@ -510,6 +517,10 @@ def startup():
 
 @app.on_event("shutdown")
 def shutdown():
+    try:
+        chain.stop_worker()
+    except Exception:
+        pass
     collector.stop()
     db.close()
 
@@ -786,6 +797,10 @@ def _build_status():
         st["gemini_stats"] = {}
         st["drain_stats"] = {}
     st["max_amount_inr"] = config.MAX_AMOUNT_INR
+    try:
+        st["chain"] = chain.status()
+    except Exception as e:
+        st["chain"] = {"enabled": False, "error": str(e)[:200]}
     return st
 
 
@@ -2444,6 +2459,7 @@ def money_flows_api(
     since: str = Query("", max_length=32),
     until: str = Query("", max_length=32),
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
+    tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
     _=Depends(auth),
 ):
     """Normalized gambler↔payment-rail flows from OCR, QR, and case references.
@@ -2451,7 +2467,7 @@ def money_flows_api(
     Officer Query tab uses direction=both + folder (deposit/withdrawal/bankingqr/other)
     + since/until. Existing Mule Money Flows tab keeps deposit|withdrawal defaults.
     """
-    cache_key = f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}"
+    cache_key = f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}:{tx_status}"
     # q-searches were cached 5s: every retry re-ran the expensive GROUP BYs.
     # 60s is fine for a search view (no-q fast path stays at 5s).
     return cached(
@@ -2467,8 +2483,106 @@ def money_flows_api(
             since=since,
             until=until,
             folder=folder,
+            tx_status=tx_status,
         ),
     )
+
+
+# ---------------- Tronscan chain verification ----------------
+@app.get("/api/chain/status")
+def chain_status_api(_=Depends(auth)):
+    """Coverage + worker/API health for the Tronscan verifier."""
+    return chain.status()
+
+
+@app.post("/api/chain/verify")
+def chain_verify_api(
+    since: str = Query("", max_length=32),
+    until: str = Query("", max_length=32),
+    limit: int = Query(500, ge=1, le=20000),
+    dry_run: bool = False,
+    background: bool = True,
+    pending_only: bool = False,
+    _=Depends(auth),
+):
+    """Backfill canonical wallet addresses + verified transaction hashes.
+
+    Runs off the request thread by default; poll /api/chain/status for the
+    job counters. dry_run resolves without writing (audit before a backfill).
+    pending_only skips sources already checked, so repeated calls advance
+    through the unchecked backlog instead of redoing the newest rows.
+    """
+    if background:
+        return chain.start_backfill(
+            since=since,
+            until=until,
+            limit=limit,
+            dry_run=dry_run,
+            pending_only=pending_only,
+        )
+    return chain.backfill(
+        since=since,
+        until=until,
+        limit=limit,
+        dry_run=dry_run,
+        pending_only=pending_only,
+    )
+
+
+@app.post("/api/chain/verify-one")
+def chain_verify_one_api(
+    key: str = Query(..., min_length=1, max_length=1024),
+    _=Depends(auth),
+):
+    """Resolve one source object synchronously (officer-triggered re-check)."""
+    return chain.verify_source_key(key)
+
+
+@app.get("/api/chain/candidates")
+def chain_candidates_api(
+    key: str = Query(..., min_length=1, max_length=1024),
+    _=Depends(auth),
+):
+    """Every transaction candidate considered for one slip (audit trail)."""
+    rows = (
+        db.connect()
+        .execute(
+            "SELECT txid,status,method,confidence,match_score,from_address,"
+            "to_address,amount,token,block_ts,contract_ret,checked_utc"
+            " FROM chain_links WHERE source_key=? ORDER BY match_score DESC",
+            (key,),
+        )
+        .fetchall()
+    )
+    return {"source_key": key, "items": [dict(r) for r in rows]}
+
+
+@app.get("/api/chain/tx/{txid}")
+def chain_tx_api(txid: str, _=Depends(auth)):
+    """Cached Tronscan transaction details (never calls the API inline)."""
+    info = db.chain_tx_cache_get(txid)
+    if not info:
+        return {"found": False, "cached": False, "txid": txid}
+    return {"found": True, "cached": True, **info}
+
+
+@app.get("/api/chain/resolution")
+def chain_resolution_api(
+    raw: str = Query(..., min_length=1, max_length=256),
+    _=Depends(auth),
+):
+    """Raw OCR wallet string → canonical address mapping."""
+    r = (
+        db.connect()
+        .execute(
+            "SELECT raw_address,resolved_address,network,method,confidence,"
+            "tronscan_exists,first_seen_utc,checked_utc"
+            " FROM wallet_resolutions WHERE raw_address=?",
+            (raw,),
+        )
+        .fetchone()
+    )
+    return dict(r) if r else {"raw_address": raw, "resolved_address": ""}
 
 
 def _score_mule_rail_items(items: list) -> list:
@@ -2713,6 +2827,23 @@ def export_rails(_=Depends(auth)):
     )
 
 
+def _flow_fact_type(row: dict) -> str:
+    """fact only when the wallet and its transaction are fully verified.
+
+    Derived (fragment/block/amount matched) and ambiguous chain results are
+    intelligence leads, never presented as confirmed facts.
+    """
+    if (row.get("rail_type") or "") != "crypto_wallet":
+        return "fact"
+    if (
+        (row.get("tx_status") or "").lower() == "verified"
+        and (row.get("wallet_status") or "").lower()
+        in ("valid", "repaired", "tronscan_confirmed")
+    ):
+        return "fact"
+    return "ai_lead"
+
+
 _MONEY_FLOW_EXPORT_COLUMNS = (
     "bucket_last_modified_utc",
     "indexed_seen_utc",
@@ -2722,6 +2853,19 @@ _MONEY_FLOW_EXPORT_COLUMNS = (
     "utr",
     "rail_type",
     "rail_id",
+    "rail_id_raw",
+    "wallet_status",
+    "transaction hash",
+    "tx_status",
+    "tx_method",
+    "tx_confidence",
+    "tx_time_utc",
+    "tx_from",
+    "tx_to",
+    "tx_amount",
+    "tx_token",
+    "tx_contract_ret",
+    "chain_checked_utc",
     "account_holder",
     "ifsc",
     "network",
@@ -2745,6 +2889,7 @@ def export_money_flows(
     since: str = Query("", max_length=32),
     until: str = Query("", max_length=32),
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
+    tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
     _=Depends(auth),
 ):
     """Officer Query CSV (opens in Excel): filtered flows with object + stamps.
@@ -2763,6 +2908,7 @@ def export_money_flows(
             since=since,
             until=until,
             folder=folder,
+            tx_status=tx_status,
         )
         out = []
         for r in rows:
@@ -2779,6 +2925,21 @@ def export_money_flows(
                     "utr": r.get("utr") or "",
                     "rail_type": r.get("rail_type") or "",
                     "rail_id": r.get("rail_id") or "",
+                    "rail_id_raw": r.get("rail_id_raw") or "",
+                    "wallet_status": r.get("wallet_status") or "",
+                    "transaction hash": r.get("txid") or "",
+                    "tx_status": r.get("tx_status") or "",
+                    "tx_method": r.get("tx_method") or "",
+                    "tx_confidence": r.get("tx_confidence") or "",
+                    "tx_time_utc": r.get("tx_time") or "",
+                    "tx_from": r.get("tx_from") or "",
+                    "tx_to": r.get("tx_to") or "",
+                    "tx_amount": r.get("tx_amount")
+                    if r.get("tx_amount") is not None
+                    else "",
+                    "tx_token": r.get("tx_token") or "",
+                    "tx_contract_ret": r.get("tx_contract_ret") or "",
+                    "chain_checked_utc": r.get("chain_checked_utc") or "",
                     "account_holder": r.get("account_holder") or "",
                     "ifsc": r.get("ifsc") or "",
                     "network": r.get("network") or "",
@@ -2791,13 +2952,13 @@ def export_money_flows(
                     else "",
                     "case": config.CASE_ID,
                     "auth_ref": config.AUTH_REF,
-                    "fact_type": "fact",
+                    "fact_type": _flow_fact_type(r),
                 }
             )
         return out
 
     cache_key = (
-        f"export-flows:{direction}:{rail_type}:{q}:{source}:{since}:{until}:{folder}"
+        f"export-flows:{direction}:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{tx_status}"
     )
     rows = cached(cache_key, 30.0, build)
     tag = f"{folder or direction}-{(rail_type or 'all')}-{since or 'start'}-to-{until or 'now'}"
@@ -2810,7 +2971,17 @@ def export_money_flows(
 _UNIQUE_EXPORT_COLUMNS = (
     "rail_type",
     "rail_id",
+    "rail_id_raw",
     "rail_quality",
+    "wallet_status",
+    "transaction hash",
+    "tx_status",
+    "tx_method",
+    "tx_confidence",
+    "tx_time_utc",
+    "tx_amount",
+    "tx_token",
+    "chain_checked_utc",
     "utrs",
     "utr_count",
     "account_holder",
@@ -2840,10 +3011,11 @@ def money_flows_unique_api(
     until: str = Query("", max_length=32),
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     direction: str = Query("both", pattern="^(deposit|withdrawal|both)$"),
+    tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
     _=Depends(auth),
 ):
     """One row per UPI/VPA, bank account, or crypto wallet for officer unique lists."""
-    cache_key = f"flows-u:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}:{direction}"
+    cache_key = f"flows-u:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}:{direction}:{tx_status}"
     return cached(
         cache_key,
         60.0,
@@ -2857,6 +3029,7 @@ def money_flows_unique_api(
             until=until,
             folder=folder,
             direction=direction,
+            tx_status=tx_status,
         ),
     )
 
@@ -2902,6 +3075,7 @@ def export_money_flows_unique(
     until: str = Query("", max_length=32),
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     direction: str = Query("both", pattern="^(deposit|withdrawal|both)$"),
+    tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
     _=Depends(auth),
 ):
     """Unique address CSV — one VPA / account / wallet per row (not every slip)."""
@@ -2915,6 +3089,7 @@ def export_money_flows_unique(
             until=until,
             folder=folder,
             direction=direction,
+            tx_status=tx_status,
         )
         out = []
         for r in rows:
@@ -2923,7 +3098,19 @@ def export_money_flows_unique(
                 {
                     "rail_type": r.get("rail_type") or "",
                     "rail_id": r.get("rail_id") or "",
+                    "rail_id_raw": r.get("rail_id_raw") or "",
                     "rail_quality": r.get("rail_quality") or "",
+                    "wallet_status": r.get("wallet_status") or "",
+                    "transaction hash": r.get("txid") or "",
+                    "tx_status": r.get("tx_status") or "",
+                    "tx_method": r.get("tx_method") or "",
+                    "tx_confidence": r.get("tx_confidence") or "",
+                    "tx_time_utc": r.get("tx_time") or "",
+                    "tx_amount": r.get("tx_amount")
+                    if r.get("tx_amount") is not None
+                    else "",
+                    "tx_token": r.get("tx_token") or "",
+                    "chain_checked_utc": r.get("chain_checked_utc") or "",
                     "utrs": r.get("utrs") or "",
                     "utr_count": r.get("utr_count") or 0,
                     "account_holder": r.get("account_holder") or "",
@@ -2942,13 +3129,13 @@ def export_money_flows_unique(
                     else "",
                     "case": config.CASE_ID,
                     "auth_ref": config.AUTH_REF,
-                    "fact_type": "fact",
+                    "fact_type": _flow_fact_type(r),
                 }
             )
         return out
 
     cache_key = (
-        f"export-flows-u:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{direction}"
+        f"export-flows-u:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{direction}:{tx_status}"
     )
     rows = cached(cache_key, 30.0, build)
     tag = f"{folder or 'all'}-{(rail_type or 'all')}-{direction}-{since or 'start'}-to-{until or 'now'}"

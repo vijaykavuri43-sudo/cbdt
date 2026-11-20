@@ -998,3 +998,19 @@ input[type="time"] {
 .ex-page-btn:hover:not(:disabled) { border-color: var(--accent); }
 .ex-page-btn:disabled { opacity: .4; cursor: default; }
 .ex-page-info { font-size: 12px; color: var(--dim); }
+
+/* Tronscan chain-verification cells (2026-11-20) */
+.oq-tx-cell { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; min-width: 150px; }
+.oq-txid { color: var(--accent); word-break: break-all; }
+.chain-badge {
+  display: inline-block; border: 1px solid var(--border-strong); border-radius: 999px;
+  padding: 1px 7px; font-size: 10px; line-height: 1.5; white-space: nowrap; letter-spacing: .2px;
+}
+.chain-verified { border-color: var(--accent2); color: var(--accent2); font-weight: 700; }
+.chain-derived { border-color: var(--warn); color: var(--warn); font-weight: 700; }
+.chain-ambiguous { border-color: #c084fc; color: #c084fc; font-weight: 700; }
+.chain-unresolved { border-color: var(--bad); color: var(--bad); }
+.chain-unchecked { border-color: var(--border); color: var(--dim); }
+.oq-tx-candidates summary { cursor: pointer; color: var(--muted); font-size: 10.5px; }
+.oq-tx-candidates ul { margin: 4px 0 0; padding-left: 14px; }
+.oq-chain-filter { max-width: 240px; margin-top: 10px; }
