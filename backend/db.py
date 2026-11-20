@@ -147,6 +147,8 @@ class _SafeConnection(sqlite3.Connection):
 
 _writer_lock = _WriterLock()
 _local = threading.local()
+_schema_lock = threading.Lock()
+_schema_ready: set[str] = set()
 
 
 def connect() -> sqlite3.Connection:
@@ -176,16 +178,25 @@ def connect() -> sqlite3.Connection:
         # workers and the sync container (same data dir, same flock). On a
         # large live DB a concurrent bulk writer can hold SQLite's write lock
         # past the busy timeout; retry instead of failing app startup.
-        with _writer_lock:
-            for attempt in range(8):
-                try:
-                    conn.executescript(SCHEMA)
-                    _migrate(conn)
-                    break
-                except sqlite3.OperationalError as e:
-                    if "locked" not in str(e).lower() or attempt == 7:
-                        raise
-                    time.sleep(2 + attempt * 2)
+        #
+        # Only the first connection in this process pays this cost. Running
+        # CREATE TABLE/INDEX IF NOT EXISTS on every new thread connection made
+        # each API request queue behind the live sync writer (12GB DB: /api
+        # requests hung for 90s+ after the chain tables were added).
+        db_key = str(config.DB_PATH)
+        with _schema_lock:
+            if db_key not in _schema_ready:
+                with _writer_lock:
+                    for attempt in range(8):
+                        try:
+                            conn.executescript(SCHEMA)
+                            _migrate(conn)
+                            break
+                        except sqlite3.OperationalError as e:
+                            if "locked" not in str(e).lower() or attempt == 7:
+                                raise
+                            time.sleep(2 + attempt * 2)
+                _schema_ready.add(db_key)
         _local.conn = conn
     return conn
 
