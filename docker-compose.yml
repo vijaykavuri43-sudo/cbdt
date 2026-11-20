@@ -32,7 +32,7 @@ services:
       # MUST be updated if the VM is ever recreated with a new external IP.
       - S3LM_PUBLIC_URL=${S3LM_PUBLIC_URL:-http://8.231.108.145}
       - S3LM_ENRICH_MAX_AGE_HOURS=0
-      - S3LM_CHAIN_RATE=${S3LM_CHAIN_RATE:-5}
+      - S3LM_CHAIN_RATE=${S3LM_CHAIN_RATE:-2}
       - S3LM_ENRICH_WORKERS=${S3LM_ENRICH_WORKERS:-8}
       - S3LM_ENRICH_BATCH=${S3LM_ENRICH_BATCH:-96}
       - OMP_THREAD_LIMIT=1
@@ -169,7 +169,7 @@ services:
       - S3LM_DEFAULT_PREFIXES=deposit/,withdrawal/
       - S3LM_HOT_PREFIXES=deposit/,withdrawal/
       - S3LM_ENRICH_MAX_AGE_HOURS=0
-      - S3LM_CHAIN_RATE=${S3LM_CHAIN_RATE:-5}
+      - S3LM_CHAIN_RATE=${S3LM_CHAIN_RATE:-2}
       - S3LM_ENRICH_WORKERS=2
       - S3LM_ENRICH_BATCH=64
       - OMP_THREAD_LIMIT=1
@@ -287,7 +287,7 @@ services:
       - S3LM_QR_PREFIXES=bankingqr/,qrcode/,payment/,paymentgateway/,QR-images/,payment-proofs/,payment-proof/
       - S3LM_OCR_PREFIXES=deposit/,withdrawal/,payment-proofs/,payment-proof/
       - S3LM_ENRICH_MAX_AGE_HOURS=0
-      - S3LM_CHAIN_RATE=${S3LM_CHAIN_RATE:-5}
+      - S3LM_CHAIN_RATE=${S3LM_CHAIN_RATE:-2}
       - S3LM_ENRICH_WORKERS=2
       - S3LM_ENRICH_BATCH=64
       - OMP_THREAD_LIMIT=1
@@ -396,7 +396,7 @@ services:
       - S3LM_DEFAULT_PREFIXES=deposit/,withdrawal/
       - S3LM_HOT_PREFIXES=deposit/,withdrawal/
       - S3LM_ENRICH_MAX_AGE_HOURS=0
-      - S3LM_CHAIN_RATE=${S3LM_CHAIN_RATE:-5}
+      - S3LM_CHAIN_RATE=${S3LM_CHAIN_RATE:-2}
       - S3LM_ENRICH_WORKERS=2
       - S3LM_ENRICH_BATCH=64
       - OMP_THREAD_LIMIT=1

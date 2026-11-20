@@ -633,8 +633,8 @@ def _note_fail(msg: str):
         _fail_count += 1
         _error_seq += 1
         _last_error = str(msg)[:300]
-        if _fail_count >= 10:
-            _pause_until = time.time() + 600
+        if _fail_count >= 8:
+            _pause_until = time.time() + 60
 
 
 def api_ready() -> bool:
@@ -648,7 +648,7 @@ def api_ready() -> bool:
         return (
             ENABLED
             and time.time() >= _pause_until
-            and _fail_count < 3
+            and _fail_count < 8
         )
 
 
@@ -663,11 +663,25 @@ def _api_get(path: str, params: dict) -> dict:
     if TRONSCAN_API_KEY:
         headers["TRON-PRO-API-KEY"] = TRONSCAN_API_KEY
     last_exc: Exception | None = None
-    for attempt in range(3):
+    for attempt in range(4):
         _limiter.acquire()
         try:
             r = _get_client().get(url, params=params, headers=headers)
-            if r.status_code in (429, 500, 502, 503, 504):
+            if r.status_code == 429:
+                # Four dashboards share one egress IP; back off well past
+                # Tronscan's window instead of hammering it into a pause.
+                retry_after = r.headers.get("Retry-After") or ""
+                try:
+                    wait = min(30.0, max(2.0, float(retry_after)))
+                except (TypeError, ValueError):
+                    wait = 2.0 * (attempt + 1) + 1.0
+                last_exc = httpx.HTTPStatusError(
+                    "HTTP 429", request=r.request, response=r
+                )
+                if attempt < 3:
+                    time.sleep(wait)
+                continue
+            if r.status_code in (500, 502, 503, 504):
                 raise httpx.HTTPStatusError(
                     f"HTTP {r.status_code}", request=r.request, response=r
                 )
@@ -687,8 +701,8 @@ def _api_get(path: str, params: dict) -> dict:
             return {}
         except Exception as e:  # noqa: BLE001 - network errors are expected
             last_exc = e
-            if attempt < 2:
-                time.sleep(0.6 * (2**attempt))
+            if attempt < 3:
+                time.sleep(1.5 * (2**attempt))
     _note_fail(str(last_exc or "unknown"))
     return {}
 
@@ -1805,6 +1819,7 @@ def _run_backfill(
     results = []
     counts: dict[str, int] = {}
     todo = keys + queue_keys + wallet_keys
+    api_streak = 0
     for idx, key in enumerate(todo, 1):
         if key in seen:
             continue
@@ -1821,13 +1836,29 @@ def _run_backfill(
                     known=known,
                 )
             else:
-                res = verify_source_key(key, known=known)
+                res = {}
+                for attempt in range(3):
+                    if not api_ready():
+                        # Wait out a 429 pause instead of skipping the
+                        # backlog (live: 224/228 sources skipped in one pass).
+                        deadline = time.time() + 90
+                        while not api_ready() and time.time() < deadline:
+                            time.sleep(2)
+                    res = verify_source_key(key, known=known)
+                    if str(res.get("skipped") or "") not in (
+                        "api_unavailable",
+                        "api_error",
+                    ):
+                        break
+                    time.sleep(2 + attempt * 3)
             skip = str(res.get("skipped") or "")
             if skip:
                 counts[skip] = counts.get(skip, 0) + 1
                 results.append({"source_key": key, "skipped": skip})
                 print(f"[chain] {idx}/{len(todo)} skipped:{skip} {key}", flush=True)
+                api_streak += 1
             else:
+                api_streak = 0
                 st = str((res.get("summary") or {}).get("tx_status") or "unknown")
                 counts[st] = counts.get(st, 0) + 1
                 results.append(
@@ -1841,6 +1872,14 @@ def _run_backfill(
                     f"[chain] {idx}/{len(todo)} {st} {key}",
                     flush=True,
                 )
+            if api_streak >= 5:
+                counts["api_stopped"] = counts.get("api_stopped", 0) + 1
+                print(
+                    "[chain] Tronscan still unavailable after retries; "
+                    "stopping this pass (rerun later)",
+                    flush=True,
+                )
+                break
         except Exception as e:  # noqa: BLE001
             counts["error"] = counts.get("error", 0) + 1
             results.append({"source_key": key, "error": str(e)[:200]})
