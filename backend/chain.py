@@ -56,6 +56,7 @@ TRONSCAN_API_KEY = (
     or os.environ.get("TRONSCAN_API_KEY", "").strip()
 )
 ENABLED = os.environ.get("S3LM_CHAIN_VERIFY", "1").strip() != "0"
+WORKER_ENABLED = os.environ.get("S3LM_CHAIN_WORKER", "1").strip() != "0"
 RATE_PER_SEC = float(os.environ.get("S3LM_CHAIN_RATE", "3") or 3)
 WORKER_BATCH = int(os.environ.get("S3LM_CHAIN_BATCH", "8") or 8)
 WORKER_SLEEP = float(os.environ.get("S3LM_CHAIN_SLEEP", "30") or 30)
@@ -1714,7 +1715,7 @@ def _acquire_leader_lock() -> bool:
 
 def start_worker():
     global _thread
-    if not ENABLED or _thread is not None:
+    if not ENABLED or not WORKER_ENABLED or _thread is not None:
         return
     if not _acquire_leader_lock():
         return
