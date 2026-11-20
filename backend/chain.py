@@ -31,6 +31,7 @@ Public API (used by app.py and db.py):
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -313,7 +314,7 @@ _HEX_FIX = str.maketrans(
         "g": "6",
         "z": "2",
         "£": "c",
-        "€": "c",
+        "€": "e",
         "$": "5",
         "§": "5",
     }
@@ -323,6 +324,31 @@ _HEX_FIX = str.maketrans(
 def _norm_hex(value: str) -> str:
     s = str(value or "").lower().translate(_HEX_FIX)
     return re.sub(r"[^0-9a-f]", "", s)
+
+
+def _norm_hex_variants(value: str, max_variants: int = 4) -> list[str]:
+    """Normalise OCR hex, keeping both readings of ``€``/``£``.
+
+    Tronscan hashes use lowercase hex, and the OCR confuses ``e``/``c`` with
+    the currency symbols (live: ``€5144066…`` was really ``e5144066…``). A
+    hash is never guessed from this: every variant is checked against
+    Tronscan and only a hit is used.
+    """
+    raw = str(value or "")
+    positions = [i for i, ch in enumerate(raw) if ch in "€£"]
+    if not positions:
+        return [_norm_hex(raw)]
+    out: list[str] = []
+    for reps in itertools.product("ce", repeat=min(len(positions), 3)):
+        chars = list(raw)
+        for i, rep in zip(positions, reps):
+            chars[i] = rep
+        h = _norm_hex("".join(chars))
+        if h and h not in out:
+            out.append(h)
+        if len(out) >= max_variants:
+            break
+    return out or [_norm_hex(raw)]
 
 
 def extract_txid_candidates(text: str) -> list[dict]:
@@ -369,9 +395,9 @@ def extract_txid_candidates(text: str) -> list[dict]:
 
     # 2) Labeled full hashes with OCR noise (£, l, O).
     for m in _LABELED_FULL_RE.finditer(text):
-        h = _norm_hex(m.group(1))
-        if len(h) == 64:
-            add(full=h, raw=m.group(0), kind="full_ocr")
+        for h in _norm_hex_variants(m.group(1)):
+            if len(h) == 64:
+                add(full=h, raw=m.group(0), kind="full_ocr")
 
     # 2b) Wrapped labeled hash lines: OCR splits the 64-hex string with
     # spaces ("833f...419 1f20...e4", "957449 1d3c...f50d8"). Join the run
@@ -380,70 +406,83 @@ def extract_txid_candidates(text: str) -> list[dict]:
         body = m.group(1)
         if "..." in body or "…" in body:
             parts = re.split(r"(?:\.{2,}|…)", body, maxsplit=1)
-            prefix = _norm_hex(parts[0])
             tail = parts[1].strip() if len(parts) > 1 else ""
             # The hash tail is the first token after the ellipsis; later
             # hexish-looking words ("D", "Block") are page text, not hash.
-            suffix = _norm_hex(tail.split()[0]) if tail else ""
-            if len(prefix) + len(suffix) == 64:
-                add(full=prefix + suffix, raw=m.group(0), kind="full_wrapped")
-                # Keep the visible prefix as a fallback: if the joined full is
-                # an OCR artifact (truncated hash + page digits), the block /
-                # fragment path can still resolve the real transaction.
-                if len(prefix) >= 10:
-                    add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="fragment_wrapped")
-            elif len(prefix) >= 10:
-                add(
-                    prefix=prefix,
-                    suffix=suffix,
-                    raw=m.group(0),
-                    kind="fragment_wrapped",
-                )
+            tails = _norm_hex_variants(tail.split()[0]) if tail else [""]
+            for prefix in _norm_hex_variants(parts[0]):
+                for suffix in tails:
+                    if len(prefix) + len(suffix) == 64:
+                        add(full=prefix + suffix, raw=m.group(0), kind="full_wrapped")
+                        # Keep the visible prefix as a fallback: if the joined
+                        # full is an OCR artifact (truncated hash + page digits),
+                        # the block / fragment path can still resolve it.
+                        if len(prefix) >= 10:
+                            add(
+                                prefix=prefix,
+                                suffix=suffix,
+                                raw=m.group(0),
+                                kind="fragment_wrapped",
+                            )
+                    elif len(prefix) >= 10:
+                        add(
+                            prefix=prefix,
+                            suffix=suffix,
+                            raw=m.group(0),
+                            kind="fragment_wrapped",
+                        )
         else:
-            h = _norm_hex(body)
+            variants = _norm_hex_variants(body)
             first_tok = body.strip().split()[0] if body.strip() else ""
-            first = _norm_hex(first_tok)
-            if len(h) >= 64:
-                add(full=h[:64], raw=m.group(0), kind="full_wrapped")
+            firsts = _norm_hex_variants(first_tok)
+            for h in variants:
+                if len(h) >= 64:
+                    add(full=h[:64], raw=m.group(0), kind="full_wrapped")
+            if any(len(h) >= 64 for h in variants):
                 # OCR can join a truncated 40-char hash with the digits of
                 # "Block & Time" / timestamps to reach 64. Preserve the
                 # contiguous visible prefix so a failed full lookup can fall
                 # back to the deterministic block+fragment match.
-                if 10 <= len(first) < 64:
-                    add(prefix=first, raw=first_tok, kind="prefix_wrapped")
-            elif len(h) >= 10:
-                add(prefix=h, raw=m.group(0), kind="prefix_wrapped")
+                for first in firsts:
+                    if 10 <= len(first) < 64:
+                        add(prefix=first, raw=first_tok, kind="prefix_wrapped")
+            else:
+                for h in variants:
+                    if len(h) >= 10:
+                        add(prefix=h, raw=m.group(0), kind="prefix_wrapped")
 
     # 3) Labeled fragments: "Hash: 00d1f557c42111f9...34b31".
     for m in _FRAG_RE.finditer(text):
-        prefix = _norm_hex(m.group(1))
-        suffix = _norm_hex(m.group(2))
-        if len(prefix) >= 6:
-            add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="fragment")
+        suffixes = _norm_hex_variants(m.group(2))
+        for prefix in _norm_hex_variants(m.group(1)):
+            for suffix in suffixes:
+                if len(prefix) >= 6:
+                    add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="fragment")
 
     # 3b) Prefix-only fragment (OCR cut the rest of the line).
     for m in _LABELED_PREFIX_RE.finditer(text):
-        prefix = _norm_hex(m.group(1))
-        if len(prefix) < 10:
-            continue
-        if any(
-            c.get("prefix") == prefix
-            or (c.get("full") or "").startswith(prefix)
-            for c in out
-        ):
-            continue
-        add(prefix=prefix, raw=m.group(0), kind="prefix")
+        for prefix in _norm_hex_variants(m.group(1)):
+            if len(prefix) < 10:
+                continue
+            if any(
+                c.get("prefix") == prefix
+                or (c.get("full") or "").startswith(prefix)
+                for c in out
+            ):
+                continue
+            add(prefix=prefix, raw=m.group(0), kind="prefix")
 
     # 4) Unlabeled long split runs (OCR wrapped a 64-hex hash).
     for m in _SPLIT_RUN_RE.finditer(text):
-        prefix = _norm_hex(m.group(1))
-        suffix = _norm_hex(m.group(2))
-        if len(prefix) + len(suffix) == 64:
-            add(full=prefix + suffix, raw=m.group(0), kind="wrapped_full")
-            if len(prefix) >= 20:
-                add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="wrapped")
-        elif len(prefix) >= 20:
-            add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="wrapped")
+        suffixes = _norm_hex_variants(m.group(2))
+        for prefix in _norm_hex_variants(m.group(1)):
+            for suffix in suffixes:
+                if len(prefix) + len(suffix) == 64:
+                    add(full=prefix + suffix, raw=m.group(0), kind="wrapped_full")
+                    if len(prefix) >= 20:
+                        add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="wrapped")
+                elif len(prefix) >= 20:
+                    add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="wrapped")
 
     return out
 
@@ -632,8 +671,11 @@ def _api_get(path: str, params: dict) -> dict:
                 raise httpx.HTTPStatusError(
                     f"HTTP {r.status_code}", request=r.request, response=r
                 )
-            if r.status_code == 400:
-                # Invalid address / malformed hash: not retryable.
+            if r.status_code in (400, 404):
+                # Invalid address / unknown hash / block: a negative answer,
+                # not an API outage. Counting it as a failure tripped the
+                # circuit breaker after three bad OCR hashes and silently
+                # skipped the rest of a recheck (live bug, 2026-11-20).
                 _note_ok()
                 return {}
             r.raise_for_status()
@@ -1261,16 +1303,23 @@ def resolve_source(
     # 1b) Block-height anchor: a Tronscan screenshot shows "Block & Time".
     # One block holds a few hundred tx, so this beats paging a hot wallet.
     # A unique 14-hex prefix + block is deterministic, even with no wallet.
-    if best_info is None and frags:
+    if best_info is None and fragments:
         block = extract_block_number(text)
         if block:
+            # A full hash that Tronscan did not recognise may still be a
+            # truncated OCR join; its first 14 chars are a valid block anchor.
+            block_frags = list(frags) + [
+                {"prefix": f["full"][:14], "suffix": f["full"][-6:]}
+                for f in fragments
+                if len(f.get("full") or "") == 64
+            ]
             best_prefix = max(
-                (str(f.get("prefix") or "") for f in frags), key=len, default=""
+                (str(f.get("prefix") or "") for f in block_frags), key=len, default=""
             )
             matches = [
                 h
                 for h in block_txids(block, stop_prefix=best_prefix)
-                if _fragment_hit(h, frags)
+                if _fragment_hit(h, block_frags)
             ]
             if len(matches) == 1:
                 info = tx_info(matches[0])
