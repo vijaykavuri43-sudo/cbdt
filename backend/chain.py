@@ -277,7 +277,7 @@ def match_known_fragment(raw: Any, known: Iterable[str], network: str = "TRON") 
 # Txid extraction (full + partial)
 # ---------------------------------------------------------------------------
 
-_HEXISH = "0-9a-fA-FlIiOo£$§"
+_HEXISH = "0-9a-fA-FlIiOo£€$§"
 _FRAG_RE = re.compile(
     r"(?:hash|tx\.?\s*id|txid|transaction\s*(?:hash|id))\s*[:#]?\s*"
     rf"([{_HEXISH}]{{6,}})\s*[:;.,·•]?\s*(?:\.{{2,}}|…)\s*([{_HEXISH}]{{4,}})",
@@ -313,6 +313,7 @@ _HEX_FIX = str.maketrans(
         "g": "6",
         "z": "2",
         "£": "c",
+        "€": "c",
         "$": "5",
         "§": "5",
     }
@@ -386,6 +387,11 @@ def extract_txid_candidates(text: str) -> list[dict]:
             suffix = _norm_hex(tail.split()[0]) if tail else ""
             if len(prefix) + len(suffix) == 64:
                 add(full=prefix + suffix, raw=m.group(0), kind="full_wrapped")
+                # Keep the visible prefix as a fallback: if the joined full is
+                # an OCR artifact (truncated hash + page digits), the block /
+                # fragment path can still resolve the real transaction.
+                if len(prefix) >= 10:
+                    add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="fragment_wrapped")
             elif len(prefix) >= 10:
                 add(
                     prefix=prefix,
@@ -395,8 +401,16 @@ def extract_txid_candidates(text: str) -> list[dict]:
                 )
         else:
             h = _norm_hex(body)
+            first_tok = body.strip().split()[0] if body.strip() else ""
+            first = _norm_hex(first_tok)
             if len(h) >= 64:
                 add(full=h[:64], raw=m.group(0), kind="full_wrapped")
+                # OCR can join a truncated 40-char hash with the digits of
+                # "Block & Time" / timestamps to reach 64. Preserve the
+                # contiguous visible prefix so a failed full lookup can fall
+                # back to the deterministic block+fragment match.
+                if 10 <= len(first) < 64:
+                    add(prefix=first, raw=first_tok, kind="prefix_wrapped")
             elif len(h) >= 10:
                 add(prefix=h, raw=m.group(0), kind="prefix_wrapped")
 
@@ -426,6 +440,8 @@ def extract_txid_candidates(text: str) -> list[dict]:
         suffix = _norm_hex(m.group(2))
         if len(prefix) + len(suffix) == 64:
             add(full=prefix + suffix, raw=m.group(0), kind="wrapped_full")
+            if len(prefix) >= 20:
+                add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="wrapped")
         elif len(prefix) >= 20:
             add(prefix=prefix, suffix=suffix, raw=m.group(0), kind="wrapped")
 
