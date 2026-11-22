@@ -1072,6 +1072,20 @@ def _tx_involves(info: dict, addrs: set[str]) -> bool:
     return False
 
 
+def _main_transfer_subject(info: Optional[dict], direction: str) -> str:
+    """Direction-appropriate wallet on the main transfer, if valid."""
+    if not info:
+        return ""
+    if direction == "deposit":
+        cand = info.get("to")
+    elif direction == "withdrawal":
+        cand = info.get("from")
+    else:
+        cand = info.get("to") or info.get("from")
+    cand = str(cand or "")
+    return cand if len(cand) == 34 and _tron_checksum_ok(cand) else ""
+
+
 def _visible_address_runs(text: str) -> list[str]:
     """Address-shaped runs on a Tronscan screenshot, including wrapped OCR."""
     if not text:
@@ -1589,6 +1603,31 @@ def resolve_source(
         c = by_raw.get(raw) or by_raw.get(rail) or canonicalize_address_light(rail, r.get("network") or "TRON")
         canonical = c.get("address") or rail
         involved = bool(best_info and _tx_involves(best_info, {canonical}))
+        # OCR sometimes grabs the GasFree fee collector from a receipt. It is
+        # a real address on the transaction, but not the wallet the slip is
+        # about. Replace it with the direction-appropriate side of the main
+        # transfer (recipient for a deposit, sender for a withdrawal).
+        main_from = str((best_info or {}).get("from") or "")
+        main_to = str((best_info or {}).get("to") or "")
+        main_involved = bool(canonical and canonical in (main_from, main_to))
+        if (
+            best_info
+            and canonical
+            and not main_involved
+            and involved
+            and single_crypto_row
+        ):
+            target = _main_transfer_subject(best_info, direction)
+            if target:
+                canonical = target
+                c = {
+                    "address": target,
+                    "status": "tronscan_confirmed",
+                    "raw": raw,
+                    "method": "tx_subject",
+                    "confidence": "high",
+                }
+                involved = True
         # Single-wallet slips whose OCR address is too degraded to appear on
         # the tx: adopt the full on-chain subject address (the recipient for a
         # deposit, the sender for a withdrawal). The raw OCR string is kept.

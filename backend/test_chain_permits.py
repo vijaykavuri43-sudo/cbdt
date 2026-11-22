@@ -83,6 +83,27 @@ class PermitTransferTests(unittest.TestCase):
         self.assertEqual(chain._tron_payload_hex("not-an-address"), "")
 
 
+class MainTransferSubjectTests(unittest.TestCase):
+    def test_deposit_uses_recipient(self) -> None:
+        self.assertEqual(
+            chain._main_transfer_subject({"from": SENDER, "to": RECIPIENT}, "deposit"),
+            RECIPIENT,
+        )
+
+    def test_withdrawal_uses_sender(self) -> None:
+        self.assertEqual(
+            chain._main_transfer_subject(
+                {"from": SENDER, "to": RECIPIENT}, "withdrawal"
+            ),
+            SENDER,
+        )
+
+    def test_invalid_address_returns_empty(self) -> None:
+        self.assertEqual(
+            chain._main_transfer_subject({"from": "x", "to": "y"}, "deposit"), ""
+        )
+
+
 class CounterpartyTests(unittest.TestCase):
     def test_deposit_wallet_is_sender(self) -> None:
         self.assertEqual(
