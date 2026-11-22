@@ -5839,6 +5839,28 @@ def chain_tx_cache_delete(txids: list[str]) -> int:
         return int(cur.rowcount or 0)
 
 
+def chain_clear_unresolved_tx_fields() -> int:
+    """Blank on-chain details on rows that never got a verified transaction.
+
+    A candidate transaction may have been scored but rejected; its amount or
+    timestamp must not appear in the officer CSV without a hash.
+    """
+    with _writer_lock:
+        c = connect()
+        cur = c.execute(
+            "UPDATE payment_transactions SET tx_from='',tx_to='',tx_amount=NULL,"
+            "tx_time='',tx_token='',tx_contract_ret='',tx_method='',"
+            "tx_confidence=''"
+            " WHERE rail_type='crypto_wallet'"
+            " AND tx_status IN ('unresolved','ambiguous')"
+            " AND (tx_from<>'' OR tx_to<>'' OR tx_amount IS NOT NULL"
+            " OR tx_time<>'' OR tx_token<>'' OR tx_contract_ret<>''"
+            " OR tx_method<>'' OR tx_confidence<>'')"
+        )
+        c.commit()
+        return int(cur.rowcount or 0)
+
+
 def chain_known_addresses(limit: int = 20000) -> list[str]:
     """Every case address already known from wallets, rails, or resolutions.
 

@@ -1665,6 +1665,11 @@ def resolve_source(
         else:
             status = best_status
             txid = ""
+        # Only a verified/derived row may display on-chain details. An
+        # unresolved row keeps its candidate in txids for audit, but must not
+        # show an amount/time as if the transfer were confirmed.
+        has_tx = status in ("verified", "derived")
+        detail = best_info if has_tx else {}
         row_results.append(
             {
                 "id": r.get("id"),
@@ -1675,14 +1680,14 @@ def resolve_source(
                 "txid": txid,
                 "txids": json.dumps(txids if status in ("verified", "derived") else txids),
                 "tx_status": status,
-                "tx_method": best_method,
-                "tx_confidence": best_conf,
-                "tx_time": (best_info or {}).get("block_ts") or "",
-                "tx_from": (best_info or {}).get("from") or "",
-                "tx_to": (best_info or {}).get("to") or "",
-                "tx_amount": (best_info or {}).get("amount"),
-                "tx_token": (best_info or {}).get("token") or "",
-                "tx_contract_ret": (best_info or {}).get("contract_ret") or "",
+                "tx_method": best_method if has_tx else "",
+                "tx_confidence": best_conf if has_tx else "",
+                "tx_time": (detail or {}).get("block_ts") or "",
+                "tx_from": (detail or {}).get("from") or "",
+                "tx_to": (detail or {}).get("to") or "",
+                "tx_amount": (detail or {}).get("amount"),
+                "tx_token": (detail or {}).get("token") or "",
+                "tx_contract_ret": (detail or {}).get("contract_ret") or "",
                 "tx_candidates": json.dumps(best_candidates if status == "ambiguous" else []),
                 "chain_checked_utc": checked,
             }
@@ -2107,6 +2112,11 @@ def refresh_multi_transfer_cache() -> dict:
         counts[st] = counts.get(st, 0) + 1
         print(f"[chain] refresh {key} -> {st}", flush=True)
     return {"cache_cleared": cleared, "sources": len(sources), "counts": counts}
+
+
+def clean_unresolved_rows() -> dict:
+    """Remove on-chain amounts/times from rows that never got a tx hash."""
+    return {"rows_cleaned": db.chain_clear_unresolved_tx_fields()}
 
 
 def status() -> dict:
