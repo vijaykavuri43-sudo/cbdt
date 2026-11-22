@@ -478,7 +478,11 @@ export function OfficerQuery() {
       const useSide = side ?? applied.direction
       const url = kind === 'unique'
         ? exportMoneyFlowsUniqueUrl({ ...paramsOf(applied), direction: useSide })
-        : exportMoneyFlowsUrl({ ...paramsOf(applied), direction: useSide })
+        : exportMoneyFlowsUrl({
+            ...paramsOf(applied),
+            direction: useSide,
+            ...(applied.rail_type === 'crypto_wallet' ? { profile: 'compact' } : {}),
+          })
       await saveCsvFromUrl(url, csvFilename(kind, { ...applied, direction: useSide }))
     } catch (e) {
       setError(`CSV download failed: ${String(e)}`)

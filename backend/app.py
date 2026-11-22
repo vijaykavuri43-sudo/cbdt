@@ -2884,6 +2884,40 @@ _MONEY_FLOW_EXPORT_COLUMNS = (
     "fact_type",
 )
 
+# Crypto officer export: one row per slip, no internal/provenance noise.
+# `deposit_or_withdrawal` is the API's `direction`; `counterparty` is the
+# on-chain side opposite the canonical wallet (tx_from for deposits, tx_to for
+# withdrawals).
+_MONEY_FLOW_COMPACT_COLUMNS = (
+    "deposit_or_withdrawal",
+    "gambler",
+    "amount_inr",
+    "rail_id",
+    "transaction hash",
+    "tx_status",
+    "tx_time_utc",
+    "tx_amount",
+    "counterparty",
+    "source_object_key",
+    "fact_type",
+)
+
+
+def _flow_counterparty(row: dict) -> str:
+    direction = str(row.get("direction") or "").lower()
+    tx_from = str(row.get("tx_from") or "")
+    tx_to = str(row.get("tx_to") or "")
+    if direction == "deposit":
+        return tx_from
+    if direction == "withdrawal":
+        return tx_to
+    rail = str(row.get("rail_id") or "")
+    if tx_from == rail:
+        return tx_to
+    if tx_to == rail:
+        return tx_from
+    return tx_from or tx_to
+
 
 @app.get("/api/export/money-flows")
 def export_money_flows(
@@ -2895,13 +2929,15 @@ def export_money_flows(
     until: str = Query("", max_length=32),
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
+    profile: str = Query("full", pattern="^(full|compact)$"),
     _=Depends(auth),
 ):
     """Officer Query CSV (opens in Excel): filtered flows with object + stamps.
 
     Same filters as /api/money-flows. Defaults to live object evidence only.
-    Includes bucket last_modified, mirror seen_utc, source object key, and an
-    absolute dashboard link for manual verification.
+    ``profile=compact`` is the crypto officer view: 11 columns, canonical
+    wallet, full tx hash, on-chain amount/time and the counterparty — no
+    internal provenance or dashboard URLs.
     """
 
     def build():
@@ -2915,6 +2951,30 @@ def export_money_flows(
             folder=folder,
             tx_status=tx_status,
         )
+        if profile == "compact":
+            out = []
+            for r in rows:
+                key = r.get("source_key") or ""
+                out.append(
+                    {
+                        "deposit_or_withdrawal": r.get("direction") or "",
+                        "gambler": r.get("gambler") or "",
+                        "amount_inr": r.get("amount_inr")
+                        if r.get("amount_inr") is not None
+                        else "",
+                        "rail_id": r.get("rail_id") or "",
+                        "transaction hash": r.get("txid") or "",
+                        "tx_status": r.get("tx_status") or "",
+                        "tx_time_utc": r.get("tx_time") or "",
+                        "tx_amount": r.get("tx_amount")
+                        if r.get("tx_amount") is not None
+                        else "",
+                        "counterparty": _flow_counterparty(r),
+                        "source_object_key": key,
+                        "fact_type": _flow_fact_type(r),
+                    }
+                )
+            return out
         out = []
         for r in rows:
             key = r.get("source_key") or ""
@@ -2963,14 +3023,17 @@ def export_money_flows(
         return out
 
     cache_key = (
-        f"export-flows:{direction}:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{tx_status}"
+        f"export-flows:{profile}:{direction}:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{tx_status}"
     )
     rows = cached(cache_key, 30.0, build)
     tag = f"{folder or direction}-{(rail_type or 'all')}-{since or 'start'}-to-{until or 'now'}"
     tag = re.sub(r"[^A-Za-z0-9._-]+", "_", tag)[:80]
-    return _export_response(
-        rows, _MONEY_FLOW_EXPORT_COLUMNS, f"officer-money-flows-{tag}"
+    columns = (
+        _MONEY_FLOW_COMPACT_COLUMNS
+        if profile == "compact"
+        else _MONEY_FLOW_EXPORT_COLUMNS
     )
+    return _export_response(rows, columns, f"officer-money-flows-{tag}")
 
 
 _UNIQUE_EXPORT_COLUMNS = (
