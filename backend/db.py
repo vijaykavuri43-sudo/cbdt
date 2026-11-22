@@ -5793,6 +5793,52 @@ def chain_tx_cache_put(info: dict) -> None:
         return
 
 
+def chain_tx_cache_multi_transfer_txids() -> list[str]:
+    """Cached transactions whose payload contains more than one TRC20 move.
+
+    GasFree Permit Transfers carry a fee transfer plus the real transfer. An
+    older normaliser took the first one (the fee); these are the rows that
+    need a re-fetch after the parser fix.
+    """
+    out: list[str] = []
+    for r in connect().execute("SELECT txid, raw_json FROM chain_tx_cache").fetchall():
+        try:
+            raw = json.loads(r["raw_json"] or "{}")
+        except Exception:
+            continue
+        if len(raw.get("trc20TransferInfo") or []) > 1:
+            out.append(str(r["txid"]))
+    return out
+
+
+def chain_sources_for_txids(txids: list[str]) -> list[str]:
+    """Distinct crypto payment sources currently attached to these txids."""
+    ids = [str(t) for t in (txids or []) if t]
+    if not ids:
+        return []
+    q = ",".join("?" for _ in ids)
+    rows = connect().execute(
+        f"SELECT DISTINCT source_key FROM payment_transactions"
+        f" WHERE rail_type='crypto_wallet' AND txid IN ({q})"
+        f" ORDER BY source_key",
+        ids,
+    ).fetchall()
+    return [str(r["source_key"]) for r in rows if r["source_key"]]
+
+
+def chain_tx_cache_delete(txids: list[str]) -> int:
+    """Drop cached transactions so the fixed normaliser re-fetches them."""
+    ids = [str(t) for t in (txids or []) if t]
+    if not ids:
+        return 0
+    q = ",".join("?" for _ in ids)
+    with _writer_lock:
+        c = connect()
+        cur = c.execute(f"DELETE FROM chain_tx_cache WHERE txid IN ({q})", ids)
+        c.commit()
+        return int(cur.rowcount or 0)
+
+
 def chain_known_addresses(limit: int = 20000) -> list[str]:
     """Every case address already known from wallets, rails, or resolutions.
 

@@ -2904,19 +2904,26 @@ _MONEY_FLOW_COMPACT_COLUMNS = (
 
 
 def _flow_counterparty(row: dict) -> str:
-    direction = str(row.get("direction") or "").lower()
+    """The on-chain side opposite the wallet printed on the slip.
+
+    ``rail_id`` is the wallet shown on the receipt (the gambler's sending
+    wallet on a deposit, the receiving wallet on a withdrawal). Prefer the
+    actual opposite side of the transfer; fall back to the slip direction
+    only when the OCR wallet is not on the transaction at all.
+    """
     tx_from = str(row.get("tx_from") or "")
     tx_to = str(row.get("tx_to") or "")
-    if direction == "deposit":
-        return tx_from
-    if direction == "withdrawal":
-        return tx_to
     rail = str(row.get("rail_id") or "")
-    if tx_from == rail:
+    if rail and rail == tx_from:
         return tx_to
-    if tx_to == rail:
+    if rail and rail == tx_to:
         return tx_from
-    return tx_from or tx_to
+    direction = str(row.get("direction") or "").lower()
+    if direction == "deposit":
+        return tx_to
+    if direction == "withdrawal":
+        return tx_from
+    return tx_to or tx_from
 
 
 @app.get("/api/export/money-flows")

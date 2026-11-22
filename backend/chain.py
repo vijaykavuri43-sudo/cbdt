@@ -720,6 +720,81 @@ def account_exists(address: str) -> bool:
     return bool(data.get("address"))
 
 
+# GasFree "Permit Transfer" receipts list the fee transfer first in
+# trc20TransferInfo: [0] is the 1–1.5 USDT network fee paid to the relayer,
+# [1] is the real transfer. Picking [0] made a 500 USDT withdrawal look like
+# a 1.5 USDT fee (live bug, 2026-11-22). Decode the contract call and select
+# the transfer it actually moved.
+PERMIT_TRANSFER_METHOD = "6f21b898"
+_FEE_COLLECTORS = {"TLntW9Z59LYY5KEi9cmwk3PKjQga828ird"}
+
+
+def _tron_payload_hex(addr: str) -> str:
+    """20-byte account payload as hex (no 0x41 prefix), or ""."""
+    try:
+        n = 0
+        for ch in str(addr or ""):
+            n = n * 58 + _B58.index(ch)
+        raw = n.to_bytes(25, "big")
+    except Exception:
+        return ""
+    if len(raw) != 25 or raw[0] != 0x41:
+        return ""
+    return raw[1:21].hex()
+
+
+def _permit_target(data: dict) -> tuple[str, int]:
+    """(recipient payload hex, value) for a GasFree permit transfer."""
+    cd = data.get("contractData") or {}
+    hx = str(cd.get("data") or "")
+    if not hx.startswith(PERMIT_TRANSFER_METHOD) or len(hx) < 8 + 4 * 64:
+        return "", 0
+    try:
+        to_hex = hx[8 + 2 * 64 : 8 + 3 * 64][-40:].lower()
+        value = int(hx[8 + 3 * 64 : 8 + 4 * 64], 16)
+    except (TypeError, ValueError):
+        return "", 0
+    return to_hex, value
+
+
+def _pick_trc20_transfer(data: dict) -> dict:
+    """The transfer the receipt is about, not the GasFree fee transfer."""
+    trc20 = [t for t in (data.get("trc20TransferInfo") or []) if isinstance(t, dict)]
+    if not trc20:
+        return {}
+    if len(trc20) == 1:
+        return trc20[0]
+    to_hex, value = _permit_target(data)
+    if to_hex:
+        by_addr = [
+            t
+            for t in trc20
+            if _tron_payload_hex(str(t.get("to_address") or "")) == to_hex
+        ]
+        for t in by_addr:
+            try:
+                if int(t.get("amount_str") or 0) == value:
+                    return t
+            except (TypeError, ValueError):
+                pass
+        if by_addr:
+            return by_addr[0]
+    normal = [
+        t
+        for t in trc20
+        if str(t.get("to_address") or "") not in _FEE_COLLECTORS
+    ]
+    pool = normal or trc20
+
+    def _amt(t: dict) -> int:
+        try:
+            return int(t.get("amount_str") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return max(pool, key=_amt)
+
+
 def tx_info(txid: str) -> Optional[dict]:
     """Normalised transaction details, or None if Tronscan does not know it."""
     h = str(txid or "").strip().lower()
@@ -734,7 +809,7 @@ def tx_info(txid: str) -> Optional[dict]:
     if not data.get("contractRet") and not data.get("hash"):
         return None
     trc20 = data.get("trc20TransferInfo") or []
-    first = trc20[0] if trc20 and isinstance(trc20[0], dict) else {}
+    first = _pick_trc20_transfer(data)
     decimals = int(first.get("decimals") or 6)
     amount = None
     token = ""
@@ -1968,6 +2043,31 @@ def start_backfill(
 
     threading.Thread(target=_run, daemon=True, name="chain-backfill").start()
     return {"started": True, "job": dict(_job)}
+
+
+def refresh_multi_transfer_cache() -> dict:
+    """Re-fetch transactions that carried a fee transfer plus the real move.
+
+    GasFree Permit Transfer receipts put the fee first in
+    ``trc20TransferInfo``; cache rows written before 2026-11-22 normalised
+    that fee as the transaction (500 USDT showed as 1.5 USDT). Drop those
+    entries and re-verify every source attached to them.
+    """
+    txids = db.chain_tx_cache_multi_transfer_txids()
+    sources = db.chain_sources_for_txids(txids)
+    cleared = db.chain_tx_cache_delete(txids)
+    known = db.chain_known_addresses()
+    counts: dict[str, int] = {}
+    for key in sources:
+        res = verify_source_key(key, known=known)
+        st = str(
+            (res.get("summary") or {}).get("tx_status")
+            or res.get("skipped")
+            or "unknown"
+        )
+        counts[st] = counts.get(st, 0) + 1
+        print(f"[chain] refresh {key} -> {st}", flush=True)
+    return {"cache_cleared": cleared, "sources": len(sources), "counts": counts}
 
 
 def status() -> dict:
