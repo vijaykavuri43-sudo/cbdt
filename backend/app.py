@@ -711,7 +711,14 @@ def mirror_sync(_=Depends(auth)):
                     pass
             daemon_state = (data.get("state") or "").lower()
             healthy = age_min is not None and age_min <= 15
-            if daemon_state == "stopped":
+            if daemon_state in ("source_forbidden", "source_unavailable"):
+                healthy = False
+                verdict = (
+                    f"UPSTREAM {'FORBIDDEN (403)' if daemon_state == 'source_forbidden' else 'UNAVAILABLE'}"
+                    f" — collection paused; automatic retry in up to {data.get('retry_after_sec', 300)}s. "
+                    "Preserved evidence remains available."
+                )
+            elif daemon_state == "stopped":
                 verdict = (
                     "STOPPED — sync daemon exited; mirror is frozen until it restarts"
                 )

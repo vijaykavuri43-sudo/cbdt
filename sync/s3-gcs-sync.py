@@ -50,6 +50,7 @@ from typing import Optional
 
 import httpx
 from google.cloud import storage
+from source_retry import wait_for_source
 
 # ---------- config via env ----------
 
@@ -919,6 +920,25 @@ def main():
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
+    def publish_source_backoff(details):
+        log(f"{details['state']}: {details['error']} — retry in {details['retry_after_sec']}s; preserved evidence unchanged")
+        status_blob = bucket.blob(SYNC_STATUS_PREFIX + "status.json")
+        status_blob.metadata = {"case_id": CASE_ID, "authorization_ref": AUTH_REF}
+        status_blob.upload_from_string(json.dumps({
+            "utc": utcnow(), "s3_bucket": S3_BUCKET_URL,
+            "gcs_target": f"gs://{GCS_BUCKET}/{GCS_PREFIX}",
+            "case": CASE_ID, "authorization_ref": AUTH_REF, **details,
+        }), content_type="application/json")
+
+    # Verify access BEFORE preloading millions of mirror keys, spawning OCR/
+    # transfer pools or writing startup/heartbeat objects. A forbidden bucket
+    # stays in this process with exponential backoff instead of Docker exits.
+    initial_tops = wait_for_source(lister.top_prefixes, stop_evt, publish_source_backoff, once=args.once)
+    if initial_tops is None:
+        state.close()
+        s3_http.close()
+        return 0
+
     # write-capability check early (VM SA must be able to create objects).
     # Degraded-mode review 2026-09-08: a failed probe (e.g. 403 billing
     # delinquent) must NOT kill the daemon into a docker restart loop.
@@ -995,6 +1015,12 @@ def main():
             cycle += 1
             t0 = time.monotonic()
             cycle_scanned = 0
+            if initial_tops is not None:
+                tops, initial_tops = initial_tops, None
+            else:
+                tops = wait_for_source(lister.top_prefixes, stop_evt, publish_source_backoff, once=args.once)
+            if tops is None:
+                break
             # Write-capability probe (degraded-mode review 2026-09-08):
             # one tiny upload per cycle; flips listing-only mode on/off so
             # the daemon survives billing outages and self-heals after.
@@ -1011,11 +1037,6 @@ def main():
             if degraded:
                 log(f"cycle {cycle}: DEGRADED — listing only, uploads paused")
             # discover prefixes each cycle (operators add folders)
-            try:
-                tops = lister.top_prefixes()
-            except Exception as e:
-                log(f"list prefixes failed: {str(e)[:120]}")
-                tops = []
             fixed = [p.strip() for p in PREFIXES_ENV.split(",") if p.strip()]
             hot = [p for p in HOT_PREFIXES if p in (tops or []) or not tops]
             # round-robin one cold prefix per cycle so the full keyspace is
@@ -1142,7 +1163,14 @@ def main():
             if not fixed:
                 root_bytes = 0
                 root_newest = ""
-                for key, size, etag, lm in lister.iter_root_files():
+                # Access can change between top-prefix and root listing.
+                # Root entries are bounded to the delimiter page (1000), not
+                # the whole bucket, so retry without losing scan state.
+                root_entries = wait_for_source(lambda: list(lister.iter_root_files()),
+                    stop_evt, publish_source_backoff, once=args.once)
+                if root_entries is None:
+                    break
+                for key, size, etag, lm in root_entries:
                     root_files += 1
                     root_bytes += size
                     root_newest = max(root_newest, normalize_ts(lm))
