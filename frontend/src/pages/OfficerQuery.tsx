@@ -625,7 +625,7 @@ export function OfficerQuery() {
   const span = applied ? uniqueColSpan() : 7
   const pdfDownloadButton = applied?.rail_type === 'crypto_wallet' ? (
     <button className="btn" disabled={busy || pdfBusy || !!dlBusy} onClick={() => void downloadPdf()}
-      title="One PDF of all matching crypto source images after deduplication. Includes original source references. Up to 500 distinct slips per pack; larger selections require a narrower range.">
+      title="Image-only PDF: one original slip per page after deduplication. No added text, cover or appendix. Up to 500 distinct slips per pack; larger selections require a narrower range.">
       {pdfBusy ? pdfProgress || 'Preparing PDF…' : '⬇ Deduplicated slips PDF'}
     </button>
   ) : null

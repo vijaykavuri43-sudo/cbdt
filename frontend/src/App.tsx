@@ -113,6 +113,16 @@ export default function App() {
     () => readApiCache<Status>('/api/status')?.v ?? null,
   )
   const [locked, setLocked] = useState(false)
+  const [sourceHealth, setSourceHealth] = useState<import('./lib/api').SourceHealth | null>(null)
+  useEffect(() => {
+    if (locked) return
+    let cancelled = false
+    const probe = () => api<import('./lib/api').SourceHealth>('/api/source-health')
+      .then((value) => { if (!cancelled) setSourceHealth(value) }).catch(() => {})
+    void probe()
+    const timer = window.setInterval(probe, 60000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [locked])
   const peers = boot.peers?.length ? boot.peers : (status?.peers ?? [])
   const currentLabel = boot.source_label || status?.source_label || ''
 
@@ -225,8 +235,8 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-foot">
-          <div className={`conn ${status?.bucket_live ? 'ok' : (status && status.bucket_live === false ? 'bad' : (status ? 'ok' : ''))}`}>
-            {status?.bucket_live ? 'BUCKET REACHABLE' : (status && status.bucket_live === false ? 'BUCKET UNREACHABLE' : (status ? 'GCS MIRROR' : 'CHECKING…'))}
+          <div className={`conn ${sourceHealth?.forbidden ? 'bad' : status?.bucket_live ? 'ok' : (status && status.bucket_live === false ? 'bad' : (status ? 'ok' : ''))}`}>
+            {sourceHealth?.forbidden ? 'UPSTREAM FORBIDDEN (403)' : status?.bucket_live ? 'MIRROR REACHABLE' : (status && status.bucket_live === false ? 'MIRROR UNREACHABLE' : (status ? 'GCS MIRROR' : 'CHECKING…'))}
           </div>
           <button
             className="btn tiny"
@@ -242,6 +252,13 @@ export default function App() {
         </div>
       </aside>
       <main className={'content' + (tab === 'explorer' ? ' content-explorer' : '')}>
+        {sourceHealth && !sourceHealth.accessible && (
+          <div role="alert" className="st-panel" style={{ borderColor: 'var(--warn)', marginBottom: 12, flexShrink: 0 }}>
+            <strong>{sourceHealth.source_label}: {sourceHealth.forbidden ? 'Upstream forbidden — HTTP 403' : 'Upstream access interrupted'}</strong>
+            <div className="small">{sourceHealth.message}</div>
+            <div className="tiny dim">Checked {sourceHealth.checked_utc} · Stored results are preserved evidence, not confirmation of fresh collection.</div>
+          </div>
+        )}
         {visited.has('status') && (
           <div style={{ display: tab === 'status' ? 'block' : 'none' }}>
             <ErrorBoundary><StatusPage /></ErrorBoundary>

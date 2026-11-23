@@ -122,7 +122,7 @@ def test_empty_or_over_budget_pack_fails_explicitly(database, monkeypatch):
     assert not (folder / "slips.pdf").exists()
 
 
-def test_worker_pdf_has_one_receipt_and_all_original_references(database, tmp_path):
+def test_worker_pdf_is_image_only_and_retains_provenance_server_side(database, tmp_path):
     seed(database, "deposit/a.jpg")
     seed(database, "deposit/b.jpg")
     folder = slip_pdf.job_root() / ("a" * 32)
@@ -137,13 +137,12 @@ def test_worker_pdf_has_one_receipt_and_all_original_references(database, tmp_pa
     assert job["slips"] == 1 and job["duplicates_removed"] == 1
     assert len(calls) == 1  # known duplicates fetched only once
     reader = PdfReader(folder / "slips.pdf")
-    assert len(reader.pages) == 3  # cover, receipt, appendix
-    assert len(reader.pages[1].images) == 1
-    images = reader.pages[1]["/Resources"]["/XObject"].get_object().values()
-    assert any("/DCTDecode" in str(obj.get_object().get("/Filter")) for obj in images)
-    assert "deposit/a.jpg" in reader.pages[2].extract_text()
-    assert "deposit/b.jpg" in reader.pages[2].extract_text()
-    manifest = json.loads(reader.attachments["source-manifest.json"][0])
+    assert len(reader.pages) == 1
+    assert len(reader.pages[0].images) == 1
+    assert reader.pages[0].extract_text() == ""
+    assert not reader.attachments
+    assert next(folder.glob("slip-*.png")).read_bytes() == png()
+    manifest = json.loads((folder / "slips.json").read_text())
     assert manifest["source_files"] == 2
     assert len(manifest["slips"][0]["source_keys"]) == 2
     assert manifest["slips"][0]["content_sha256"] == hashlib.sha256(png()).hexdigest()
@@ -161,7 +160,7 @@ def test_exact_pixels_group_unknown_transactions(database):
     assert db.crypto_deduplicated_flows(**FILTERS)["rows_total"] == 1
 
 
-def test_missing_image_is_disclosed_not_silently_dropped(database):
+def test_missing_image_fails_without_producing_partial_pdf(database):
     seed(database, "deposit/a.jpg")
     seed(database, "deposit/b.jpg", tx="b" * 64)
     folder = slip_pdf.job_root() / ("c" * 32)
@@ -172,8 +171,28 @@ def test_missing_image_is_disclosed_not_silently_dropped(database):
             raise ValueError("not available")
         return png()
     slip_pdf._worker(folder, job, fetch)
-    assert job["state"] == "complete" and job["missing"] == 1
-    assert any("IMAGE UNAVAILABLE" in page.extract_text() for page in PdfReader(folder / "slips.pdf").pages)
+    assert job["state"] == "failed" and "No incomplete PDF" in job["error"]
+    assert not (folder / "slips.pdf").exists()
+
+
+def test_original_jpeg_is_not_resized_or_recompressed(database):
+    seed(database, "deposit/a.jpg")
+    buffer = io.BytesIO()
+    Image.new("RGB", (3100, 4500), "white").save(buffer, "JPEG", quality=91)
+    original = buffer.getvalue()
+    folder = slip_pdf.job_root() / ("f" * 32)
+    folder.mkdir()
+    job = dict(id="f" * 32, filters=FILTERS, state="queued", processed=0, total=0)
+    slip_pdf._worker(folder, job, lambda _: original)
+    assert job["state"] == "complete", job
+    assert next(folder.glob("slip-*.jpg")).read_bytes() == original
+    reader = PdfReader(folder / "slips.pdf")
+    assert len(reader.pages) == 1 and reader.pages[0].extract_text() == ""
+    assert not reader.attachments
+    image = next(iter(reader.pages[0]["/Resources"]["/XObject"].get_object().values())).get_object()
+    assert "/DCTDecode" in str(image["/Filter"])
+    assert image["/Width"] == 3100 and image["/Height"] == 4500
+    assert abs(float(reader.pages[0].mediabox.width) / float(reader.pages[0].mediabox.height) - 3100 / 4500) < 1e-6
 
 
 def test_api_auth_validation_and_cross_worker_download(database, monkeypatch):

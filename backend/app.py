@@ -658,6 +658,12 @@ def bucket_health(request: Request):
         }
 
 
+@app.get("/api/source-health")
+def source_health(_=Depends(auth)):
+    from .source_health import probe_source
+    return cached("upstream-source-health", 60.0, probe_source, stale_grace=0.0)
+
+
 @app.get("/api/mirror-sync")
 def mirror_sync(_=Depends(auth)):
     """Continuous S3->GCS mirror-sync daemon health (status.json it publishes).
@@ -739,6 +745,10 @@ def mirror_sync(_=Depends(auth)):
                 "verdict": "UNKNOWN — status unreadable (source may not be GCS)",
             }
         )
+    upstream = source_health()
+    payload["upstream"] = upstream
+    if upstream["forbidden"]:
+        payload.update(healthy=False, verdict=upstream["message"])
     return payload
 
 

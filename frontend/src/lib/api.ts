@@ -374,6 +374,16 @@ export interface Status {
   max_amount_inr?: number
 }
 
+export interface SourceHealth {
+  state: 'accessible' | 'forbidden' | 'unavailable' | 'unknown'
+  accessible: boolean
+  forbidden: boolean
+  http_status: number | null
+  message: string
+  checked_utc: string
+  source_label: string
+}
+
 export interface ObjRow {
   key: string
   size: number | null
