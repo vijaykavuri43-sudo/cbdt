@@ -520,6 +520,8 @@ CREATE TABLE IF NOT EXISTS payment_transactions(
 CREATE INDEX IF NOT EXISTS idx_pay_direction_lm ON payment_transactions(direction,last_modified DESC);
 CREATE INDEX IF NOT EXISTS idx_pay_direction_source ON payment_transactions(direction,source_key);
 CREATE INDEX IF NOT EXISTS idx_pay_direction_rail ON payment_transactions(direction,rail_type,rail_id);
+CREATE INDEX IF NOT EXISTS idx_pay_rail_lm_direction ON payment_transactions(rail_type,last_modified DESC,direction);
+CREATE INDEX IF NOT EXISTS idx_pay_lm ON payment_transactions(last_modified DESC);
 CREATE INDEX IF NOT EXISTS idx_pay_gambler ON payment_transactions(gambler) WHERE gambler != '';
 CREATE INDEX IF NOT EXISTS idx_pay_rail ON payment_transactions(rail_type,rail_id) WHERE rail_id != '';
 CREATE INDEX IF NOT EXISTS idx_pay_utr ON payment_transactions(utr) WHERE utr != '';
@@ -3701,22 +3703,25 @@ def _money_flow_filters(
         # UTR / holder / IFSC): equality hits idx_pay_* instead of a 5-column
         # %LIKE% full scan. Direction-scoped when not "both".
         c = connect()
+        # These identifier indexes are partial (WHERE field!=''). SQLite does
+        # not infer that predicate from field=?; spell it out so the OR uses
+        # the five indexes instead of scanning the entire payment table.
+        exact_sql = "(" + " OR ".join(
+            f"({field}!='' AND {field}=?)"
+            for field in ("rail_id", "gambler", "utr", "account_holder", "ifsc")
+        ) + ")"
         if direction and direction != "both":
             hit = c.execute(
-                "SELECT 1 FROM payment_transactions WHERE direction=? AND "
-                "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?) LIMIT 1",
+                f"SELECT 1 FROM payment_transactions WHERE direction=? AND {exact_sql} LIMIT 1",
                 (direction, q, q, q, q, q),
             ).fetchone()
         else:
             hit = c.execute(
-                "SELECT 1 FROM payment_transactions WHERE "
-                "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?) LIMIT 1",
+                f"SELECT 1 FROM payment_transactions WHERE {exact_sql} LIMIT 1",
                 (q, q, q, q, q),
             ).fetchone()
         if hit:
-            conds.append(
-                "(rail_id=? OR gambler=? OR utr=? OR account_holder=? OR ifsc=?)"
-            )
+            conds.append(exact_sql)
             args.extend([q] * 5)
             where = " AND ".join(conds)
     return where, args
@@ -4034,11 +4039,6 @@ def money_flows_unique(
     )
     args = args + _all_junk
     c = connect()
-    total = c.execute(
-        f"SELECT COUNT(*) n FROM ("
-        f"SELECT 1 FROM payment_transactions WHERE {where} GROUP BY rail_type,rail_id)",
-        args,
-    ).fetchone()["n"]
     sums = c.execute(
         f"SELECT COUNT(DISTINCT source_key) slips, COALESCE(SUM(amount_inr),0) amount, "
         f"COUNT(DISTINCT rail_type||':'||rail_id) rails FROM payment_transactions WHERE {where}",
@@ -4073,7 +4073,7 @@ def money_flows_unique(
         "rail_type": rail_type,
         "since": _bound_ts(since, end=False),
         "until": _bound_ts(until, end=True),
-        "rows_total": total or 0,
+        "rows_total": sums["rails"] or 0,
         "transactions": sums["slips"] or 0,
         "sum_amount_inr": sums["amount"] or 0,
         "distinct_rails": sums["rails"] or 0,
@@ -4131,25 +4131,39 @@ def _money_flows_unique_crypto(
         tx_status=tx_status,
     )
     pt_where = f"{pt_where} AND rail_id!=''"
-    union_sql = (
-        f"SELECT address AS rail_id FROM wallet_hits WHERE {wh_where} "
-        f"UNION SELECT rail_id FROM payment_transactions WHERE {pt_where}"
-    )
-    union_args = list(wh_args) + list(pt_args)
     c = connect()
-    total = c.execute(f"SELECT COUNT(*) n FROM ({union_sql})", union_args).fetchone()[
-        "n"
-    ]
-    hit_row = c.execute(
-        f"SELECT COUNT(*) hits, COUNT(DISTINCT address) addrs FROM wallet_hits WHERE {wh_where}",
-        wh_args,
-    ).fetchone()
+    # Distinct slips cannot be summed per wallet: one slip may name several
+    # addresses. Keep this count separate, but derive every other total and the
+    # page from shared, materialized per-address aggregates below. Previously
+    # the UNION/counts/joins repeatedly scanned both base tables (four times).
     slip_row = c.execute(
-        f"SELECT COUNT(DISTINCT source_key) slips, COUNT(DISTINCT rail_id) rails "
+        f"SELECT COUNT(DISTINCT source_key) slips "
         f"FROM payment_transactions WHERE {pt_where}",
         pt_args,
     ).fetchone()
     rows = c.execute(
+        f"WITH w AS ("
+        f" SELECT address, COUNT(*) hits, MIN(last_modified) first_wh, MAX(last_modified) last_wh,"
+        f" GROUP_CONCAT(DISTINCT NULLIF(network,'')) network,"
+        f" MAX(key) sample_wh, MAX(NULLIF(raw_address,'')) raw_address,"
+        f" MAX(NULLIF(wallet_status,'')) wallet_status, MAX(NULLIF(txid,'')) txid,"
+        f" MAX(NULLIF(tx_status,'')) tx_status, MAX(NULLIF(chain_checked_utc,'')) chain_checked_utc "
+        f" FROM wallet_hits WHERE {wh_where} GROUP BY address"
+        f"), p AS ("
+        f" SELECT rail_id, COUNT(DISTINCT source_key) slips, COALESCE(SUM(amount_inr),0) amount_inr,"
+        f" GROUP_CONCAT(DISTINCT NULLIF(utr,'')) utrs, COUNT(DISTINCT NULLIF(utr,'')) utr_count,"
+        f" MIN(source_key) sample_pt, MIN(last_modified) first_pt, MAX(last_modified) last_pt,"
+        f" GROUP_CONCAT(DISTINCT NULLIF(rail_id_raw,'')) rail_ids_raw,"
+        f" MAX(NULLIF(wallet_status,'')) wallet_status, MAX(NULLIF(txid,'')) txid,"
+        f" GROUP_CONCAT(DISTINCT NULLIF(txids,'')) txids, MAX(NULLIF(tx_status,'')) tx_status,"
+        f" MAX(NULLIF(tx_method,'')) tx_method, MAX(NULLIF(tx_confidence,'')) tx_confidence,"
+        f" MAX(NULLIF(tx_time,'')) tx_time, MAX(tx_amount) tx_amount, MAX(NULLIF(tx_token,'')) tx_token,"
+        f" MAX(NULLIF(chain_checked_utc,'')) chain_checked_utc "
+        f" FROM payment_transactions WHERE {pt_where} GROUP BY rail_id"
+        f"), u AS (SELECT address AS rail_id FROM w UNION SELECT rail_id FROM p),"
+        f" totals AS (SELECT (SELECT COUNT(*) FROM u) total,"
+        f" (SELECT COALESCE(SUM(hits),0) FROM w) hits,"
+        f" (SELECT COUNT(*) FROM w) addrs), page AS ("
         f"SELECT u.rail_id,"
         f"COALESCE(w.hits,0) image_hits,"
         f"COALESCE(p.slips,0) slips,"
@@ -4171,34 +4185,23 @@ def _money_flows_unique_crypto(
         f"COALESCE(p.tx_amount, NULL) tx_amount,"
         f"COALESCE(p.tx_token, '') tx_token,"
         f"COALESCE(p.chain_checked_utc, w.chain_checked_utc, '') chain_checked_utc "
-        f"FROM ({union_sql}) u "
-        f"LEFT JOIN ("
-        f" SELECT address, COUNT(*) hits, MIN(last_modified) first_wh, MAX(last_modified) last_wh,"
-        f" GROUP_CONCAT(DISTINCT NULLIF(network,'')) network,"
-        f" MAX(key) sample_wh, MAX(NULLIF(raw_address,'')) raw_address,"
-        f" MAX(NULLIF(wallet_status,'')) wallet_status, MAX(NULLIF(txid,'')) txid,"
-        f" MAX(NULLIF(tx_status,'')) tx_status, MAX(NULLIF(chain_checked_utc,'')) chain_checked_utc "
-        f" FROM wallet_hits WHERE {wh_where} GROUP BY address"
-        f") w ON w.address=u.rail_id "
-        f"LEFT JOIN ("
-        f" SELECT rail_id, COUNT(DISTINCT source_key) slips, COALESCE(SUM(amount_inr),0) amount_inr,"
-        f" GROUP_CONCAT(DISTINCT NULLIF(utr,'')) utrs, COUNT(DISTINCT NULLIF(utr,'')) utr_count,"
-        f" MIN(source_key) sample_pt, MIN(last_modified) first_pt, MAX(last_modified) last_pt,"
-        f" GROUP_CONCAT(DISTINCT NULLIF(rail_id_raw,'')) rail_ids_raw,"
-        f" MAX(NULLIF(wallet_status,'')) wallet_status, MAX(NULLIF(txid,'')) txid,"
-        f" GROUP_CONCAT(DISTINCT NULLIF(txids,'')) txids, MAX(NULLIF(tx_status,'')) tx_status,"
-        f" MAX(NULLIF(tx_method,'')) tx_method, MAX(NULLIF(tx_confidence,'')) tx_confidence,"
-        f" MAX(NULLIF(tx_time,'')) tx_time, MAX(tx_amount) tx_amount, MAX(NULLIF(tx_token,'')) tx_token,"
-        f" MAX(NULLIF(chain_checked_utc,'')) chain_checked_utc "
-        f" FROM payment_transactions WHERE {pt_where} GROUP BY rail_id"
-        f") p ON p.rail_id=u.rail_id "
+        f"FROM u LEFT JOIN w ON w.address=u.rail_id "
+        f"LEFT JOIN p ON p.rail_id=u.rail_id "
         f"ORDER BY (COALESCE(w.hits,0)+COALESCE(p.slips,0)) DESC, u.rail_id "
-        f"LIMIT ? OFFSET ?",
-        union_args + list(wh_args) + list(pt_args) + [limit, offset],
+        f"LIMIT ? OFFSET ?) "
+        f"SELECT totals.*, page.* FROM totals LEFT JOIN page ON 1=1 "
+        f"ORDER BY (COALESCE(page.image_hits,0)+COALESCE(page.slips,0)) DESC, page.rail_id",
+        list(wh_args) + list(pt_args) + [limit, offset],
     ).fetchall()
+    # LEFT JOIN retains totals even when the window/page has no addresses.
+    totals = rows[0]
     items = []
     for r in rows:
+        if r["rail_id"] is None:
+            continue
         it = dict(r)
+        for field in ("total", "hits", "addrs"):
+            it.pop(field)
         it["rail_type"] = "crypto_wallet"
         it["account_holder"] = ""
         it["ifsc"] = ""
@@ -4217,12 +4220,12 @@ def _money_flows_unique_crypto(
         "rail_type": "crypto_wallet",
         "since": _bound_ts(since, end=False),
         "until": _bound_ts(until, end=True),
-        "rows_total": total or 0,
+        "rows_total": totals["total"] or 0,
         "transactions": slip_row["slips"] or 0,
-        "image_hits": hit_row["hits"] or 0,
-        "decoded_wallets": hit_row["addrs"] or 0,
+        "image_hits": totals["hits"] or 0,
+        "decoded_wallets": totals["addrs"] or 0,
         "sum_amount_inr": 0,
-        "distinct_rails": total or 0,
+        "distinct_rails": totals["total"] or 0,
         "items": items,
     }
 

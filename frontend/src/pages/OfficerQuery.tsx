@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl, saveCsvFromUrl } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, firstTxid, traceDeskAddressUrl, tronscanTxUrl } from '../lib/explorers'
 import { fmtINR, fmtIST, fmtTime, previewJoined, shortKey } from '../lib/format'
@@ -353,6 +353,11 @@ export function OfficerQuery() {
     view: View
     q: string
   } | null>(null)
+  // Filter buttons can be clicked while a query is running. Serialize work
+  // and coalesce intermediate selections instead of flooding SQLite with
+  // concurrent aggregates whose late responses overwrite the newest result.
+  const queryRunning = useRef(false)
+  const pendingQuery = useRef<{ next: NonNullable<typeof applied>; page: number } | null>(null)
   const [slips, setSlips] = useState<SlipResp | null>(null)
   const [uniques, setUniques] = useState<UniqueResp | null>(null)
   const [error, setError] = useState('')
@@ -377,9 +382,26 @@ export function OfficerQuery() {
   })
 
   async function run(next: NonNullable<typeof applied>, nextPage = 0) {
+    pendingQuery.current = { next, page: nextPage }
+    setApplied(next)
+    if (queryRunning.current) return
+    queryRunning.current = true
     setError('')
     setBusy(true)
-    setApplied(next)
+    try {
+      while (pendingQuery.current) {
+        const request = pendingQuery.current
+        pendingQuery.current = null
+        await executeQuery(request.next, request.page)
+      }
+    } finally {
+      queryRunning.current = false
+      setBusy(false)
+    }
+  }
+
+  async function executeQuery(next: NonNullable<typeof applied>, nextPage: number) {
+    setError('')
     try {
       if (next.view === 'unique') {
         const resp = await api<UniqueResp>(
@@ -387,6 +409,7 @@ export function OfficerQuery() {
           { ...paramsOf(next), limit, offset: nextPage * limit },
           60000,
         )
+        if (pendingQuery.current) return
         setUniques(resp)
         setSlips(null)
       } else {
@@ -395,6 +418,7 @@ export function OfficerQuery() {
           { ...paramsOf(next), limit, offset: nextPage * limit },
           60000,
         )
+        if (pendingQuery.current) return
         setSlips(resp)
         setUniques(null)
       }
@@ -403,11 +427,10 @@ export function OfficerQuery() {
       setHits(null)
       setHitsErr('')
     } catch (e) {
+      if (pendingQuery.current) return
       setSlips(null)
       setUniques(null)
       setError(String(e))
-    } finally {
-      setBusy(false)
     }
   }
 
