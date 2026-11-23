@@ -34,3 +34,11 @@ def test_forbidden_upstream_overrides_misleading_sync_verdict(monkeypatch):
     result = app_module.mirror_sync()
     assert result["healthy"] is False
     assert result["verdict"] == upstream["message"]
+
+
+def test_secondary_dashboards_explicitly_select_their_own_upstream():
+    from pathlib import Path
+    compose = (Path(__file__).parents[1] / "docker-compose.yml").read_text()
+    for service, bucket in (("s3lm-b2", "bxs3dev001"), ("s3lm-b3", "tw-artifacts-center"), ("s3lm-b4", "bx-s3-dev-002")):
+        section = compose.split(f"\n  {service}:\n", 1)[1].split("\n  s3sync", 1)[0]
+        assert f"S3LM_BUCKET_URL=https://{bucket}.s3.ap-southeast-1.amazonaws.com" in section

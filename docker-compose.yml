@@ -159,6 +159,7 @@ services:
       - S3LM_OBJECT_SOURCE=gcs
       - S3LM_GCS_BUCKET=${S3LM_GCS_BUCKET:-cbtf-case-evidence-518405669914}
       - S3LM_GCS_PREFIX=s3-mirror-bxs3dev001/
+      - S3LM_BUCKET_URL=https://bxs3dev001.s3.ap-southeast-1.amazonaws.com
       - S3LM_SOURCE_LABEL=bxs3dev001
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-bxs3dev001-sync/
       - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
@@ -276,6 +277,7 @@ services:
       - S3LM_OBJECT_SOURCE=gcs
       - S3LM_GCS_BUCKET=${S3LM_GCS_BUCKET:-cbtf-case-evidence-518405669914}
       - S3LM_GCS_PREFIX=s3-mirror-tw-artifacts/
+      - S3LM_BUCKET_URL=https://tw-artifacts-center.s3.ap-southeast-1.amazonaws.com
       - S3LM_SOURCE_LABEL=tw-artifacts-center
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-tw-artifacts-sync/
       - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
@@ -388,6 +390,7 @@ services:
       - S3LM_OBJECT_SOURCE=gcs
       - S3LM_GCS_BUCKET=${S3LM_GCS_BUCKET:-cbtf-case-evidence-518405669914}
       - S3LM_GCS_PREFIX=s3-mirror-bx-s3-dev-002/
+      - S3LM_BUCKET_URL=https://bx-s3-dev-002.s3.ap-southeast-1.amazonaws.com
       - S3LM_SOURCE_LABEL=bx-s3-dev-002
       - S3LM_SYNC_STATUS_PREFIX=s3-mirror-bx-s3-dev-002-sync/
       - S3LM_PEERS=bx-s3-dev-001|80;bxs3dev001|81;tw-artifacts-center|82;bx-s3-dev-002|83
