@@ -522,6 +522,10 @@ CREATE INDEX IF NOT EXISTS idx_pay_direction_source ON payment_transactions(dire
 CREATE INDEX IF NOT EXISTS idx_pay_direction_rail ON payment_transactions(direction,rail_type,rail_id);
 CREATE INDEX IF NOT EXISTS idx_pay_rail_lm_direction ON payment_transactions(rail_type,last_modified DESC,direction);
 CREATE INDEX IF NOT EXISTS idx_pay_lm ON payment_transactions(last_modified DESC);
+CREATE TABLE IF NOT EXISTS slip_fingerprints(
+  source_key TEXT PRIMARY KEY, etag TEXT NOT NULL, size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL, pixel_sha256 TEXT NOT NULL, updated_utc TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_pay_gambler ON payment_transactions(gambler) WHERE gambler != '';
 CREATE INDEX IF NOT EXISTS idx_pay_rail ON payment_transactions(rail_type,rail_id) WHERE rail_id != '';
 CREATE INDEX IF NOT EXISTS idx_pay_utr ON payment_transactions(utr) WHERE utr != '';
@@ -4280,6 +4284,8 @@ def money_flows_unique_hits(
     direction: str = "both",
     limit: int = 500,
     offset: int = 0,
+    tx_status: str = "",
+    deduplicate: bool = False,
 ) -> dict:
     """Every origin object for one unique address in the Date range window.
 
@@ -4313,6 +4319,7 @@ def money_flows_unique_hits(
         since=since,
         until=until,
         folder=folder,
+        tx_status=tx_status,
     )
     where = f"{where} AND rail_id=?"
     pt_args = list(args) + [rail_id]
@@ -4373,8 +4380,9 @@ def money_flows_unique_hits(
         }
 
     if rail_type == "crypto_wallet":
-        wh_where, wh_args = _wallet_hit_window_filters(
-            q="", since=since, until=until, folder=folder
+        wh_where, wh_args = _crypto_image_filters(
+            q="", since=since, until=until, folder=folder,
+            direction=direction, tx_status=tx_status, source=source,
         )
         wh_where = f"{wh_where} AND address=?"
         for r in c.execute(
@@ -4421,6 +4429,9 @@ def money_flows_unique_hits(
 
     items = list(by_key.values())
     items.sort(key=lambda it: it.get("last_modified") or "", reverse=True)
+    raw_total = len(items)
+    if deduplicate:
+        items = deduplicated_evidence(items)
     total = len(items)
     page = items[offset : offset + limit]
     for it in page:
@@ -4435,6 +4446,8 @@ def money_flows_unique_hits(
         "since": _bound_ts(since, end=False),
         "until": _bound_ts(until, end=True),
         "rows_total": total,
+        "source_files_total": raw_total,
+        "duplicates_removed": raw_total - total,
         "items": page,
     }
 
@@ -6577,3 +6590,146 @@ def chain_status_counts() -> dict:
         "object_queue_pending": int(queue.get("pending") or 0),
         "object_scan_cursor": queue.get("cursor") or "0",
     }
+
+
+def _crypto_image_filters(q="", since="", until="", folder="", direction="both", tx_status="", source="object"):
+    where, args = _wallet_hit_window_filters(q=q, since=since, until=until, folder=folder)
+    if source == "reference":
+        return "0", []
+    chain_sql, chain_args = _tx_status_filter(tx_status)
+    if chain_sql:
+        where += " AND " + chain_sql
+        args += list(chain_args)
+    sides = {"deposit": ("deposit/", "bankingqr/", "qrcode/"),
+             "withdrawal": ("withdrawal/", "payment-proof/", "payment-proofs/")}
+    if direction in sides:
+        where += " AND (" + " OR ".join("key LIKE ?" for _ in sides[direction]) + ")"
+        args += [p + "%" for p in sides[direction]]
+    return where, args
+
+
+def attach_slip_identity(items):
+    c = connect()
+    by_key = {}
+    keys = list({r["source_key"] for r in items if r.get("source_key")})
+    for start in range(0, len(keys), 400):
+        part = keys[start:start + 400]
+        placeholders = ",".join("?" for _ in part)
+        for row in c.execute(
+            "SELECT o.key,o.etag,o.size,f.sha256,f.pixel_sha256 FROM objects o "
+            "LEFT JOIN slip_fingerprints f ON f.source_key=o.key AND f.etag=o.etag AND f.size=o.size "
+            f"WHERE o.key IN ({placeholders})", part,
+        ):
+            by_key[row["key"]] = row
+    for item in items:
+        meta = by_key.get(item.get("source_key"))
+        if meta:
+            item.update(object_etag=meta["etag"], object_size=meta["size"],
+                        content_sha256=meta["sha256"] or "", pixel_sha256=meta["pixel_sha256"] or "")
+    return items
+
+
+def deduplicated_evidence(items):
+    from .slip_dedup import deduplicate_slips
+    return deduplicate_slips(attach_slip_identity(items))
+
+
+def save_slip_fingerprints(rows):
+    if not rows:
+        return
+    with _writer_lock:
+        c = connect()
+        c.executemany(
+            "INSERT OR REPLACE INTO slip_fingerprints(source_key,etag,size,sha256,pixel_sha256,updated_utc) "
+            "VALUES (?,?,?,?,?,?)", rows,
+        )
+        c.commit()
+
+
+def crypto_slip_candidates(q="", source="object", since="", until="", folder="", direction="both", tx_status="", max_sources=None):
+    """Same date/folder/side/status/search scope as crypto address results.
+
+    Union OCR transactions and decoded images by source key, not by wallet.
+    Limits raise explicitly; no silently truncated evidence packs.
+    """
+    where, args = _money_flow_filters(direction=direction, rail_type="crypto_wallet", q=q,
+        source=source, since=since, until=until, folder=folder, tx_status=tx_status)
+    where += " AND rail_id!=''"
+    c = connect()
+    by_key = {}
+    for row in c.execute(
+        "SELECT source_key,direction,gambler,amount_inr,utr,rail_type,rail_id,rail_id_raw,"
+        "account_holder,ifsc,network,wallet_status,txid,txids,tx_status,tx_method,tx_confidence,"
+        "tx_time,tx_amount,tx_token,tx_from,tx_to,tx_contract_ret,chain_checked_utc,last_modified "
+        f"FROM payment_transactions WHERE {where} ORDER BY last_modified DESC,id DESC", args,
+    ):
+        item = dict(row)
+        item.pop("evidence_json", None)
+        key = item["source_key"]
+        if key not in by_key:
+            item.update(origins={"ocr_slip"}, rail_ids=[item["rail_id"]])
+            by_key[key] = item
+        elif item["rail_id"] not in by_key[key]["rail_ids"]:
+            by_key[key]["rail_ids"].append(item["rail_id"])
+        if max_sources and len(by_key) > max_sources:
+            raise ValueError(f"More than {max_sources} source files match. Select a narrower date range for the PDF.")
+    wh_where, wh_args = _crypto_image_filters(q=q, since=since, until=until, folder=folder,
+        direction=direction, tx_status=tx_status, source=source)
+    for row in c.execute(
+        f"SELECT * FROM wallet_hits WHERE {wh_where} ORDER BY last_modified DESC", wh_args,
+    ):
+        r = dict(row)
+        key = r["key"]
+        if key in by_key:
+            by_key[key]["origins"].add("image_hit")
+            if r["address"] not in by_key[key]["rail_ids"]:
+                by_key[key]["rail_ids"].append(r["address"])
+        else:
+            by_key[key] = dict(source_key=key, rail_type="crypto_wallet", rail_id=r["address"],
+                rail_ids=[r["address"]], network=r.get("network") or "", txid=r.get("txid") or "",
+                tx_status=r.get("tx_status") or "", last_modified=r["last_modified"],
+                origins={"image_hit"}, gambler="", amount_inr=None, utr="")
+        if max_sources and len(by_key) > max_sources:
+            raise ValueError(f"More than {max_sources} source files match. Select a narrower date range for the PDF.")
+    if max_sources and len(by_key) > max_sources:
+        raise ValueError(f"More than {max_sources} source files match. Select a narrower date range for the PDF.")
+    items = list(by_key.values())
+    for item in items:
+        item.update(folder=_key_top_folder(item["source_key"]), has_object=not item["source_key"].startswith("reference:"))
+    return attach_slip_identity(items)
+
+
+def crypto_deduplicated_flows(limit=200, offset=0, **filters):
+    from .slip_dedup import deduplicate_slips
+    raw = crypto_slip_candidates(**filters)
+    items = deduplicate_slips(raw)
+    _attach_seen_utc(items)
+    return dict(rows_total=len(items), transactions=len(items), sum_amount_inr=0,
+        distinct_rails=len({rail for r in items for rail in r.get("rail_ids", [])}),
+        source_files_total=len(raw), duplicates_removed=len(raw) - len(items),
+        items=items[offset:offset + limit], top_rails=[])
+
+
+def crypto_unique_deduplicated(result, **filters):
+    """Keep unique-address pagination, but report deduplicated evidence counts."""
+    from .slip_dedup import deduplicate_slips
+    raw = crypto_slip_candidates(**filters)
+    groups = deduplicate_slips(raw)
+    per_rail, source_counts = {}, {}
+    for row in raw:
+        for rail in row.get("rail_ids", [row["rail_id"]]):
+            source_counts[rail] = source_counts.get(rail, 0) + 1
+    for row in groups:
+        for rail in row.get("rail_ids", [row["rail_id"]]):
+            per_rail.setdefault(rail, []).append(row)
+    for item in result["items"]:
+        matches = per_rail.get(item["rail_id"], [])
+        item["image_hits"] = sum("image_hit" in r.get("origins", []) for r in matches)
+        item["slips"] = sum("ocr_slip" in r.get("origins", []) for r in matches)
+        item["duplicate_count"] = max(0, source_counts.get(item["rail_id"], 0) - len(matches))
+        if matches:
+            item["sample_key"] = matches[0]["source_key"]
+    result.update(transactions=sum("ocr_slip" in r.get("origins", []) for r in groups),
+        image_hits=sum("image_hit" in r.get("origins", []) for r in groups),
+        source_files_total=len(raw), duplicates_removed=len(raw) - len(groups))
+    return result

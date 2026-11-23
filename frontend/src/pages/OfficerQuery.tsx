@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl, saveCsvFromUrl } from '../lib/api'
+import { api, exportMoneyFlowsUniqueUrl, exportMoneyFlowsUrl, objectUrl, post, saveCsvFromUrl, saveSlipPdf, waitForSlipPdf, type SlipPdfJob } from '../lib/api'
 import { arkhamAddressUrl, bestTronscanUrl, firstTxid, traceDeskAddressUrl, tronscanTxUrl } from '../lib/explorers'
 import { fmtINR, fmtIST, fmtTime, previewJoined, shortKey } from '../lib/format'
 
@@ -10,6 +10,8 @@ type Side = 'both' | 'deposit' | 'withdrawal'
 type ChainFilter = '' | 'verified' | 'derived' | 'ambiguous' | 'unresolved' | 'unchecked'
 
 interface SlipRow {
+  duplicate_count?: number
+  source_keys?: string[]
   source_key: string
   direction: string
   gambler: string
@@ -38,6 +40,7 @@ interface SlipRow {
 }
 
 interface UniqueRow {
+  duplicate_count?: number
   rail_type: string
   rail_id: string
   rail_id_raw?: string
@@ -67,6 +70,8 @@ interface UniqueRow {
 }
 
 interface SlipResp {
+  duplicates_removed?: number
+  source_files_total?: number
   transactions: number
   sum_amount_inr: number
   distinct_rails: number
@@ -75,6 +80,8 @@ interface SlipResp {
 }
 
 interface UniqueResp {
+  duplicates_removed?: number
+  source_files_total?: number
   transactions: number
   sum_amount_inr: number
   distinct_rails: number
@@ -85,6 +92,8 @@ interface UniqueResp {
 }
 
 interface HitRow {
+  duplicate_count?: number
+  source_keys?: string[]
   source_key: string
   folder: string
   direction: string
@@ -103,6 +112,8 @@ interface HitRow {
 }
 
 interface HitResp {
+  duplicates_removed?: number
+  source_files_total?: number
   rail_id: string
   rows_total: number
   items: HitRow[]
@@ -363,6 +374,14 @@ export function OfficerQuery() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [dlBusy, setDlBusy] = useState<View | null>(null)
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const [pdfProgress, setPdfProgress] = useState('')
+  const [pdfNote, setPdfNote] = useState('')
+  const pdfCancelled = useRef(false)
+  useEffect(() => {
+    pdfCancelled.current = false
+    return () => { pdfCancelled.current = true }
+  }, [])
   const [page, setPage] = useState(0)
   const [openRail, setOpenRail] = useState('')
   const [hits, setHits] = useState<HitResp | null>(null)
@@ -406,7 +425,7 @@ export function OfficerQuery() {
       if (next.view === 'unique') {
         const resp = await api<UniqueResp>(
           '/api/money-flows-unique',
-          { ...paramsOf(next), limit, offset: nextPage * limit },
+          { ...paramsOf(next), deduplicate: next.rail_type === 'crypto_wallet', limit, offset: nextPage * limit },
           60000,
         )
         if (pendingQuery.current) return
@@ -415,7 +434,7 @@ export function OfficerQuery() {
       } else {
         const resp = await api<SlipResp>(
           '/api/money-flows',
-          { ...paramsOf(next), limit, offset: nextPage * limit },
+          { ...paramsOf(next), deduplicate: next.rail_type === 'crypto_wallet', limit, offset: nextPage * limit },
           60000,
         )
         if (pendingQuery.current) return
@@ -524,6 +543,27 @@ export function OfficerQuery() {
     setToTime(ALL_DAY_TO)
   }
 
+  async function downloadPdf() {
+    if (!applied || applied.rail_type !== 'crypto_wallet' || pdfBusy) return
+    const selected = { ...applied }
+    setPdfBusy(true)
+    setPdfNote('')
+    setPdfProgress('Queueing PDF…')
+    try {
+      const started = await post<SlipPdfJob>('/api/export/crypto-slips-pdf', paramsOf(selected))
+      const job = await waitForSlipPdf(started, setPdfProgress, () => pdfCancelled.current)
+      if (pdfCancelled.current) return
+      if (job.state !== 'complete') throw new Error(job.error || 'PDF preparation failed')
+      setPdfProgress('Downloading PDF…')
+      await saveSlipPdf(job.id, `crypto-slips-${selected.since.slice(0, 10)}-to-${selected.until.slice(0, 10)}.pdf`)
+      setPdfNote(`${job.slips} deduplicated slips · ${job.duplicates_removed ?? 0} duplicate copies grouped${job.missing ? ` · WARNING: ${job.missing} unavailable images are listed in the PDF` : ''}. Originals are retained.`)
+    } catch (e) {
+      if (!pdfCancelled.current) setPdfNote(`PDF download failed: ${String(e)}`)
+    } finally {
+      if (!pdfCancelled.current) { setPdfBusy(false); setPdfProgress('') }
+    }
+  }
+
   function setAllDay() {
     setFromTime(ALL_DAY_FROM)
     setToTime(ALL_DAY_TO)
@@ -540,6 +580,7 @@ export function OfficerQuery() {
         {
           ...paramsOf(applied),
           rail_id: railId,
+          deduplicate: true,
           limit: 2000,
           offset: 0,
         },
@@ -582,6 +623,12 @@ export function OfficerQuery() {
   const total = data?.rows_total ?? 0
   const folderHint = FOLDERS.find((f) => f.id === (applied?.folder ?? folder))?.hint ?? ''
   const span = applied ? uniqueColSpan() : 7
+  const pdfDownloadButton = applied?.rail_type === 'crypto_wallet' ? (
+    <button className="btn" disabled={busy || pdfBusy || !!dlBusy} onClick={() => void downloadPdf()}
+      title="One PDF of all matching crypto source images after deduplication. Includes original source references. Up to 500 distinct slips per pack; larger selections require a narrower range.">
+      {pdfBusy ? pdfProgress || 'Preparing PDF…' : '⬇ Deduplicated slips PDF'}
+    </button>
+  ) : null
 
   return (
     <>
@@ -591,7 +638,7 @@ export function OfficerQuery() {
           <div>
             <h1 className="pg-header-title">Date range</h1>
             <div className="pg-header-sub">
-              Folder where the file lives → UPI / bank / wallet → unique addresses for notices, all slips for evidence.
+              Folder where the file lives → UPI / bank / wallet → unique addresses for notices, deduplicated crypto slips for evidence.
               Money side splits deposit-collect rails from withdrawal-pay rails; ⬇ Deposit CSV / ⬇ Withdrawal CSV download one row per address for the selected day &amp; time range.
             </div>
           </div>
@@ -613,14 +660,7 @@ export function OfficerQuery() {
           >
             {dlBusy === 'unique' ? 'Preparing CSV…' : '⬇ Withdrawal CSV'}
           </button>
-          <button
-            className="btn"
-            disabled={!applied || !!dlBusy}
-            onClick={() => void downloadCsv('slips')}
-            title="Excel CSV: every matching slip with UTR, object path and timestamps"
-          >
-            {dlBusy === 'slips' ? 'Preparing CSV…' : '⬇ All-slips CSV'}
-          </button>
+          {pdfDownloadButton}
         </div>
       </div>
 
@@ -740,7 +780,7 @@ export function OfficerQuery() {
           <button className="btn btn-primary" disabled={busy} onClick={apply}>
             {busy ? 'Applying…' : 'Apply'}
           </button>
-          {applied && (
+          {applied && (view === 'slips' && applied.rail_type === 'crypto_wallet' ? pdfDownloadButton : (
             <button
               className="btn"
               disabled={!!dlBusy || busy}
@@ -749,11 +789,12 @@ export function OfficerQuery() {
             >
               {dlBusy === view ? 'Preparing CSV…' : `⬇ Download this result as CSV`}
             </button>
-          )}
+          ))}
         </div>
       </div>
 
       {error && <div className="money-error">Query failed: {error}</div>}
+      {(pdfBusy || pdfNote) && <div className="st-panel small" role="status" style={{ marginBottom: 12 }}>{pdfBusy ? pdfProgress : pdfNote}</div>}
 
       {!applied && !error && (
         <div className="dp-empty">
@@ -773,14 +814,14 @@ export function OfficerQuery() {
             {applied.rail_type === 'crypto_wallet' && view === 'unique' ? (
               <>
                 <div className="st-card">
-                  <div className="st-card-label">Decoded from images</div>
+                  <div className="st-card-label">Image slips (deduplicated)</div>
                   <div className="st-card-value">{(uniques?.image_hits ?? 0).toLocaleString()}</div>
                   <div className="tiny dim">{(uniques?.decoded_wallets ?? 0).toLocaleString()} addresses · same census as Crypto wallets</div>
                 </div>
                 <div className="st-card">
                   <div className="st-card-label">OCR payment slips</div>
                   <div className="st-card-value">{(data.transactions ?? 0).toLocaleString()}</div>
-                  <div className="tiny dim">Amounts on crypto slips are often INR-misread — use Every slip, not rupee totals</div>
+                  <div className="tiny dim">{uniques?.duplicates_removed ?? 0} duplicate copies grouped; originals retained.</div>
                 </div>
               </>
             ) : (
@@ -802,7 +843,7 @@ export function OfficerQuery() {
               Unique addresses
             </button>
             <button type="button" className={'oq-tab' + (view === 'slips' ? ' oq-tab-on' : '')} onClick={() => pickView('slips')}>
-              Every slip
+              {applied.rail_type === 'crypto_wallet' ? 'Deduplicated slips' : 'Every slip'}
             </button>
           </div>
 
@@ -811,11 +852,12 @@ export function OfficerQuery() {
               <strong>Download what you are viewing</strong>
               <div className="tiny dim">
                 {FOLDERS.find((f) => f.id === applied.folder)?.label} · {RAILS.find((r) => r.id === applied.rail_type)?.label} · {describeRange(applied.since, applied.until)}
-                {' · '}CSV has all {total.toLocaleString()} {view === 'unique' ? 'addresses' : 'slips'}, not only this page of {limit}
+                {' · '}{applied.rail_type === 'crypto_wallet' && view === 'slips' ? 'PDF contains matching deduplicated images, not only this page' : `CSV has all ${total.toLocaleString()} ${view === 'unique' ? 'addresses' : 'slips'}, not only this page of ${limit}`}
+                {view === 'slips' && !!slips?.duplicates_removed && ` · ${slips.duplicates_removed} duplicate copies grouped; originals retained`}
               </div>
             </div>
             <div className="oq-dl-btns">
-              <button
+              {applied.rail_type === 'crypto_wallet' && view === 'slips' ? pdfDownloadButton : <button
                 className="btn btn-primary"
                 disabled={!!dlBusy || total === 0}
                 onClick={() => void downloadCsv(view)}
@@ -823,27 +865,28 @@ export function OfficerQuery() {
                 {dlBusy === view
                   ? 'Preparing CSV…'
                   : `⬇ CSV · ${total.toLocaleString()} ${view === 'unique' ? 'addresses' : 'slips'}`}
-              </button>
-              <button
+              </button>}
+              {view === 'unique' ? pdfDownloadButton : applied.rail_type !== 'crypto_wallet' && <button
                 className="btn"
                 disabled={!!dlBusy}
-                onClick={() => void downloadCsv(view === 'unique' ? 'slips' : 'unique')}
+                onClick={() => void downloadCsv('unique')}
               >
                 {dlBusy && dlBusy !== view
                   ? 'Preparing CSV…'
-                  : view === 'unique' ? 'CSV · every matching slip' : 'CSV · unique addresses'}
+                  : 'CSV · unique addresses'}
               </button>
+              }
             </div>
           </div>
 
           <section className="money-section">
             <div className="money-section-head">
               <div>
-                <strong>{view === 'unique' ? 'One row per address' : 'Every matching slip'}</strong>
+                <strong>{view === 'unique' ? 'One row per address' : applied.rail_type === 'crypto_wallet' ? 'One representative per transaction / distinct slip' : 'Every matching slip'}</strong>
                 <div className="tiny dim">
                   {view === 'unique'
-                    ? 'Click a row to open every source file underneath (deposit / withdrawal / chat / QR). Click again or Close to fold it.'
-                    : 'Evidence pack. CSV includes object path, UTR and timestamps.'}
+                    ? 'Click a row to open deduplicated source slips. Original copies remain available as grouped references.'
+                    : applied.rail_type === 'crypto_wallet' ? 'Verified transaction hashes and exact content identify duplicates. Different transactions to the same wallet remain separate.' : 'Evidence pack. CSV includes object path, UTR and timestamps.'}
                 </div>
               </div>
             </div>
@@ -881,6 +924,7 @@ export function OfficerQuery() {
                         <td className="mono money-rail">
                           <span className="oq-chevron">{open ? '▼' : '▶'}</span>
                           {r.rail_id}
+                          {!!r.duplicate_count && <div className="tiny dim">{r.duplicate_count} duplicate copies grouped</div>}
                           {(r as any).rail_quality && (r as any).rail_quality !== 'full' && (
                             <span
                               className="tiny dim"
@@ -953,10 +997,10 @@ export function OfficerQuery() {
                                   <strong>
                                     {hitsBusy
                                       ? 'Loading source files…'
-                                      : `${(hits?.rows_total ?? 0).toLocaleString()} source file${(hits?.rows_total ?? 0) === 1 ? '' : 's'}`}
+                                      : `${(hits?.rows_total ?? 0).toLocaleString()} distinct slip${(hits?.rows_total ?? 0) === 1 ? '' : 's'}`}
                                   </strong>
                                   <div className="tiny dim">
-                                    Every origin object for {r.rail_id} in this date range and folder — deposit, withdrawal, chat, QR, gateway.
+                                    {hits?.source_files_total ?? 0} source files · {hits?.duplicates_removed ?? 0} duplicate copies grouped. No originals deleted.
                                   </div>
                                 </div>
                                 <button type="button" className="btn" onClick={() => toggleRow(r.rail_id)}>Close</button>
@@ -987,6 +1031,7 @@ export function OfficerQuery() {
                                               {h.source_key}
                                             </a>
                                           ) : <span className="tiny dim">{h.source_key || 'reference'}</span>}
+                                          {!!h.duplicate_count && <details className="tiny dim"><summary>{h.duplicate_count} duplicate copies grouped</summary>{h.source_keys?.filter((key) => key !== h.source_key).map((key) => <div key={key}><a href={objectUrl(key)} target="_blank" rel="noreferrer">{key}</a></div>)}</details>}
                                         </td>
                                         <td className="mono">{h.folder || '—'}</td>
                                         <td>{h.origin_label || 'source'}</td>
@@ -1055,6 +1100,7 @@ export function OfficerQuery() {
                               {shortKey(r.source_key, 28)}
                             </a>
                           ) : <span className="tiny dim">reference</span>}
+                          {!!r.duplicate_count && <details className="tiny dim"><summary>{r.duplicate_count} duplicate copies grouped</summary>{r.source_keys?.filter((key) => key !== r.source_key).map((key) => <div key={key}><a href={objectUrl(key)} target="_blank" rel="noreferrer">{key}</a></div>)}</details>}
                         </td>
                       </tr>
                     ))}
@@ -1069,7 +1115,7 @@ export function OfficerQuery() {
 
           <div className="ex-pagination">
             <button className="ex-page-btn" disabled={page === 0 || busy || !!dlBusy} onClick={() => applied && run(applied, page - 1)}>{busy ? 'Loading…' : '← Prev'}</button>
-            <span className="ex-page-info">page {page + 1} · {total.toLocaleString()} {view === 'unique' ? 'addresses' : 'slips'}{busy ? ' · loading…' : ''} · CSV downloads every matching row</span>
+            <span className="ex-page-info">page {page + 1} · {total.toLocaleString()} {view === 'unique' ? 'addresses' : 'slips'}{busy ? ' · loading…' : ''} · {applied.rail_type === 'crypto_wallet' ? 'PDF includes deduplicated images across the selected range' : 'CSV downloads every matching row'}</span>
             <button className="ex-page-btn" disabled={busy || !!dlBusy || (page + 1) * limit >= total} onClick={() => applied && run(applied, page + 1)}>{busy ? 'Loading…' : 'Next →'}</button>
           </div>
         </div>

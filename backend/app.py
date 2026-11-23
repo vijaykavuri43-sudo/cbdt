@@ -1,7 +1,7 @@
 """GCS evidence monitor API for the preserved CASE-2026-CBTF object mirror."""
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import csv
 import faulthandler
 import hashlib
@@ -19,7 +19,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Any
+from typing import Any, Literal
 
 from . import config, db
 from . import chain
@@ -2460,6 +2460,7 @@ def money_flows_api(
     until: str = Query("", max_length=32),
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
+    deduplicate: bool = False,
     _=Depends(auth),
 ):
     """Normalized gambler↔payment-rail flows from OCR, QR, and case references.
@@ -2467,6 +2468,12 @@ def money_flows_api(
     Officer Query tab uses direction=both + folder (deposit/withdrawal/bankingqr/other)
     + since/until. Existing Mule Money Flows tab keeps deposit|withdrawal defaults.
     """
+    if deduplicate and rail_type == "crypto_wallet":
+        return cached(
+            f"flows-dedup:{direction}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}:{tx_status}", 30.0,
+            lambda: db.crypto_deduplicated_flows(limit=limit, offset=offset, direction=direction,
+                q=q, source=source, since=since, until=until, folder=folder, tx_status=tx_status),
+        )
     cache_key = f"flows:{direction}:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}:{tx_status}"
     # q-searches were cached 5s: every retry re-ran the expensive GROUP BYs.
     # 60s is fine for a search view (no-q fast path stays at 5s).
@@ -3087,9 +3094,17 @@ def money_flows_unique_api(
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     direction: str = Query("both", pattern="^(deposit|withdrawal|both)$"),
     tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
+    deduplicate: bool = False,
     _=Depends(auth),
 ):
     """One row per UPI/VPA, bank account, or crypto wallet for officer unique lists."""
+    if deduplicate and rail_type == "crypto_wallet":
+        filters = dict(q=q, source=source, since=since, until=until, folder=folder, direction=direction, tx_status=tx_status)
+        return cached(
+            f"flows-u-dedup:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}:{direction}:{tx_status}",
+            30.0, lambda: db.crypto_unique_deduplicated(
+                db.money_flows_unique(rail_type=rail_type, limit=limit, offset=offset, **filters), **filters),
+        )
     cache_key = f"flows-u:{rail_type}:{q}:{limit}:{offset}:{source}:{since}:{until}:{folder}:{direction}:{tx_status}"
     return cached(
         cache_key,
@@ -3120,10 +3135,12 @@ def money_flows_unique_hits_api(
     direction: str = Query("both", pattern="^(deposit|withdrawal|both)$"),
     limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
+    tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
+    deduplicate: bool = False,
     _=Depends(auth),
 ):
     """Every origin object for one unique Date-range address (closable expander)."""
-    cache_key = f"flows-u-hits:{rail_type}:{rail_id}:{source}:{since}:{until}:{folder}:{direction}:{limit}:{offset}"
+    cache_key = f"flows-u-hits:{rail_type}:{rail_id}:{source}:{since}:{until}:{folder}:{direction}:{limit}:{offset}:{tx_status}:{deduplicate}"
     return cached(
         cache_key,
         30.0,
@@ -3137,6 +3154,8 @@ def money_flows_unique_hits_api(
             direction=direction,
             limit=limit,
             offset=offset,
+            tx_status=tx_status,
+            deduplicate=deduplicate,
         ),
     )
 
@@ -4273,6 +4292,102 @@ def _index_html_with_boot() -> str | None:
         return html
     except Exception:
         return None
+
+
+class CryptoSlipPdfRequest(BaseModel):
+    rail_type: Literal["crypto_wallet"] = "crypto_wallet"
+    source: Literal["object"] = "object"
+    since: str = Field(min_length=10, max_length=32)
+    until: str = Field(min_length=10, max_length=32)
+    q: str = Field("", max_length=256)
+    folder: Literal["", "all", "deposit", "withdrawal", "bankingqr", "other"] = ""
+    direction: Literal["both", "deposit", "withdrawal"] = "both"
+    tx_status: Literal["", "verified", "derived", "ambiguous", "unresolved", "unchecked"] = ""
+
+
+def _pdf_slip_bytes(key: str) -> bytes:
+    """Original-resolution, integrity-checked bytes; never a thumbnail."""
+    from .slip_pdf import MAX_IMAGE_BYTES
+    row = db.connect().execute("SELECT etag,size FROM objects WHERE key=?", (key,)).fetchone()
+    if not row:
+        raise ValueError("Source object is not in the evidence index")
+    if (row["size"] or 0) > MAX_IMAGE_BYTES:
+        raise ValueError("Source exceeds the 25 MB image safety limit")
+    path = _objcache_entry(key, row["etag"] or "", 0)
+    if path.exists() and path.stat().st_size <= MAX_IMAGE_BYTES:
+        data = path.read_bytes()
+        if not verify_object_bytes(key, data, expected_size=row["size"] or 0):
+            return data
+    try:
+        response, headers = object_store.get_object_stream(key)
+        try:
+            chunks, size = [], 0
+            for part in response.iter_bytes(65536):
+                size += len(part)
+                if size > MAX_IMAGE_BYTES:
+                    raise ValueError("Source exceeds the 25 MB image safety limit")
+                chunks.append(part)
+            data = b"".join(chunks)
+        finally:
+            response.close()
+        reason = verify_object_bytes(key, data, headers.get("sha256") or "", row["size"] or 0)
+        if reason:
+            raise ValueError("Source integrity check: " + reason)
+        return data
+    except Exception:
+        if _actual_source() != "gcs":
+            raise
+        data, error = _fetch_repair_bytes(key)
+        if data is None or len(data) > MAX_IMAGE_BYTES:
+            raise ValueError("Source could not be read from mirror or source: " + error)
+        reason = verify_object_bytes(key, data, expected_size=row["size"] or 0)
+        if reason:
+            raise ValueError("Fallback integrity check: " + reason)
+        return data
+
+
+@app.post("/api/export/crypto-slips-pdf")
+def create_crypto_slip_pdf(body: CryptoSlipPdfRequest, _=Depends(auth)):
+    from . import slip_pdf
+    filters = body.model_dump(exclude={"rail_type"})
+    try:
+        filters["since"] = db._bound_ts(body.since, end=False)
+        filters["until"] = db._bound_ts(body.until, end=True)
+        start = datetime.fromisoformat(filters["since"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(filters["until"].replace("Z", "+00:00"))
+        if start.tzinfo is None or end.tzinfo is None or start > end:
+            raise ValueError("From must be before To")
+        filters["since"] = start.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        filters["until"] = end.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    except (ValueError, TypeError):
+        raise HTTPException(422, "Select a valid From/To UTC date range")
+    try:
+        return slip_pdf.start_job(filters, _pdf_slip_bytes)
+    except RuntimeError as exc:
+        raise HTTPException(429, str(exc))
+
+
+@app.get("/api/export/crypto-slips-pdf/{job_id}")
+def crypto_slip_pdf_status(job_id: str, _=Depends(auth)):
+    from . import slip_pdf
+    try:
+        return slip_pdf.read_job(job_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "PDF job not found")
+
+
+@app.get("/api/export/crypto-slips-pdf/{job_id}/download")
+def download_crypto_slip_pdf(job_id: str, _=Depends(auth)):
+    from . import slip_pdf
+    try:
+        job = slip_pdf.read_job(job_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "PDF job not found")
+    if job["state"] != "complete":
+        raise HTTPException(409, job.get("error") or "PDF is still being prepared")
+    filename = "crypto-slips-" + re.sub(r"[^0-9A-Za-z_-]", "", job["filters"]["since"][:10]) + "-to-" + re.sub(r"[^0-9A-Za-z_-]", "", job["filters"]["until"][:10]) + ".pdf"
+    return FileResponse(slip_pdf.job_root() / job_id / "slips.pdf", media_type="application/pdf",
+                        filename=filename, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/{full_path:path}")

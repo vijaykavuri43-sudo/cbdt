@@ -6,3 +6,5 @@ zxing-cpp>=2.2
 Pillow>=10
 typer>=0.12
 openpyxl>=3.1
+reportlab>=4.2
+pypdf>=5
