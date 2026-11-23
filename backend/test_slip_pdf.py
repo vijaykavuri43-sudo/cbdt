@@ -139,6 +139,8 @@ def test_worker_pdf_has_one_receipt_and_all_original_references(database, tmp_pa
     reader = PdfReader(folder / "slips.pdf")
     assert len(reader.pages) == 3  # cover, receipt, appendix
     assert len(reader.pages[1].images) == 1
+    images = reader.pages[1]["/Resources"]["/XObject"].get_object().values()
+    assert any("/DCTDecode" in str(obj.get_object().get("/Filter")) for obj in images)
     assert "deposit/a.jpg" in reader.pages[2].extract_text()
     assert "deposit/b.jpg" in reader.pages[2].extract_text()
     manifest = json.loads(reader.attachments["source-manifest.json"][0])

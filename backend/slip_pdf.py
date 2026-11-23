@@ -172,7 +172,7 @@ def _worker(folder, job, fetch_bytes):
 
 def render_pdf(path, rows, filters, original_count):
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.utils import ImageReader, simpleSplit
+    from reportlab.lib.utils import simpleSplit
     from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.pdfgen import canvas
 
@@ -237,7 +237,10 @@ def render_pdf(path, rows, filters, original_count):
                 max_w, max_h = width - margin * 2, max(100, y - 45)
                 scale = min(max_w / image.width, max_h / image.height)
                 draw_w, draw_h = image.width * scale, image.height * scale
-                pdf.drawImage(ImageReader(image), (width - draw_w) / 2, 35 + (max_h - draw_h) / 2,
+                # Pass the JPEG filename so ReportLab embeds its compressed
+                # DCT stream. Passing a PIL object expands it to RGB/Flate and
+                # made a 163-slip live pack unnecessarily exceed 200 MB.
+                pdf.drawImage(row["image_path"], (width - draw_w) / 2, 35 + (max_h - draw_h) / 2,
                               width=draw_w, height=draw_h)
         else:
             text_lines("IMAGE UNAVAILABLE: " + row.get("image_error", "Unknown error"), y - 30, 11)
