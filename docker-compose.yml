@@ -5,7 +5,7 @@ services:
     container_name: s3lm
     # multi-worker uvicorn (review 2026-09-10): a single worker wedges the
     # whole dashboard when one request blocks — 2 workers suffice (API is
-    # I/O-bound) and leaves headroom for OCR/sync on 8-vCPU hosts.
+    # I/O-bound). Retained on the 4-vCPU host after the 2026-11-24 capacity trial.
     command: ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8787", "--workers", "2", "--timeout-graceful-shutdown", "30"]
     # watchdog review 2026-09-17: the app runs OCR threads + SQLite WAL work
     # that cannot stop in Docker's default 10s — every `docker restart` ended
@@ -81,9 +81,10 @@ services:
       # reference files; reference masters are optional and ignored when absent)
       - ../intelligence:/app/intelligence
     restart: unless-stopped
-    # 16GB host, ~15GB free (2026-09-03): room for SQLite page cache + RAM thumbs
-    # 2026-09-08: 8G limit OOM-killed s3lm 3x in 3 days (Sep 5/6/7 serial log);
-    # host is t2d-standard-8 (8 vCPU, 32GB, ~20GB headroom) so allow 16G.
+    # Historical container ceiling, NOT a RAM reservation or safe host budget.
+    # Host is now t2d-standard-4 (4 vCPU/16GB, 2026-11-24), after compact query
+    # indexes and all-worker heap cleanup reduced demand. Limits were not cut
+    # blindly (older 8G caps caused OOM kills); monitor aggregate host memory.
     deploy:
       resources:
         limits:

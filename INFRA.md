@@ -12,8 +12,8 @@
 | VM name | `s3lm-budget` |
 | **GCP project** | `project-9641a7b9-3759-4c98-9b8` |
 | Zone | `asia-south1-a` |
-| Machine / disk | `t2d-standard-8` (8 vCPU, 32 GB) · 100 GB boot disk (~21% used) |
-| External IP | `8.231.108.145` (ephemeral — re-check with `gcloud`, do not hardcode) |
+| Machine / disk | `t2d-standard-4` (4 vCPU, 16 GB) · 100 GB boot disk (~57% used at resize) |
+| External IP | `8.231.108.145` (reserved static address `s3lm-budget-ip`; re-check before connecting) |
 | Dashboard URL | `http://8.231.108.145/` (re-check IP first) — bucket 1 `bx-s3-dev-001` |
 | Bucket-2 dashboard | `http://8.231.108.145:81/` — `bxs3dev001` (690K keys, deposit/withdrawal slips) |
 | Bucket-3 dashboard | `http://8.231.108.145:82/` — `tw-artifacts-center` (10K keys, QR/proofs/brand themes) |
@@ -92,6 +92,22 @@ sudo docker logs --since 10m s3sync-b3 2>&1 | tail -n 30   # b3 mirror logs
 
 ## 6. Change log (keep this updated when infra moves)
 
+- 2026-11-24: resized `s3lm-budget` from `t2d-standard-8` (8 vCPU/32 GB)
+  to `t2d-standard-4` (4 vCPU/16 GB), retaining the 100-GB persistent disk,
+  reserved IP, all four dashboards and all four sync services. OCR workers and
+  polling settings are unchanged. Prerequisites: forbidden-source backoff
+  (`b96bdb6`), per-API-worker heap reclamation (`a18e670`), and compact dashboard
+  query indexes (`9f0f9a8`, 319 tests). A ten-minute four-CPU trial completed
+  132 API checks without errors, slowest 0.601s, peak used memory 8950 MiB.
+  Post-resize: all eight services healthy, no OOM kills, zero OCR backlog/errors,
+  5803 MiB used / 9886 MiB available, no swap use; API checks 0.005–2.128s.
+  Indicative public on-demand compute estimate is ~$81/month versus ~$163,
+  excluding disks, IP, GCS, operations, egress, discounts and tax—not a billed
+  cost measurement. Reassess on source recovery or sustained backlog/memory
+  pressure; rollback type is `t2d-standard-8`. The installed Compose version
+  does not support `docker compose start --wait`: use `docker start` followed
+  by bounded `docker inspect` health checks (or the tested `compose up --wait`
+  deployment path). Do not recreate the VM or delete its data volumes to resize.
 - 2026-10-25: all old-account GCP projects moved to `v2660228-org` (237163885821):
   main project `project-9641a7b9...`, `gen-lang-client-0791146751`,
   `project-9dd84106-d3f1-4f89-b4e`, and `s3sync-508116`. Project IDs/numbers, VM
