@@ -18,6 +18,19 @@ from . import config
 
 MAX_AMOUNT_INR = config.MAX_AMOUNT_INR
 
+# CASE/CAST remove JSON result subtypes so SQLite can read these expressions
+# directly from an index instead of re-parsing every payload. Preserve numeric
+# JSON types (including booleans), rather than coercing strings into amounts.
+_FLOW_KIND_SQL = (
+    "CASE WHEN json_valid(extract_json) "
+    "THEN CAST(json_extract(extract_json,'$.kind') AS TEXT) END"
+)
+_FLOW_AMOUNT_SQL = (
+    "CASE WHEN json_valid(extract_json) THEN CASE "
+    "WHEN json_type(extract_json,'$.amount_inr') IN ('integer','real','true','false') "
+    "THEN json_extract(extract_json,'$.amount_inr') END END"
+)
+
 
 def _sanitize_amount(value) -> float | None:
     """Plausible single-object INR amount, or None.
@@ -379,6 +392,12 @@ CREATE INDEX IF NOT EXISTS idx_obj_enrich_pending ON objects(enriched, extract_j
 -- Index for deposit/upi queries via JSON extract
 CREATE INDEX IF NOT EXISTS idx_obj_extract_kind ON objects(extract_json)
   WHERE extract_json IS NOT NULL;
+-- Dashboard aggregates must not scan multi-GB OCR payloads. SQLite keeps
+-- these compact projections in sync on every insert, re-OCR and deletion.
+CREATE INDEX IF NOT EXISTS idx_obj_inventory ON objects(top_prefix,key,size,ext);
+CREATE INDEX IF NOT EXISTS idx_obj_progress ON objects(
+  enriched, (extract_json IS NOT NULL), (enrich_error IS NOT NULL), enriched_utc
+);
 -- Index for search (LIKE queries benefit from prefix matching via top_prefix)
 CREATE INDEX IF NOT EXISTS idx_obj_prefix_key ON objects(top_prefix, key);
 -- Composite index for newest-first folder browsing: tight range scan per top dir
@@ -630,6 +649,10 @@ CREATE TABLE IF NOT EXISTS prefix_stats_cache(
   refreshed_utc TEXT DEFAULT ''
 );
 """
+SCHEMA += (
+    f"CREATE INDEX IF NOT EXISTS idx_obj_flow_totals ON objects({_FLOW_KIND_SQL}, {_FLOW_AMOUNT_SQL}) "
+    "WHERE extract_json IS NOT NULL;"
+)
 
 
 def close():
@@ -2035,7 +2058,7 @@ def type_census() -> dict:
       END AS cat,
       COUNT(*) AS n,
       COALESCE(SUM(size), 0) AS s
-    FROM objects
+    FROM objects INDEXED BY idx_obj_inventory
     GROUP BY cat
     """
     rows = conn.execute(sql).fetchall()
@@ -2075,28 +2098,18 @@ def type_census() -> dict:
 
 
 def flow_kind_totals() -> dict:
-    """Deposit+withdrawal slip totals in ONE JSON scan     (stats endpoint was
-    running the same 1M-row json_extract scan twice)."""
-    rows = (
-        connect()
-        .execute(
-            "SELECT json_extract(extract_json,'$.kind') k,COUNT(*) c,"
-            " SUM(CASE WHEN json_extract(extract_json,'$.amount_inr') BETWEEN 0.01 AND ?"
-            " THEN json_extract(extract_json,'$.amount_inr') END) amt"
-            " FROM objects WHERE extract_json IS NOT NULL"
-            " AND json_extract(extract_json,'$.kind') IN ('deposit','withdrawal')"
-            " GROUP BY k",
-            (MAX_AMOUNT_INR,),
-        )
-        .fetchall()
-    )
-    out = {
-        "deposit": {"total": 0, "sum_amount_inr": 0},
-        "withdrawal": {"total": 0, "sum_amount_inr": 0},
-    }
-    for r in rows:
-        if r["k"] in out:
-            out[r["k"]] = {"total": r["c"], "sum_amount_inr": r["amt"] or 0}
+    """Exact slip totals from the compact kind/amount index, not OCR payloads."""
+    out = {}
+    for kind in ("deposit", "withdrawal"):
+        r = connect().execute(
+            "SELECT COUNT(*) c,"
+            f" SUM(CASE WHEN ({_FLOW_AMOUNT_SQL}) BETWEEN 0.01 AND ?"
+            f" THEN ({_FLOW_AMOUNT_SQL}) END) amt"
+            " FROM objects INDEXED BY idx_obj_flow_totals WHERE extract_json IS NOT NULL"
+            f" AND ({_FLOW_KIND_SQL})=?",
+            (MAX_AMOUNT_INR, kind),
+        ).fetchone()
+        out[kind] = {"total": r["c"], "sum_amount_inr": r["amt"] or 0}
     return out
 
 
@@ -5532,10 +5545,10 @@ def enrichment_progress() -> dict:
         connect()
         .execute(
             "SELECT COUNT(*) total, SUM(enriched) done, "
-            "SUM(CASE WHEN extract_json IS NOT NULL THEN 1 ELSE 0 END) with_payload, "
-            "SUM(CASE WHEN enrich_error IS NOT NULL THEN 1 ELSE 0 END) errors, "
+            "SUM(extract_json IS NOT NULL) with_payload, "
+            "SUM(enrich_error IS NOT NULL) errors, "
             "SUM(CASE WHEN enriched_utc >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-1 hour') THEN 1 ELSE 0 END) processed_last_hour "
-            "FROM objects"
+            "FROM objects INDEXED BY idx_obj_progress"
         )
         .fetchone()
     )
