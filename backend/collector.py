@@ -1,8 +1,6 @@
 """Collector: full manifest sweep + incremental watermark polling + SSE event bus."""
 
-import ctypes
 import fcntl
-import gc
 import os
 import threading
 import time
@@ -11,18 +9,7 @@ from typing import Any, Optional
 
 from . import config, db, evidence
 from .enrich import EnrichmentWorker, repair_crypto_amounts
-
-
-def _rss_mb():
-    """Process RSS in MB, or None when unreadable (Linux /proc based)."""
-    try:
-        with open("/proc/self/status", encoding="utf-8") as f:
-            for line in f:
-                if line.startswith("VmRSS:"):
-                    return float(line.split()[1]) / 1024.0
-    except Exception:
-        pass
-    return None
+from .memory_hygiene import _rss_mb
 
 
 class EventBus:
@@ -710,40 +697,6 @@ class Collector:
 
         threading.Thread(
             target=payment_summary_loop, daemon=True, name="payment-summary"
-        ).start()
-
-        def memory_hygiene_loop():
-            # OOM-hardening review 2026-09-08: the worker was OOM-killed 3x in
-            # 3 days on anon-heap growth (bursty OCR/decode allocations fragment
-            # glibc arenas, which Python never returns). Every 15 min: full GC
-            # + malloc_trim to hand freed pages back to the OS. Best-effort and
-            # fully guarded — never touches request paths.
-            if self._stop.wait(900):
-                return
-            while not self._stop.is_set():
-                try:
-                    before = _rss_mb()
-                    gc.collect()
-                    try:
-                        ctypes.CDLL("libc.so.6").malloc_trim(0)
-                    except Exception:
-                        pass
-                    after = _rss_mb()
-                    if (
-                        before is not None
-                        and after is not None
-                        and before - after >= 50
-                    ):
-                        print(
-                            f"[memory-hygiene] RSS {before:.0f} -> {after:.0f} MB",
-                            flush=True,
-                        )
-                except Exception:
-                    pass
-                self._stop.wait(900)
-
-        threading.Thread(
-            target=memory_hygiene_loop, daemon=True, name="memory-hygiene"
         ).start()
 
         def ext_backfill():

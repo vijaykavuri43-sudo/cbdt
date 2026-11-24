@@ -411,6 +411,9 @@ def _wal_guard():
 
 @app.on_event("startup")
 def startup():
+    from . import memory_hygiene
+
+    memory_hygiene.start()
     for d in config.ensure_dirs:
         Path(d).mkdir(parents=True, exist_ok=True)
     # Restore the last first-paint payloads before serving requests. Each
@@ -517,6 +520,9 @@ def startup():
 
 @app.on_event("shutdown")
 def shutdown():
+    from . import memory_hygiene
+
+    memory_hygiene.stop()
     try:
         chain.stop_worker()
     except Exception:
