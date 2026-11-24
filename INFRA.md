@@ -12,7 +12,7 @@
 | VM name | `s3lm-budget` |
 | **GCP project** | `project-9641a7b9-3759-4c98-9b8` |
 | Zone | `asia-south1-a` |
-| Machine / disk | `t2d-standard-4` (4 vCPU, 16 GB) · 100 GB boot disk (~57% used at resize) |
+| Machine / disk | `t2d-standard-8` (8 vCPU, 32 GB) · 100 GB boot disk (~57% used at resize trial) |
 | External IP | `8.231.108.145` (reserved static address `s3lm-budget-ip`; re-check before connecting) |
 | Dashboard URL | `http://8.231.108.145/` (re-check IP first) — bucket 1 `bx-s3-dev-001` |
 | Bucket-2 dashboard | `http://8.231.108.145:81/` — `bxs3dev001` (690K keys, deposit/withdrawal slips) |
@@ -92,7 +92,18 @@ sudo docker logs --since 10m s3sync-b3 2>&1 | tail -n 30   # b3 mirror logs
 
 ## 6. Change log (keep this updated when infra moves)
 
-- 2026-11-24: resized `s3lm-budget` from `t2d-standard-8` (8 vCPU/32 GB)
+- 2026-11-24, 12:54 UTC: **restored `t2d-standard-8` (8 vCPU/32 GB)** after
+  the longer 16-GB trial exposed sustained 73–83% disk I/O wait and two slow
+  API requests (6.643s and 20.741s), despite successful requests and healthy
+  containers. The CPU-only trial on the 32-GB host did not reproduce reduced
+  file-cache capacity; low anonymous/used memory alone was insufficient sizing
+  evidence. After restoration all eight services were healthy with no OOM kills,
+  API checks 0.003–0.031s, no OCR errors (four newly pending primary slips),
+  7328 MiB used / 24353 MiB available and no swap use. Same reserved IP and
+  persistent disk. **The ~$81/month compute target was not retained.** Reduce
+  repeated background database scans and validate cold/warm disk behavior before
+  another RAM reduction; do not repeat the resize based only on CPU averages.
+- 2026-11-24 (trial; rolled back above): resized `s3lm-budget` from `t2d-standard-8` (8 vCPU/32 GB)
   to `t2d-standard-4` (4 vCPU/16 GB), retaining the 100-GB persistent disk,
   reserved IP, all four dashboards and all four sync services. OCR workers and
   polling settings are unchanged. Prerequisites: forbidden-source backoff
