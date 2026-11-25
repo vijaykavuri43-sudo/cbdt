@@ -21,6 +21,8 @@ elif args[:2] == ['projects', 'describe']:
     print(os.environ.get('ORGANIZATION', '580417351522'))
 elif args[:3] == ['compute', 'instances', 'describe']:
     print(os.environ.get('VM_STATE', 'RUNNING'))
+elif args[:2] == ['compute', 'ssh']:
+    print('ok')
 else:
     sys.exit('Unexpected mutation or command: ' + repr(args))
 '''
@@ -90,6 +92,29 @@ class DeploymentAccountTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(len(self.calls()), 1)
         self.assertNotIn('[1/3] commit', result.stdout)
+
+    def test_ship_selects_repository_login_for_push_only(self):
+        folder = Path(self.tmp.name)
+        gh = folder / 'gh'
+        gh.write_text('#!/usr/bin/env python3\nimport sys\n'
+                      'assert sys.argv[1:] == ["auth", "token", "--hostname", '
+                      '"github.com", "--user", "vijaykavuri43-sudo"]\n'
+                      'print("test-token")\n')
+        gh.chmod(0o755)
+        git = folder / 'git'
+        git.write_text('#!/usr/bin/env python3\nimport os, sys\n'
+                       'if sys.argv[1:2] == ["rev-list"]: print("1")\n'
+                       'if "push" in sys.argv:\n'
+                       ' assert os.environ.get("GH_TOKEN") == "test-token"\n'
+                       ' open(os.environ["PUSH_MARKER"], "w").write("passed")\n')
+        git.chmod(0o755)
+        marker = folder / 'push'
+        result = self.run_check(script='deploy/ship.sh',
+                                PATH=str(folder) + os.pathsep + self.env['PATH'],
+                                PUSH_MARKER=str(marker), GH_TOKEN='other-login')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(marker.read_text(), 'passed')
+        self.assertNotIn('test-token', result.stdout + result.stderr)
 
 
 if __name__ == '__main__':

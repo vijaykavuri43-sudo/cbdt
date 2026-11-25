@@ -52,7 +52,10 @@ Notes:
   `GCP_PROJECT`, `GCP_ZONE`, `GCP_BILLING_ACCOUNT`, `GCP_ORGANIZATION`, `GCLOUD_BIN`
   or `GCP_CLOUDSDK_CONFIG` for an intentional alternate environment.
 - A GitHub push updates source control; use `deploy.sh` or `ship.sh` to update
-  the VM. The billing change does not require a different GitHub account.
+  the VM. The repository remains `vijaykavuri43-sudo/cbdt`. When GitHub CLI is
+  installed, `ship.sh` uses its saved `vijaykavuri43-sudo` login for the push
+  without changing the global GitHub login; override with `GITHUB_ACCOUNT`.
+  The GCP operator is separately selected as `jk5391775@gmail.com`.
 - Reference data (master UPI lists, crypto wallets, UTR joins) is **not** shipped
   anymore — the app reads evidence directly from the S3/GCS buckets (see
   `MONITORING-IMPROVEMENT-PLAN.md`). The optional reference files are ignored

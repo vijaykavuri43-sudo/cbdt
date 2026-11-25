@@ -7,7 +7,7 @@ set -euo pipefail
 #   ./deploy/ship.sh --vm <name> "msg"    # deploy to a specific VM (default: s3lm-budget)
 #   ./deploy/ship.sh --help               # this help
 #
-# Env: DEPLOY_BRANCH=main GCP_ACCOUNT GCP_PROJECT GCP_ZONE GCLOUD_BIN
+# Env: DEPLOY_BRANCH=main GCP_ACCOUNT GCP_PROJECT GCP_ZONE GCLOUD_BIN GITHUB_ACCOUNT
 set -e
 usage() { grep '^#' "$0" | sed 's/^# \{0,1\}//' | grep -v '^!'; exit 0; }
 VM=""
@@ -45,7 +45,16 @@ AHEAD=$(git rev-list --count "origin/${DEPLOY_BRANCH:-main}..HEAD" 2>/dev/null |
 if [ "$AHEAD" = "0" ]; then
   echo "  already up to date"
 else
-  git push origin HEAD
+  if command -v gh >/dev/null 2>&1; then
+    # Select the saved repository login for this push without switching gh globally.
+    PUSH_TOKEN=$(GH_TOKEN= GITHUB_TOKEN= gh auth token --hostname github.com \
+      --user "${GITHUB_ACCOUNT:-vijaykavuri43-sudo}")
+    GH_TOKEN="$PUSH_TOKEN" git -c credential.helper= \
+      -c 'credential.helper=!gh auth git-credential' push origin HEAD
+    unset PUSH_TOKEN
+  else
+    git push origin HEAD
+  fi
 fi
 
 echo "→ [3/3] deploy (${VM:-s3lm-budget})"
