@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Nightly online backup of the live SQLite DBs to GCS (run ON THE VM as root).
+# Current project: S3 Live Monitor in jk5391775-org; operator jk5391775@gmail.com.
+# On-VM uploads use the attached service account, which stayed with the project.
+# Do not replace that runtime identity with a personal operator login.
 #
 # WHY: decode-once lives here — manifest.db holds every decoded payload
 # (UPI/VPA/wallet/payout rows the dashboard + CSV exports read). Losing the

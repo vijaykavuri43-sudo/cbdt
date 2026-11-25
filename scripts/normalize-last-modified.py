@@ -19,7 +19,8 @@ and reported.
 Run locally:
     python3 s3-live-monitor/scripts/normalize-last-modified.py
 Run on the deployed VM (container name s3lm, db on the s3lm-data volume):
-    gcloud compute ssh s3lm-budget --zone=asia-south1-a -- \
+    gcloud --account=jk5391775@gmail.com compute ssh s3lm-budget \
+      --project=project-9641a7b9-3759-4c98-9b8 --zone=asia-south1-a -- \
       'docker cp s3lm:/dev/null /dev/null; docker exec s3lm python3 /app/scripts/normalize-last-modified.py'
 (scripts/ is not in the image — docker cp this file in first, or pipe it:
     cat normalize-last-modified.py | docker exec -i s3lm python3 - )

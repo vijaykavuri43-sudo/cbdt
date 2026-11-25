@@ -1,5 +1,31 @@
 # GCP Account / Project Migration Guide
 
+## Current deployment — 2026-11-25
+
+The completed current transfer is **v2660228@gmail.com → jk5391775@gmail.com**.
+The existing project is now **S3 Live Monitor**, ID
+`project-9641a7b9-3759-4c98-9b8`, under **jk5391775-org** (`580417351522`), with
+billing account **`01D42C-5BB8A5-0CD6DA`**. The VM, disks, static IP, bucket,
+service account and volumes were preserved in place. The new operator has
+Editor, Project Billing Manager and Project IAM Admin access. Old-account
+project, VM and bucket reads were verified denied after its project bindings
+were removed. Temporary migration policies and organization grants were removed.
+
+For current operations use [`INFRA.md`](INFRA.md) and
+`./deploy/deploy.sh --check`; deployment scripts select the new account and
+check the organization and billing link. In Console choose
+**jk5391775-org → S3 Live Monitor**. An external Owner binding required an
+invitation during the billing-only phase; the roles above provide the verified
+management access used for this migration.
+
+**The remaining sections record October's migration and reusable examples.**
+October account IDs, organization IDs, billing IDs and account-removal commands
+are historical, not the current deployment defaults. Do not rerun those cleanup
+or account-closure commands on the November accounts. Other old-account projects
+remain outside this monitoring-project transfer.
+
+## Historical runbook — October 2026
+
 > **Field-tested runbook** based on the 2026-10-25 migration of the
 > `s3-live-monitor` stack from `vijaykavuri72@gmail.com` to
 > `v2660228@gmail.com`.

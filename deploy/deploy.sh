@@ -8,19 +8,32 @@ set -euo pipefail
 # the layers that depend on changed files re-build.
 #
 # Usage:  ./deploy/deploy.sh [vm-name]        (default: s3lm-budget)
-# Env:    DEPLOY_BRANCH=main  GCP_PROJECT  GCP_ZONE
-PROJECT="${GCP_PROJECT:-project-9641a7b9-3759-4c98-9b8}"
-VM="${1:-s3lm-budget}"
-ZONE="${GCP_ZONE:-asia-south1-a}"
+# Env:    DEPLOY_BRANCH=main GCP_ACCOUNT GCP_PROJECT GCP_ZONE GCLOUD_BIN
+source "$(dirname "${BASH_SOURCE[0]}")/gcp-config.sh"
+PROJECT="$GCP_PROJECT"
+VM=s3lm-budget
+CHECK_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --check) CHECK_ONLY=1 ;;
+    -*) echo "Unknown option: $arg" >&2; exit 2 ;;
+    *) VM="$arg" ;;
+  esac
+done
+ZONE="$GCP_ZONE"
 BRANCH="${DEPLOY_BRANCH:-main}"
 APP=/opt/s3lm/s3-live-monitor
 
-echo "→ deploy: $BRANCH → $VM ($PROJECT/$ZONE)"
+echo "→ deploy: $BRANCH → $VM ($GCP_ACCOUNT; $PROJECT/$ZONE)"
+gcp_check_project
 
-STATE=$(gcloud compute instances describe "$VM" --project="$PROJECT" --zone="$ZONE" --format='get(status)' 2>/dev/null || echo MISSING)
-if [ "$STATE" = "MISSING" ]; then
-  echo "✗ VM $VM does not exist — bootstrap it first:  ./deploy/gcp-deploy.sh $VM" >&2
+if ! STATE=$(gcloud compute instances describe "$VM" --project="$PROJECT" --zone="$ZONE" --format='get(status)'); then
+  echo "✗ Cannot access VM $VM as $GCP_ACCOUNT; check the error above." >&2
   exit 1
+fi
+if [ "$CHECK_ONLY" = "1" ]; then
+  echo "VM $VM: $STATE. Read-only deployment checks passed."
+  exit 0
 fi
 if [ "$STATE" != "RUNNING" ]; then
   echo "  VM is $STATE — starting…"

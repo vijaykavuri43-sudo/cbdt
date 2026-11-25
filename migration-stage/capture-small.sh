@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Historical October recovery helper; run on the VM, not an operator login.
+# Current operator is jk5391775@gmail.com; see INFRA.md for current organization.
 set -euo pipefail
 
 mkdir -p /tmp/mig

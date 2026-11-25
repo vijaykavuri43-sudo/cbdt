@@ -23,11 +23,20 @@ Local investigation dashboard for **read-only monitoring of the publicly exposed
 
 ## Deploy (GitHub-based — no tarballs)
 
+The operator account is **`jk5391775@gmail.com`**. In Console select
+**jk5391775-org → S3 Live Monitor**; the project ID is still
+`project-9641a7b9-3759-4c98-9b8`. Billing is linked to
+`01D42C-5BB8A5-0CD6DA`. The old account no longer has access to this project.
+The VM and evidence bucket were preserved in place during the organization move.
+
 The VM server runs the app from a **git clone** of this repo. A read-only GitHub
 deploy key lets the VM pull changes; every fix ships as a tiny git delta, and
 Docker reuses the build cache, so deploys are fast.
 
 ```bash
+# Check the operator, billing, organization and VM without changing anything
+./deploy/deploy.sh --check
+
 # 1) Bootstrap VM (first time only — registers the deploy key + clones the repo)
 GITHUB_TOKEN=... ./deploy/gcp-deploy.sh        # VM: s3lm-budget (GCP)
 
@@ -37,6 +46,13 @@ GITHUB_TOKEN=... ./deploy/gcp-deploy.sh        # VM: s3lm-budget (GCP)
 
 Notes:
 
+- Deployment entry points explicitly use the new account and verify the billing
+  link and organization before deploying; `ship.sh` checks before committing or
+  pushing. Defaults live in `deploy/gcp-config.sh`. Use `GCP_ACCOUNT`,
+  `GCP_PROJECT`, `GCP_ZONE`, `GCP_BILLING_ACCOUNT`, `GCP_ORGANIZATION`, `GCLOUD_BIN`
+  or `GCP_CLOUDSDK_CONFIG` for an intentional alternate environment.
+- A GitHub push updates source control; use `deploy.sh` or `ship.sh` to update
+  the VM. The billing change does not require a different GitHub account.
 - Reference data (master UPI lists, crypto wallets, UTR joins) is **not** shipped
   anymore — the app reads evidence directly from the S3/GCS buckets (see
   `MONITORING-IMPROVEMENT-PLAN.md`). The optional reference files are ignored

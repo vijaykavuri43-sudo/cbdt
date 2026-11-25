@@ -5,7 +5,7 @@ cd "$APP"
 echo "--- before ---"
 git log -1 --oneline || true
 # VM has no GitHub SSH key; fetch over HTTPS.
-git fetch https://github.com/vijaykavuri43-sudo/cricketbetting.git main
+git fetch https://github.com/vijaykavuri43-sudo/cbdt.git main
 git reset --hard FETCH_HEAD
 echo "--- after ---"
 git log -1 --oneline

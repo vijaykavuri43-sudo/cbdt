@@ -7,7 +7,7 @@ set -euo pipefail
 #   ./deploy/ship.sh --vm <name> "msg"    # deploy to a specific VM (default: s3lm-budget)
 #   ./deploy/ship.sh --help               # this help
 #
-# Env: DEPLOY_BRANCH=main  GCP_PROJECT  GCP_ZONE  (passed through to deploy.sh)
+# Env: DEPLOY_BRANCH=main GCP_ACCOUNT GCP_PROJECT GCP_ZONE GCLOUD_BIN
 set -e
 usage() { grep '^#' "$0" | sed 's/^# \{0,1\}//' | grep -v '^!'; exit 0; }
 VM=""
@@ -23,6 +23,9 @@ done
 [ "${#ARGS[@]}" -gt 0 ] && MSG="${ARGS[-1]}"
 
 cd "$(dirname "$0")/.."
+
+# Verify the account, billing, organization and VM before committing or pushing.
+"./deploy/deploy.sh" --check ${VM:+"$VM"}
 
 echo "→ [1/3] commit"
 if [ -n "$(git status --porcelain)" ]; then

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Historical October three-source recovery helper, not an account-transfer step.
+# Current operator is jk5391775@gmail.com; see INFRA.md for current organization.
 set -euo pipefail
 
 sudo mkdir -p /tmp/emergency

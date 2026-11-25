@@ -6,22 +6,24 @@ set -euo pipefail
 # change goes through ./deploy/deploy.sh (git pull -> cached docker build).
 #
 # Usage:  ./deploy/gcp-deploy.sh [vm-name]     (default: s3lm-budget)
-# Env:    GCP_PROJECT GCP_ZONE GCP_MACHINE DISK_GB
+# Env:    GCP_ACCOUNT GCP_PROJECT GCP_ZONE GCP_MACHINE DISK_GB GCLOUD_BIN
 #         GITHUB_TOKEN=<token with repo scope>  (needed once, to register the deploy key)
-#         GIT_REPO=owner/repo  (default vijaykavuri43-sudo/cricketbetting)
-PROJECT="${GCP_PROJECT:-project-9641a7b9-3759-4c98-9b8}"
+#         GIT_REPO=owner/repo  (default vijaykavuri43-sudo/cbdt)
+source "$(dirname "${BASH_SOURCE[0]}")/gcp-config.sh"
+PROJECT="$GCP_PROJECT"
 VM="${1:-s3lm-budget}"
-ZONE="${GCP_ZONE:-asia-south1-a}"
+ZONE="$GCP_ZONE"
 REGION="${GCP_REGION:-asia-south1}"
 MACHINE="${GCP_MACHINE:-t2d-standard-8}"
 DISK_GB="${DISK_GB:-100}"
-GIT_REPO="${GIT_REPO:-vijaykavuri43-sudo/cricketbetting}"
+GIT_REPO="${GIT_REPO:-vijaykavuri43-sudo/cbdt}"
 CLONE_URL="git@github.com:${GIT_REPO}.git"
 APP=/opt/s3lm/s3-live-monitor
 DEPLOY_KEY="$HOME/.ssh/s3lm_github_deploy"
 
 echo "-> Project: $PROJECT  VM: $VM  Zone: $ZONE  Machine: $MACHINE  Disk: ${DISK_GB}GB"
 echo "-> Source: $CLONE_URL  (git clone - no tarball)"
+gcp_check_project
 
 # 1. enable APIs (idempotent)
 gcloud services enable compute.googleapis.com --project="$PROJECT" >/dev/null 2>&1 || true
@@ -164,5 +166,5 @@ echo "OK Bootstrapped:  http://$IP/"
 echo "   Health:        http://$IP/api/healthz"
 echo "   Daily deploy:  ./deploy/deploy.sh $VM"
 echo "   Access key (if gated):  ssh $VM -- cat /root/.local/share/s3-live-monitor/access-token.txt  (or S3LM_TOKEN env)"
-echo "   Logs:      gcloud compute ssh $VM -- sudo docker logs -f s3lm"
-echo "   Stop VM when idle to save cost:  gcloud compute instances stop $VM --zone $ZONE --project $PROJECT"
+echo "   Logs: gcloud --account=$GCP_ACCOUNT compute ssh $VM --project=$PROJECT --zone=$ZONE --command='sudo docker logs -f s3lm'"
+echo "   Stop VM when idle: gcloud --account=$GCP_ACCOUNT compute instances stop $VM --zone=$ZONE --project=$PROJECT"

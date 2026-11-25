@@ -1,4 +1,27 @@
-# Migration Plan — s3-live-monitor to the `v2660228@gmail.com` account
+# Migration history — s3-live-monitor
+
+## Current completed transfer — 2026-11-25
+
+The monitoring project is now **S3 Live Monitor** in **jk5391775-org**
+(`580417351522`), operated through **jk5391775@gmail.com**, with billing
+**`01D42C-5BB8A5-0CD6DA`**. Project ID
+`project-9641a7b9-3759-4c98-9b8`, VM `s3lm-budget`, IP `8.231.108.145`, disks,
+bucket, service account and Docker volumes were kept in place; no data copy or
+VM rebuild was required. All eight containers and four authenticated dashboards
+passed verification. Old-account project/VM/bucket access was revoked and
+verified denied. Temporary migration policies and organization grants were
+removed. The same-day recovery snapshot is
+`s3lm-pre-billing-20261125-153636`.
+
+Use [`INFRA.md`](INFRA.md) for current account details and
+`./deploy/deploy.sh --check` to verify the deployment destination. The original
+new-account project `project-dc93abcc-b650-4c9e-880` is a separate empty project.
+
+## Historical October transfer to v2660228@gmail.com
+
+The sections below are an October record. Their references to “new account,”
+“today,” and old billing/organization cleanup do not describe the current setup.
+Do not rerun the historical transfer or cleanup commands against the new account.
 
 > **Status: COMPLETE — all old-account GCP projects moved, no data copy.** On 2026-10-25
 > the main project `project-9641a7b9-3759-4c98-9b8` and every remaining old-account

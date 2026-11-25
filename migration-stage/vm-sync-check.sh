@@ -1,5 +1,7 @@
 #!/bin/bash
 # Read-only post-migration verification for the s3-live-monitor VM.
+# Historical October three-source report; current setup has four sources.
+# Current operator is jk5391775@gmail.com; see INFRA.md for current organization.
 set -u
 
 DOCKER="docker"

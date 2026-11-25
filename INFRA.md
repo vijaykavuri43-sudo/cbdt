@@ -11,16 +11,21 @@
 |------|-------|
 | VM name | `s3lm-budget` |
 | **GCP project** | `project-9641a7b9-3759-4c98-9b8` |
+| Project display name | **S3 Live Monitor** |
+| **Current billing account** | `01D42C-5BB8A5-0CD6DA`, administered by `jk5391775@gmail.com` (linked 2026-11-25; billing enabled) |
+| Operator account | **`jk5391775@gmail.com`**: Project Editor, Project Billing Manager and Project IAM Admin; old account `v2660228@gmail.com` no longer has access to this project, VM or bucket |
+| Organization | **`organizations/580417351522` (`jk5391775-org`)**; project moved 2026-11-25 without copying resources |
 | Zone | `asia-south1-a` |
 | Machine / disk | `t2d-standard-8` (8 vCPU, 32 GB) · 100 GB boot disk (~57% used at resize trial) |
 | External IP | `8.231.108.145` (reserved static address `s3lm-budget-ip`; re-check before connecting) |
 | Dashboard URL | `http://8.231.108.145/` (re-check IP first) — bucket 1 `bx-s3-dev-001` |
 | Bucket-2 dashboard | `http://8.231.108.145:81/` — `bxs3dev001` (690K keys, deposit/withdrawal slips) |
 | Bucket-3 dashboard | `http://8.231.108.145:82/` — `tw-artifacts-center` (10K keys, QR/proofs/brand themes) |
+| Bucket-4 dashboard | `http://8.231.108.145:83/` — `bx-s3-dev-002` |
 | Firewall | `allow-s3lm-extra-dashboards` (tcp:81,82, 0.0.0.0/0) + `default-allow-http` (tcp:80) |
 | Health endpoint | `http://<IP>[:port]/api/healthz` (public, no auth) |
 | App dir on VM | `/opt/s3lm/s3-live-monitor` (git clone of this repo, branch `main`) |
-| Containers | `s3lm` (dash :80→8787) · `s3sync` (mirror worker b1) · `s3lm-b2` (:81) · `s3sync-b2` · `s3lm-b3` (:82) · `s3sync-b3` |
+| Containers | Four dashboards `s3lm[-b2/-b3/-b4]` (:80–83) and four workers `s3sync[-b2/-b3/-b4]` |
 | Dashboard auth | SINGLE shared key (2026-09-20): all three dashboards (`s3lm`, `s3lm-b2`, `s3lm-b3`) accept the primary key — read it via `docker exec s3lm cat /root/.local/share/s3-live-monitor/access-token.txt` **on the VM**. (b2/b3 token files in their volumes were overwritten with the primary key; volumes persist across deploys so it survives redeploys. To rotate: write new key to all three files + restart.) Every `/api` route except `/api/healthz` needs `Authorization: Bearer <key>` |
 | Watchdog | `/usr/local/bin/s3lm-watchdog.sh` via cron `/etc/cron.d/s3lm-watchdog` (restarts `s3lm` only after 3 consecutive failed checks; logs to syslog as `s3lm-watchdog`) |
 
@@ -28,22 +33,29 @@
 
 ```bash
 # Interactive login
-gcloud compute ssh s3lm-budget \
+gcloud --account=jk5391775@gmail.com compute ssh s3lm-budget \
   --project=project-9641a7b9-3759-4c98-9b8 \
   --zone=asia-south1-a
 
 # One-shot command (non-interactive — use this from agent shells)
-gcloud compute ssh s3lm-budget \
+gcloud --account=jk5391775@gmail.com compute ssh s3lm-budget \
   --project=project-9641a7b9-3759-4c98-9b8 \
   --zone=asia-south1-a --quiet \
   --command="sudo docker ps --format 'table {{.Names}}\t{{.Status}}'"
 ```
 
-> ⚠️ The local gcloud default project is `learn2earn-4f6a5` — **that is NOT where
-> this VM lives.** Every `gcloud` command for this VM MUST include
-> `--project=project-9641a7b9-3759-4c98-9b8 --zone=asia-south1-a`.
-> `deploy/gcp-deploy.sh` still defaults to the old project — pass
-> `GCP_PROJECT=project-9641a7b9-3759-4c98-9b8` explicitly if you ever bootstrap.
+Every operator `gcloud` command must select `--account=jk5391775@gmail.com` and
+the existing project explicitly. VM commands also need `--zone=asia-south1-a`.
+The new account's empty `project-dc93abcc-b650-4c9e-880` is not the app project.
+In Console, select **jk5391775-org → S3 Live Monitor**.
+
+Deploy, bootstrap and ship use shared defaults in `deploy/gcp-config.sh` and
+verify the billing account and organization before making changes. Run
+`./deploy/deploy.sh --check` for read-only verification. They prefer the native
+SDK at `~/google-cloud-sdk/bin/gcloud` when available and the dedicated
+`~/.config/gcloud-s3lm` login when present; this avoids the Windows SDK/WSL
+interop issue without changing other apps' gcloud configurations. Override with
+`GCLOUD_BIN` and `GCP_CLOUDSDK_CONFIG` when needed. Never commit credentials.
 
 ## 3. Buckets / data sources (where evidence comes from)
 
@@ -92,6 +104,42 @@ sudo docker logs --since 10m s3sync-b3 2>&1 | tail -n 30   # b3 mirror logs
 
 ## 6. Change log (keep this updated when infra moves)
 
+- 2026-11-25, 16:23 UTC: **Completed organization transfer** of the existing
+  project from `v2660228-org` (`237163885821`) to `jk5391775-org`
+  (`580417351522`) and renamed its display name **S3 Live Monitor**. Project
+  ID/number, VM, disk, static IP, evidence bucket, service account, snapshots
+  and Docker volumes stayed in place. Billing remains enabled on
+  `01D42C-5BB8A5-0CD6DA`. New-account project/VM/bucket access passed; all eight
+  containers remained healthy with their original start times, all four
+  authenticated status and health endpoints returned HTTP 200, and VM
+  service-account GCS reads passed. Removed old-account project bindings and
+  verified HTTP 403 for its project, VM and bucket reads. Bucket and VM service
+  account IAM contain no old-account user grant; SSH metadata does not name that
+  account. Removed both temporary migration policies and source/destination org
+  grants. Project IAM Admin remains on the new operator for ongoing management.
+  The existing same-day recovery snapshot was verified READY before moving.
+  Other old-account projects and billing were not changed. Current instructions
+  above supersede the dated October migration history below.
+- 2026-11-25: **Changed this project's billing** from
+  `01A4FE-5BE581-D29766` to `01D42C-5BB8A5-0CD6DA` after the user's explicit
+  instruction to switch now. Granted `jk5391775@gmail.com` Project Editor and
+  Project Billing Manager; verified its effective billing permissions and access
+  to the existing VM and evidence bucket. An external Owner binding required a
+  Google invitation, so no Owner role was added. Existing access was retained.
+  Enabled Cloud Resource Manager and Cloud Billing management APIs on the project.
+  Created recovery disk snapshot `s3lm-pre-billing-20261125-153636` in
+  `asia-south1`, confirmed READY before the billing switch. This is a live disk
+  snapshot including SQLite WAL files, not a restore-tested application backup.
+  New-account checks confirmed billing enabled, VM RUNNING with the same
+  `t2d-standard-8` size, 100-GB disk, static IP `8.231.108.145`, service account,
+  evidence bucket and original organization. All eight containers remained
+  healthy without restarting; all four dashboards returned HTTP 200 for health
+  and authenticated status requests. VM service-account GCS reads also passed.
+  The other two projects on the old billing account were left there. Promotional
+  credit balances ($18 old / $300 new as reported by the user) and expiry were
+  not independently verified; billing enabled does not prove credit coverage.
+  No automatic $5-remaining billing switch was installed; user chose immediate
+  switching. Authorization reference: `CR71-2026-GUDIVADA-ILLEGAL-BETTING`.
 - 2026-11-24, 12:54 UTC: **restored `t2d-standard-8` (8 vCPU/32 GB)** after
   the longer 16-GB trial exposed sustained 73–83% disk I/O wait and two slow
   API requests (6.643s and 20.741s), despite successful requests and healthy
