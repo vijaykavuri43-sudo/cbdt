@@ -2932,6 +2932,10 @@ _MONEY_FLOW_COMPACT_COLUMNS = (
     "fact_type",
 )
 
+_CRYPTO_TRANSACTION_EXPORT_COLUMNS = _MONEY_FLOW_COMPACT_COLUMNS + (
+    "network", "tx_token", "hash_status", "duplicate_count", "source_object_keys",
+)
+
 
 def _flow_counterparty(row: dict) -> str:
     """The on-chain side opposite the wallet printed on the slip.
@@ -2967,6 +2971,7 @@ def export_money_flows(
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
     profile: str = Query("full", pattern="^(full|compact)$"),
+    deduplicate: bool = False,
     _=Depends(auth),
 ):
     """Officer Query CSV (opens in Excel): filtered flows with object + stamps.
@@ -2978,7 +2983,7 @@ def export_money_flows(
     """
 
     def build():
-        rows = db.money_flows_export_rows(
+        filters = dict(
             direction=direction,
             rail_type=rail_type,
             q=q,
@@ -2988,6 +2993,14 @@ def export_money_flows(
             folder=folder,
             tx_status=tx_status,
         )
+        if deduplicate and rail_type == "crypto_wallet":
+            # Use exactly the same unpaginated evidence groups as the slips view.
+            from .slip_dedup import deduplicate_slips
+            rows = deduplicate_slips(db.crypto_slip_candidates(**{
+                k: v for k, v in filters.items() if k != "rail_type"
+            }))
+        else:
+            rows = db.money_flows_export_rows(**filters)
         if profile == "compact":
             out = []
             for r in rows:
@@ -3009,6 +3022,11 @@ def export_money_flows(
                         "counterparty": _flow_counterparty(r),
                         "source_object_key": key,
                         "fact_type": _flow_fact_type(r),
+                        "network": r.get("network") or "",
+                        "tx_token": r.get("tx_token") or "",
+                        "hash_status": (r.get("tx_status") or "unverified") if r.get("txid") else "missing",
+                        "duplicate_count": r.get("duplicate_count", 0),
+                        "source_object_keys": json.dumps(r.get("source_keys", [key])),
                     }
                 )
             return out
@@ -3060,13 +3078,13 @@ def export_money_flows(
         return out
 
     cache_key = (
-        f"export-flows:{profile}:{direction}:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{tx_status}"
+        f"export-flows:{profile}:{direction}:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{tx_status}:{deduplicate}"
     )
     rows = cached(cache_key, 30.0, build)
     tag = f"{folder or direction}-{(rail_type or 'all')}-{since or 'start'}-to-{until or 'now'}"
     tag = re.sub(r"[^A-Za-z0-9._-]+", "_", tag)[:80]
     columns = (
-        _MONEY_FLOW_COMPACT_COLUMNS
+        (_CRYPTO_TRANSACTION_EXPORT_COLUMNS if deduplicate and rail_type == "crypto_wallet" else _MONEY_FLOW_COMPACT_COLUMNS)
         if profile == "compact"
         else _MONEY_FLOW_EXPORT_COLUMNS
     )
@@ -3193,6 +3211,7 @@ def export_money_flows_unique(
     folder: str = Query("", pattern="^(|all|deposit|withdrawal|bankingqr|other)$"),
     direction: str = Query("both", pattern="^(deposit|withdrawal|both)$"),
     tx_status: str = Query("", pattern="^(|verified|derived|ambiguous|unresolved|unchecked)$"),
+    profile: str = Query("full", pattern="^(full|compact)$"),
     _=Depends(auth),
 ):
     """Unique address CSV — one VPA / account / wallet per row (not every slip)."""
@@ -3208,6 +3227,51 @@ def export_money_flows_unique(
             direction=direction,
             tx_status=tx_status,
         )
+        if profile == "compact":
+            # Same 11 columns as the every-slip crypto CSV, so the two
+            # downloads stay consistent for crypto wallets. Values come from
+            # one coherent newest transaction per address.
+            reps = db.crypto_unique_representatives(
+                [r.get("rail_id") or "" for r in rows],
+                direction=direction,
+                folder=folder,
+                since=since,
+                until=until,
+                tx_status=tx_status,
+            )
+            out = []
+            for r in rows:
+                rail = r.get("rail_id") or ""
+                rep = reps.get(rail, {})
+                merged = {
+                    "rail_type": r.get("rail_type") or "crypto_wallet",
+                    "rail_id": rail,
+                    "direction": rep.get("direction")
+                    or (direction if direction != "both" else ""),
+                    "tx_status": rep.get("tx_status") or r.get("tx_status") or "",
+                    "wallet_status": r.get("wallet_status") or "",
+                    "tx_from": rep.get("tx_from") or "",
+                    "tx_to": rep.get("tx_to") or "",
+                }
+                amount = rep.get("amount_inr")
+                out.append(
+                    {
+                        "deposit_or_withdrawal": merged["direction"],
+                        "gambler": rep.get("gambler") or "",
+                        "amount_inr": amount if amount is not None else "",
+                        "rail_id": rail,
+                        "transaction hash": rep.get("txid") or r.get("txid") or "",
+                        "tx_status": merged["tx_status"],
+                        "tx_time_utc": rep.get("tx_time") or r.get("tx_time") or "",
+                        "tx_amount": rep.get("tx_amount")
+                        if rep.get("tx_amount") is not None
+                        else "",
+                        "counterparty": _flow_counterparty(merged),
+                        "source_object_key": r.get("sample_key") or "",
+                        "fact_type": _flow_fact_type(merged),
+                    }
+                )
+            return out
         out = []
         for r in rows:
             key = r.get("sample_key") or ""
@@ -3252,12 +3316,13 @@ def export_money_flows_unique(
         return out
 
     cache_key = (
-        f"export-flows-u:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{direction}:{tx_status}"
+        f"export-flows-u:{rail_type}:{q}:{source}:{since}:{until}:{folder}:{direction}:{tx_status}:{profile}"
     )
     rows = cached(cache_key, 30.0, build)
     tag = f"{folder or 'all'}-{(rail_type or 'all')}-{direction}-{since or 'start'}-to-{until or 'now'}"
     tag = re.sub(r"[^A-Za-z0-9._-]+", "_", tag)[:80]
-    return _export_response(rows, _UNIQUE_EXPORT_COLUMNS, f"officer-unique-rails-{tag}")
+    cols = _MONEY_FLOW_COMPACT_COLUMNS if profile == "compact" else _UNIQUE_EXPORT_COLUMNS
+    return _export_response(rows, cols, f"officer-unique-rails-{tag}")
 
 
 def _source_link(key: str) -> str:

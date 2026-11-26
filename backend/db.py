@@ -4273,6 +4273,57 @@ def money_flows_unique_export_rows(
     return out["items"]
 
 
+def crypto_unique_representatives(
+    rail_ids: list[str],
+    direction: str = "both",
+    folder: str = "",
+    since: str = "",
+    until: str = "",
+    tx_status: str = "",
+) -> dict[str, dict]:
+    """Newest crypto transaction per address.
+
+    The unique-address CSV aggregates by wallet, so it has no single
+    transaction side to read ``tx_from``/``tx_to`` from. This returns one
+    coherent newest row per address so the compact unique CSV can expose the
+    same columns (and a correct counterparty) as the every-slip CSV.
+    """
+    ids = [r for r in rail_ids if r]
+    if not ids:
+        return {}
+    where, args = _money_flow_filters(
+        direction=direction,
+        rail_type="crypto_wallet",
+        q="",
+        source="object",
+        since=since,
+        until=until,
+        folder=folder,
+        tx_status=tx_status,
+    )
+    c = connect()
+    out: dict[str, dict] = {}
+    chunk = 400
+    for i in range(0, len(ids), chunk):
+        part = ids[i : i + chunk]
+        ph = ",".join("?" * len(part))
+        rows = c.execute(
+            "SELECT rail_id, tx_from, tx_to, direction, gambler, txid,"
+            " tx_status, tx_time, tx_amount, tx_token, source_key,"
+            " amount_inr, wallet_status FROM ("
+            " SELECT *, ROW_NUMBER() OVER ("
+            " PARTITION BY rail_id ORDER BY"
+            " COALESCE(NULLIF(tx_time,''), last_modified) DESC,"
+            " last_modified DESC) rn"
+            f" FROM payment_transactions WHERE rail_id IN ({ph}) AND {where}"
+            ") WHERE rn=1",
+            part + list(args),
+        ).fetchall()
+        for r in rows:
+            out[r["rail_id"]] = dict(r)
+    return out
+
+
 def _key_top_folder(key: str) -> str:
     """First path segment of a bucket key: deposit / withdrawal / chat_file / …"""
     s = (key or "").split("?", 1)[0].lstrip("/")
@@ -6701,7 +6752,15 @@ def crypto_slip_candidates(q="", source="object", since="", until="", folder="",
             by_key[key] = dict(source_key=key, rail_type="crypto_wallet", rail_id=r["address"],
                 rail_ids=[r["address"]], network=r.get("network") or "", txid=r.get("txid") or "",
                 tx_status=r.get("tx_status") or "", last_modified=r["last_modified"],
+                wallet_status=r.get("wallet_status") or "",
+                direction=("deposit" if key.startswith(("deposit/", "bankingqr/", "qrcode/")) else
+                           "withdrawal" if key.startswith(("withdrawal/", "payment-proof/", "payment-proofs/")) else ""),
                 origins={"image_hit"}, gambler="", amount_inr=None, utr="")
+            if r.get("txid") and r.get("tx_status") in ("verified", "derived"):
+                cached_tx = chain_tx_cache_get(r["txid"])
+                if cached_tx:
+                    by_key[key].update(tx_from=cached_tx["from"], tx_to=cached_tx["to"],
+                        tx_time=cached_tx["block_ts"], tx_amount=cached_tx["amount"], tx_token=cached_tx["token"])
         if max_sources and len(by_key) > max_sources:
             raise ValueError(f"More than {max_sources} source files match. Select a narrower date range for the PDF.")
     if max_sources and len(by_key) > max_sources:

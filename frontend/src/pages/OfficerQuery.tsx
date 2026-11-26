@@ -340,7 +340,7 @@ function clickOnControl(target: EventTarget | null): boolean {
 function csvFilename(kind: View, next: { folder: Folder; rail_type: RailType; since: string; until: string; direction?: Side }): string {
   const safe = (s: string) => s.replace(/:/g, '').replace(/T/g, '_')
   const side = next.direction && next.direction !== 'both' ? `-${next.direction}` : ''
-  return `${kind === 'unique' ? 'unique-addresses' : 'all-slips'}-${next.folder}-${railFileTag(next.rail_type)}${side}-${safe(next.since)}-to-${safe(next.until)}.csv`
+  return `${kind === 'unique' ? 'unique-addresses' : next.rail_type === 'crypto_wallet' ? 'transactions' : 'all-slips'}-${next.folder}-${railFileTag(next.rail_type)}${side}-${safe(next.since)}-to-${safe(next.until)}.csv`
 }
 
 export function OfficerQuery() {
@@ -518,12 +518,14 @@ export function OfficerQuery() {
     setDlBusy(kind)
     try {
       const useSide = side ?? applied.direction
+      const compact = applied.rail_type === 'crypto_wallet' ? { profile: 'compact' } : {}
       const url = kind === 'unique'
-        ? exportMoneyFlowsUniqueUrl({ ...paramsOf(applied), direction: useSide })
+        ? exportMoneyFlowsUniqueUrl({ ...paramsOf(applied), direction: useSide, ...compact })
         : exportMoneyFlowsUrl({
             ...paramsOf(applied),
             direction: useSide,
-            ...(applied.rail_type === 'crypto_wallet' ? { profile: 'compact' } : {}),
+            ...compact,
+            ...(applied.rail_type === 'crypto_wallet' ? { deduplicate: 'true' } : {}),
           })
       await saveCsvFromUrl(url, csvFilename(kind, { ...applied, direction: useSide }))
     } catch (e) {
@@ -849,24 +851,31 @@ export function OfficerQuery() {
 
           <div className="oq-dl-bar">
             <div>
-              <strong>Download what you are viewing</strong>
+              <strong>{applied.rail_type === 'crypto_wallet' ? 'Download transactions and evidence' : 'Download what you are viewing'}</strong>
               <div className="tiny dim">
                 {FOLDERS.find((f) => f.id === applied.folder)?.label} · {RAILS.find((r) => r.id === applied.rail_type)?.label} · {describeRange(applied.since, applied.until)}
-                {' · '}{applied.rail_type === 'crypto_wallet' && view === 'slips' ? 'PDF contains matching deduplicated images, not only this page' : `CSV has all ${total.toLocaleString()} ${view === 'unique' ? 'addresses' : 'slips'}, not only this page of ${limit}`}
+                {' · '}{applied.rail_type === 'crypto_wallet' ? 'Transactions CSV includes every matching deduplicated transaction / distinct slip across all pages. Unavailable hashes are marked missing.' : `CSV has all ${total.toLocaleString()} ${view === 'unique' ? 'addresses' : 'slips'}, not only this page of ${limit}`}
                 {view === 'slips' && !!slips?.duplicates_removed && ` · ${slips.duplicates_removed} duplicate copies grouped; originals retained`}
               </div>
             </div>
             <div className="oq-dl-btns">
-              {applied.rail_type === 'crypto_wallet' && view === 'slips' ? pdfDownloadButton : <button
+              {applied.rail_type === 'crypto_wallet' && <button
+                className="btn btn-primary"
+                disabled={!!dlBusy || total === 0}
+                onClick={() => void downloadCsv('slips')}
+              >
+                {dlBusy === 'slips' ? 'Preparing CSV…' : `⬇ Transactions CSV${view === 'slips' ? ` · ${total.toLocaleString()}` : ''}`}
+              </button>}
+              {(applied.rail_type !== 'crypto_wallet' || view === 'unique') && <button
                 className="btn btn-primary"
                 disabled={!!dlBusy || total === 0}
                 onClick={() => void downloadCsv(view)}
               >
                 {dlBusy === view
                   ? 'Preparing CSV…'
-                  : `⬇ CSV · ${total.toLocaleString()} ${view === 'unique' ? 'addresses' : 'slips'}`}
+                  : `⬇ ${view === 'unique' ? 'Unique addresses CSV' : 'CSV'} · ${total.toLocaleString()} ${view === 'unique' ? 'addresses' : 'slips'}`}
               </button>}
-              {view === 'unique' ? pdfDownloadButton : applied.rail_type !== 'crypto_wallet' && <button
+              {applied.rail_type === 'crypto_wallet' || view === 'unique' ? pdfDownloadButton : <button
                 className="btn"
                 disabled={!!dlBusy}
                 onClick={() => void downloadCsv('unique')}

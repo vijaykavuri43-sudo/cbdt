@@ -279,7 +279,7 @@ def match_known_fragment(raw: Any, known: Iterable[str], network: str = "TRON") 
 # Txid extraction (full + partial)
 # ---------------------------------------------------------------------------
 
-_HEXISH = "0-9a-fA-FlIiOo£€$§"
+_HEXISH = "0-9a-fA-FlIiOoQqéÉ¢£€$§"
 _FRAG_RE = re.compile(
     r"(?:hash|tx\.?\s*id|txid|transaction\s*(?:hash|id))\s*[:#]?\s*"
     rf"([{_HEXISH}]{{6,}})\s*[:;.,·•]?\s*(?:\.{{2,}}|…)\s*([{_HEXISH}]{{4,}})",
@@ -318,6 +318,11 @@ _HEX_FIX = str.maketrans(
         "€": "e",
         "$": "5",
         "§": "5",
+        # Observed in the original Tronscan slip images. Candidates still
+        # require a unique on-chain match before a hash can be attached.
+        "é": "6",
+        "¢": "c",
+        "q": "0",
     }
 )
 
