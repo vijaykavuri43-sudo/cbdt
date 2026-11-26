@@ -1,7 +1,6 @@
 """Transaction CSV must match the complete deduplicated evidence view."""
 import csv
 import io
-import json
 from unittest.mock import patch
 
 from . import app as app_module, db
@@ -30,11 +29,9 @@ def test_export_all_groups_not_one_per_address_or_page(database):
     assert len(rows) == page["rows_total"] == 3
     assert {r["transaction hash"] for r in rows} == {"a" * 64, "b" * 64, ""}
     missing = next(r for r in rows if not r["transaction hash"])
-    assert missing["hash_status"] == "missing"
     assert missing["tx_status"] == "unresolved"
     duplicate = next(r for r in rows if r["transaction hash"] == "a" * 64)
-    assert duplicate["duplicate_count"] == "1"
-    assert json.loads(duplicate["source_object_keys"]) == ["deposit/a.jpg", "deposit/copy.jpg"]
+    assert duplicate["source_object_key"] in {"deposit/a.jpg", "deposit/copy.jpg"}
 
 
 def test_export_includes_image_only_slips_and_applies_filters(database):
@@ -56,7 +53,7 @@ def test_exact_content_group_uses_available_verified_hash(database):
     rows = export_rows()
     assert len(rows) == 1
     assert rows[0]["transaction hash"] == "c" * 64
-    assert rows[0]["hash_status"] == "verified"
+    assert rows[0]["tx_status"] == "verified"
 
 
 def test_ocr_hash_symbols_preserve_prefix_and_suffix():

@@ -14,16 +14,15 @@ from . import db  # noqa: E402
 
 EXPECTED = (
     "deposit_or_withdrawal",
-    "gambler",
-    "amount_inr",
     "rail_id",
+    "network",
     "transaction hash",
     "tx_status",
     "tx_time_utc",
     "tx_amount",
+    "tx_token",
     "counterparty",
     "source_object_key",
-    "fact_type",
 )
 
 

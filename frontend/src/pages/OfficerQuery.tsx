@@ -854,7 +854,7 @@ export function OfficerQuery() {
               <strong>{applied.rail_type === 'crypto_wallet' ? 'Download transactions and evidence' : 'Download what you are viewing'}</strong>
               <div className="tiny dim">
                 {FOLDERS.find((f) => f.id === applied.folder)?.label} · {RAILS.find((r) => r.id === applied.rail_type)?.label} · {describeRange(applied.since, applied.until)}
-                {' · '}{applied.rail_type === 'crypto_wallet' ? 'Transactions CSV includes every matching deduplicated transaction / distinct slip across all pages. Unavailable hashes are marked missing.' : `CSV has all ${total.toLocaleString()} ${view === 'unique' ? 'addresses' : 'slips'}, not only this page of ${limit}`}
+                {' · '}{applied.rail_type === 'crypto_wallet' ? 'Transactions CSV includes every matching deduplicated transaction / distinct slip across all pages. Unavailable hashes remain blank; verification status is included.' : `CSV has all ${total.toLocaleString()} ${view === 'unique' ? 'addresses' : 'slips'}, not only this page of ${limit}`}
                 {view === 'slips' && !!slips?.duplicates_removed && ` · ${slips.duplicates_removed} duplicate copies grouped; originals retained`}
               </div>
             </div>

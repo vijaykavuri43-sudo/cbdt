@@ -587,7 +587,7 @@ input[type="time"] {
 .oq-presets { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .oq-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .oq-actions .tiny { margin-right: auto; }
-.oq-dl-btns { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.oq-dl-btns { display: flex; align-items: center; justify-content: flex-end; margin-left: auto; gap: 8px; flex-wrap: wrap; }
 .oq-dl-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
   margin: 0 0 12px; padding: 10px 12px;

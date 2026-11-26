@@ -4309,7 +4309,7 @@ def crypto_unique_representatives(
         ph = ",".join("?" * len(part))
         rows = c.execute(
             "SELECT rail_id, tx_from, tx_to, direction, gambler, txid,"
-            " tx_status, tx_time, tx_amount, tx_token, source_key,"
+            " tx_status, tx_time, tx_amount, tx_token, network, source_key,"
             " amount_inr, wallet_status FROM ("
             " SELECT *, ROW_NUMBER() OVER ("
             " PARTITION BY rail_id ORDER BY"
