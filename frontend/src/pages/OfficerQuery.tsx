@@ -551,13 +551,14 @@ export function OfficerQuery() {
     setPdfBusy(true)
     setPdfNote('')
     setPdfProgress('Queueing PDF…')
+    const filename = `crypto-slips-${selected.since.slice(0, 10)}-to-${selected.until.slice(0, 10)}.pdf`
     try {
       const started = await post<SlipPdfJob>('/api/export/crypto-slips-pdf', paramsOf(selected))
       const job = await waitForSlipPdf(started, setPdfProgress, () => pdfCancelled.current)
       if (pdfCancelled.current) return
       if (job.state !== 'complete') throw new Error(job.error || 'PDF preparation failed')
       setPdfProgress('Downloading PDF…')
-      await saveSlipPdf(job.id, `crypto-slips-${selected.since.slice(0, 10)}-to-${selected.until.slice(0, 10)}.pdf`)
+      await saveSlipPdf(job.id, filename)
       setPdfNote(`${job.slips} deduplicated slips · ${job.duplicates_removed ?? 0} duplicate copies grouped${job.missing ? ` · WARNING: ${job.missing} unavailable images are listed in the PDF` : ''}. Originals are retained.`)
     } catch (e) {
       if (!pdfCancelled.current) setPdfNote(`PDF download failed: ${String(e)}`)

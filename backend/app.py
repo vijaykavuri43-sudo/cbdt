@@ -4449,8 +4449,34 @@ def crypto_slip_pdf_status(job_id: str, _=Depends(auth)):
         raise HTTPException(404, "PDF job not found")
 
 
+@app.post("/api/export/crypto-slips-pdf/{job_id}/download-access")
+def crypto_slip_pdf_download_access(job_id: str, request: Request, _=Depends(auth)):
+    from . import slip_pdf
+    from fastapi.responses import JSONResponse
+    try:
+        job = slip_pdf.read_job(job_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "PDF job not found")
+    if job["state"] != "complete":
+        raise HTTPException(409, "PDF is still being prepared")
+    url = f"/api/export/crypto-slips-pdf/{job_id}/download"
+    response = JSONResponse({"url": url}, headers={"Cache-Control": "no-store"})
+    # A short-lived cookie permits native, disk-streamed browser downloads on
+    # HTTP too. No bearer key or download secret appears in URLs/history/logs.
+    response.set_cookie("slip_pdf_download", slip_pdf.download_ticket(job_id),
+                        max_age=600, path=url, httponly=True, samesite="strict",
+                        secure=request.url.scheme == "https")
+    return response
+
+
+def crypto_slip_pdf_download_auth(job_id: str, request: Request):
+    from . import slip_pdf
+    if not slip_pdf.valid_download_ticket(job_id, request.cookies.get("slip_pdf_download")):
+        auth(request)
+
+
 @app.get("/api/export/crypto-slips-pdf/{job_id}/download")
-def download_crypto_slip_pdf(job_id: str, _=Depends(auth)):
+def download_crypto_slip_pdf(job_id: str, _=Depends(crypto_slip_pdf_download_auth)):
     from . import slip_pdf
     try:
         job = slip_pdf.read_job(job_id)

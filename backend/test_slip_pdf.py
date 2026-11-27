@@ -108,18 +108,60 @@ def test_job_singleflight_and_queue_limit(database, monkeypatch):
         slip_pdf.start_job(dict(FILTERS, q="fourth"), lambda _: b"")
 
 
-def test_empty_or_over_budget_pack_fails_explicitly(database, monkeypatch):
+def test_empty_pack_fails_explicitly(database):
     folder = slip_pdf.job_root() / ("e" * 32)
     folder.mkdir()
     job = dict(id="e" * 32, filters=FILTERS, state="queued", processed=0, total=0)
     slip_pdf._worker(folder, job, lambda _: png())
     assert job["state"] == "failed" and "No crypto" in job["error"]
-    seed(database, "deposit/a.jpg")
-    seed(database, "deposit/b.jpg", tx="b" * 64)
-    monkeypatch.setattr(slip_pdf, "MAX_SLIPS", 1)
-    slip_pdf._worker(folder, job, lambda _: png())
-    assert job["state"] == "failed" and "narrower date range" in job["error"]
     assert not (folder / "slips.pdf").exists()
+
+
+def test_large_pack_exceeds_both_old_limits_without_omission(database, monkeypatch):
+    rows = [dict(source_key=f"deposit/{i}.png", txid=f"{i % 501:064x}",
+                 tx_status="verified", rail_id=WALLET, network="TRON") for i in range(5511)]
+    monkeypatch.setattr(db, "crypto_slip_candidates", lambda **filters: rows)
+    folder = slip_pdf.job_root() / ("1" * 32)
+    folder.mkdir()
+    job = dict(id="1" * 32, filters=FILTERS, state="queued", processed=0, total=0)
+    def fetch(key):
+        n = int(key.split("/")[1].split(".")[0]) % 501
+        return png((n % 256, n // 256, 40))
+    slip_pdf._worker(folder, job, fetch)
+    assert job["state"] == "complete", job
+    assert job["source_files_total"] == 5511
+    assert job["slips"] == 501 and job["duplicates_removed"] == 5010
+    reader = PdfReader(folder / "slips.pdf", strict=True)
+    assert len(reader.pages) == 501
+    assert all(len(page.images) == 1 for page in reader.pages)
+
+
+def test_render_preserves_alpha_and_cleans_partial_on_disk_failure(database, monkeypatch):
+    folder = slip_pdf.job_root()
+    image_path = folder / "transparent.png"
+    Image.new("RGBA", (12, 24), (10, 20, 30, 100)).save(image_path)
+    rows = [dict(image_path=str(image_path))]
+    target = folder / "alpha.pdf"
+    slip_pdf.render_pdf(target, rows, FILTERS, 1)
+    reader = PdfReader(target, strict=True)
+    image = next(iter(reader.pages[0]["/Resources"]["/XObject"].get_object().values())).get_object()
+    assert "/SMask" in image
+    assert image.get_data() == bytes((10, 20, 30)) * (12 * 24)
+    assert image["/SMask"].get_data() == bytes([100]) * (12 * 24)
+    monkeypatch.setattr(slip_pdf.shutil, "disk_usage", lambda _: type("Usage", (), {"free": 0})())
+    target = folder / "failed.pdf"
+    with pytest.raises(ValueError, match="disk space"):
+        slip_pdf.render_pdf(target, rows, FILTERS, 1)
+    assert not target.exists() and not target.with_suffix(".partial").exists()
+
+
+def test_heartbeat_keeps_long_jobs_alive(database):
+    import time
+    folder = slip_pdf.job_root() / ("2" * 32)
+    folder.mkdir()
+    slip_pdf._write(folder / "status.json", dict(id="2" * 32, state="running", updated=time.time() - 90000))
+    with slip_pdf._heartbeat(folder):
+        assert slip_pdf.read_job("2" * 32)["state"] == "running"
 
 
 def test_worker_pdf_is_image_only_and_retains_provenance_server_side(database, tmp_path):
@@ -212,3 +254,17 @@ def test_api_auth_validation_and_cross_worker_download(database, monkeypatch):
     response = client.get("/api/export/crypto-slips-pdf/" + "d" * 32 + "/download", headers=headers)
     assert response.status_code == 200 and response.content.startswith(b"%PDF")
     assert "attachment" in response.headers["content-disposition"]
+    base = "/api/export/crypto-slips-pdf/" + "d" * 32
+    assert client.post(base + "/download-access").status_code == 401
+    access = client.post(base + "/download-access", headers=headers)
+    assert access.status_code == 200
+    cookie = access.headers["set-cookie"]
+    assert "HttpOnly" in cookie and "SameSite=strict" in cookie
+    assert "Path=" + base + "/download" in cookie
+    assert client.get(access.json()["url"]).status_code == 200
+    assert client.get(base).status_code == 401  # cookie cannot access other APIs
+    ticket = slip_pdf.download_ticket("d" * 32)
+    assert slip_pdf.valid_download_ticket("d" * 32, ticket)
+    assert not slip_pdf.valid_download_ticket("a" * 32, ticket)
+    assert not slip_pdf.valid_download_ticket("d" * 32, slip_pdf.download_ticket("d" * 32, 1))
+    assert not slip_pdf.valid_download_ticket("d" * 32, "bad")

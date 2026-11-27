@@ -301,15 +301,14 @@ export interface SlipPdfJob {
   slips?: number
   duplicates_removed?: number
   missing?: number
+  phase?: string
   error?: string
 }
 
 export async function waitForSlipPdf(job: SlipPdfJob, onProgress: (message: string) => void, cancelled: () => boolean): Promise<SlipPdfJob> {
-  const deadline = Date.now() + 30 * 60 * 1000
   while (job.state === 'queued' || job.state === 'running') {
     if (cancelled()) throw new Error('PDF view closed')
-    if (Date.now() > deadline) throw new Error('PDF preparation exceeded 30 minutes. Narrow the date range and retry.')
-    onProgress(job.state === 'queued' ? 'PDF queued…' : `Preparing PDF · ${job.processed}/${job.total || '…'} slips`)
+    onProgress(job.state === 'queued' ? 'PDF queued…' : job.phase === 'rendering' ? `Writing PDF · ${job.total} slips…` : `Preparing PDF · ${job.processed}/${job.total || '…'} slips`)
     await new Promise((resolve) => window.setTimeout(resolve, 1500))
     job = await api<SlipPdfJob>(`/api/export/crypto-slips-pdf/${job.id}`)
   }
@@ -317,25 +316,14 @@ export async function waitForSlipPdf(job: SlipPdfJob, onProgress: (message: stri
 }
 
 export async function saveSlipPdf(jobId: string, filename: string): Promise<void> {
-  const ctrl = new AbortController()
-  const timer = window.setTimeout(() => ctrl.abort(), 180000)
-  try {
-    const r = await fetch(`/api/export/crypto-slips-pdf/${encodeURIComponent(jobId)}/download`, {
-      headers: authHeaders(), signal: ctrl.signal,
-    })
-    await handle(r)
-    if (!r.headers.get('content-type')?.includes('application/pdf')) throw new Error('The server did not return a PDF')
-    const href = URL.createObjectURL(await r.blob())
-    const a = document.createElement('a')
-    a.href = href
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    window.setTimeout(() => URL.revokeObjectURL(href), 4000)
-  } finally {
-    window.clearTimeout(timer)
-  }
+  const access = await post<{ url: string }>(`/api/export/crypto-slips-pdf/${encodeURIComponent(jobId)}/download-access`, {})
+  // Native download streams to disk instead of allocating the entire PDF Blob.
+  const a = document.createElement('a')
+  a.href = access.url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
 }
 
 export interface Status {
